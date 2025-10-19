@@ -5,5 +5,5 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13,<3.14" # for scipy dep of reachy-mini
 dependencies = [
-    "reachy-mini>=1.0.0rc5",
+    "reachy-mini[mujoco]==1.0.0rc5",
 ]
