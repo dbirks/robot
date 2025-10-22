@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import time
 import numpy as np
 from typing import Optional
 from reachy_mini import ReachyMini
@@ -138,7 +139,7 @@ class Robot:
         # Return antennas to neutral
         self._rm.goto_target(antennas=[0.0, 0.0], duration=0.2)
 
-    async def _run_dance(
+    def _run_dance_sync(
         self,
         move_name: str,
         duration_seconds: float,
@@ -147,7 +148,10 @@ class Robot:
         neutral_pos: np.ndarray = None,
         neutral_eul: np.ndarray = None,
     ):
-        """Execute a dance move from the library.
+        """Execute a dance move from the library (synchronous blocking version).
+
+        This uses blocking time.sleep() to match the official demo pattern for
+        precise 100Hz control timing. Run via _run_dance async wrapper.
 
         Args:
             move_name: Name of the dance move from AVAILABLE_MOVES
@@ -170,13 +174,13 @@ class Robot:
             if "amplitude" in key or "_amp" in key:
                 params[key] *= amplitude_scale
 
-        # Time loop
+        # Time loop - BLOCKING (matches official demo pattern)
         control_ts = 0.01  # 100 Hz control loop
         t_beats = 0.0
-        end_time = asyncio.get_event_loop().time() + duration_seconds
+        end_time = time.time() + duration_seconds
 
-        while asyncio.get_event_loop().time() < end_time:
-            loop_start = asyncio.get_event_loop().time()
+        while time.time() < end_time:
+            loop_start = time.time()
 
             # Calculate offsets from dance move
             offsets = move_fn(t_beats, **params)
@@ -194,13 +198,47 @@ class Robot:
             beats_per_second = bpm / 60.0
             t_beats += control_ts * beats_per_second
 
-            # Sleep to maintain control loop rate
-            elapsed = asyncio.get_event_loop().time() - loop_start
-            await asyncio.sleep(max(0, control_ts - elapsed))
+            # BLOCKING sleep to maintain precise 100Hz control loop rate
+            elapsed = time.time() - loop_start
+            time.sleep(max(0, control_ts - elapsed))
 
         # Return to neutral
         pose = create_head_pose(*neutral_pos, *neutral_eul, degrees=False)
         self._rm.set_target(pose, antennas=np.zeros(2))
+
+    async def _run_dance(
+        self,
+        move_name: str,
+        duration_seconds: float,
+        bpm: float = 120.0,
+        amplitude_scale: float = 1.0,
+        neutral_pos: np.ndarray = None,
+        neutral_eul: np.ndarray = None,
+    ):
+        """Execute a dance move from the library (async wrapper).
+
+        Runs the synchronous blocking dance loop in a thread pool executor
+        to avoid blocking the async event loop while maintaining precise timing.
+
+        Args:
+            move_name: Name of the dance move from AVAILABLE_MOVES
+            duration_seconds: How long to perform the dance
+            bpm: Beats per minute (tempo)
+            amplitude_scale: Scale factor for all amplitudes (0.5 = half intensity)
+            neutral_pos: Neutral position offset [x, y, z] in meters
+            neutral_eul: Neutral orientation [roll, pitch, yaw] in radians
+        """
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            self._run_dance_sync,
+            move_name,
+            duration_seconds,
+            bpm,
+            amplitude_scale,
+            neutral_pos,
+            neutral_eul,
+        )
 
     async def yeah_nod(self, duration: int = 4, bpm: int = 120):
         """Perform an enthusiastic 'yeah' nod with subtle antenna wiggle.
