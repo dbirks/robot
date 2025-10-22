@@ -26,6 +26,9 @@ class Robot:
         """Enter context manager, establish connection."""
         # Use default_no_video to skip camera in sim mode (avoids camera errors)
         self._rm = ReachyMini(host=self._host, media_backend="default_no_video") if self._host else ReachyMini(media_backend="default_no_video")
+        # Wake up robot once when entering context for set_target() to work properly
+        # This enables motors and sets initial position
+        self._rm.wake_up()
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -136,9 +139,6 @@ class Robot:
             neutral_pos = np.array([0.0, 0.0, 0.0])
         if neutral_eul is None:
             neutral_eul = np.zeros(3)
-
-        # Wake up robot for set_target to work properly
-        self._rm.wake_up()
 
         move_fn, base_params, _ = AVAILABLE_MOVES[move_name]
 
