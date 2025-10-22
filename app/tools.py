@@ -137,6 +137,9 @@ class Robot:
         if neutral_eul is None:
             neutral_eul = np.zeros(3)
 
+        # Wake up robot for set_target to work properly
+        self._rm.wake_up()
+
         move_fn, base_params, _ = AVAILABLE_MOVES[move_name]
 
         # Scale amplitudes
@@ -161,8 +164,8 @@ class Robot:
             final_eul = neutral_eul + offsets.orientation_offset
             final_ant = offsets.antennas_offset
 
-            # Send to robot
-            pose = create_head_pose(*final_pos, *final_eul, degrees=False, mm=False)
+            # Send to robot (match dance_demo.py exactly)
+            pose = create_head_pose(*final_pos, *final_eul, degrees=False)
             self._rm.set_target(pose, antennas=final_ant)
 
             # Update time in beats
@@ -174,7 +177,7 @@ class Robot:
             await asyncio.sleep(max(0, control_ts - elapsed))
 
         # Return to neutral
-        pose = create_head_pose(*neutral_pos, *neutral_eul, degrees=False, mm=False)
+        pose = create_head_pose(*neutral_pos, *neutral_eul, degrees=False)
         self._rm.set_target(pose, antennas=np.zeros(2))
 
     async def yeah_nod(self, duration: int = 4, bpm: int = 120):
