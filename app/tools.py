@@ -13,7 +13,7 @@ class Robot:
     """Lightweight robot wrapper for reusing a single connection."""
 
     def __init__(self, host: Optional[str] = None):
-        """Initialize robot connection.
+        """Initialize robot wrapper (connection created later via init()).
 
         Args:
             host: Robot host URL. None for localhost daemon (default).
@@ -22,19 +22,41 @@ class Robot:
         self._host = host
         self._rm: ReachyMini | None = None
 
-    def __enter__(self):
-        """Enter context manager, establish connection."""
+    def init(self):
+        """Initialize robot connection and wake up robot.
+
+        Should be called ONCE at startup before any movements.
+        """
+        if self._rm is not None:
+            return  # Already initialized
+
         # Use default_no_video to skip camera in sim mode (avoids camera errors)
         self._rm = ReachyMini(host=self._host, media_backend="default_no_video") if self._host else ReachyMini(media_backend="default_no_video")
-        # Wake up robot once when entering context for set_target() to work properly
-        # This enables motors and sets initial position
+        # Wake up robot ONCE - enables motors and sets initial position
         self._rm.wake_up()
+        print("🤖 Robot initialized and awake")
+
+    def cleanup(self):
+        """Clean up robot connection."""
+        if self._rm:
+            try:
+                self._rm.__exit__(None, None, None)
+                print("🤖 Robot connection closed")
+            except Exception as e:
+                print(f"⚠️  Error closing robot: {e}")
+            finally:
+                self._rm = None
+
+    def __enter__(self):
+        """Enter context manager (for backward compatibility, but not recommended)."""
+        if self._rm is None:
+            self.init()
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        """Exit context manager, close connection."""
-        if self._rm:
-            self._rm.__exit__(exc_type, exc, tb)
+        """Exit context manager (for backward compatibility)."""
+        # Don't cleanup here - connection should persist across movements
+        pass
 
     def _goto_head(self, yaw=0, pitch=0, roll=0, z=0, duration=0.25):
         """Low-level helper to move head to specified pose.
