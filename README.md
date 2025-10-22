@@ -1,202 +1,30 @@
 # Reachy Mini + OpenAI Realtime API
 
-Voice-controlled Reachy Mini robot using OpenAI's Realtime API and Agents SDK.
+Voice-controlled Reachy Mini robot using OpenAI's Realtime API and Agents SDK. The Realtime API streams voice input/output and enables the model to call Python functions (tools) to control the robot. We use the [reachy-mini SDK](https://github.com/pollen-robotics/reachy_mini) for robot control.
 
-## Features
-
-- **Voice control** via OpenAI Realtime API (or text mode for testing)
-- **Motion tools**: nod, shake head, look at angles, wiggle antennas
-- **Simulation support**: Test without hardware using `reachy-mini-daemon --sim`
-- **Hardware ready**: Same code works on real Reachy Mini Lite/Wireless
-
-## Prerequisites
-
-- Python 3.13 (3.10-3.13 supported)
-- OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
-- Reachy Mini hardware (optional, can use simulator)
+Supports both OpenAI (`gpt-4o-realtime` or `gpt-4o-mini-realtime`) and Azure OpenAI.
 
 ## Quick Start
 
-### 1. Install Dependencies
-
 ```bash
-# Install with uv (recommended)
-uv sync
-
-# Or with pip
-pip install -e .
-```
-
-### 2. Set Up OpenAI API Key
-
-```bash
-# Copy example env file and edit with your API key
-cp .env.example .env
-# Then edit .env and replace with your actual key:
-# OPENAI_API_KEY=sk-your-actual-key-here
-```
-
-### 3. Start Robot Simulator (Terminal 1)
-
-```bash
+# Terminal 1: Start simulator
 reachy-mini-daemon --sim
+
+# Terminal 2: Set up and run agent
+cp .env.example .env
+# Edit .env with your OpenAI API key
+uv sync
+uv run python -m app.agent
 ```
 
-The daemon will start at `http://localhost:8000`. Visit `/docs` to see the REST API.
-
-**Note**: On macOS, use `mjpython -m reachy_mini.daemon.app.main --sim` for MuJoCo rendering.
-
-### 4. Run the Agent (Terminal 2)
-
-```bash
-# The agent will load OPENAI_API_KEY from .env
-python -m app.agent
-```
-
-The agent starts in **voice mode** by default. Speak to interact with the robot, and you'll see tool calls in the console as it moves.
-
-## Configuration
-
-### Switch to Text Mode (for testing)
-
-If you want to test without audio, edit `app/agent.py` and change:
-
-```python
-"modalities": ["audio"],  # Change to ["text"] for testing without audio
-```
-
-### Model Options
-
-```python
-"model_name": "gpt-realtime",          # Canonical GA model (recommended)
-# or
-"model_name": "gpt-4o-mini-realtime",  # Lower cost (check availability)
-```
-
-### Voice Options
-
-Available voices: `alloy`, `ash`, `ballad`, `coral`, `sage`, `verse`
-
-```python
-"voice": "ash",  # Change to your preferred voice
-```
-
-## Motion Tools
-
-The agent has access to these robot control functions:
-
-- **`nod(times=1)`**  Nod head up/down (1-5 times)
-- **`shake(times=1)`**  Shake head left/right (1-5 times)
-- **`look_at(x_deg, y_deg)`**  Look at absolute angles (yaw +/-35 degrees, pitch +/-20 degrees)
-- **`antenna_wiggle(seconds=2)`**  Wiggle antennas (1-10 seconds)
-
-All motions are safely clamped to prevent unrealistic movements.
-
-## Architecture
+## Project Structure
 
 ```
-┌─────────────────────┐
-│ OpenAI Realtime     │ (voice or text)
-│     Model           │
-└──────────┬──────────┘
-           │
-           │ function calls
-           ▼
-┌─────────────────────┐
-│ Agents SDK Runner   │ (app/agent.py)
-│ + Function Tools    │
-└──────────┬──────────┘
-           │
-           │ Python SDK calls
-           ▼
-┌─────────────────────┐
-│ reachy_mini.Robot   │ (app/tools.py)
-└──────────┬──────────┘
-           │
-           │ REST API (localhost:8000)
-           ▼
-┌─────────────────────┐
-│reachy-mini-daemon   │ (--sim or hardware)
-└─────────────────────┘
+app/
+    __init__.py
+    tools.py      # Robot motion functions
+    agent.py      # Realtime agent setup
+main.py           # Original example (not used)
+pyproject.toml    # Dependencies
+.env.example      # API key template
 ```
-
-## Hardware Usage
-
-### Lite (USB)
-
-```bash
-# Start daemon (auto-detects serial)
-reachy-mini-daemon
-
-# Or specify port
-reachy-mini-daemon -p /dev/ttyUSB0
-
-# Run agent (same code)
-python -m app.agent
-```
-
-### Wireless (Raspberry Pi)
-
-On the Raspberry Pi:
-```bash
-reachy-mini-daemon
-```
-
-On your computer, update `app/tools.py`:
-```python
-ROBOT = Robot(host="http://<pi-ip>:8000")
-```
-
-## Troubleshooting
-
-### Daemon not responding
-- Ensure `reachy-mini-daemon --sim` is running
-- Check `http://localhost:8000/docs` loads
-- Verify Python can connect: `curl http://localhost:8000/api/state/full`
-
-### macOS simulator issues
-- Use `mjpython` instead of `python` for MuJoCo viewer
-- Install with: `pip install mujoco`
-
-### Model name errors
-- Try `gpt-realtime` if mini variants fail
-- Check [OpenAI model list](https://platform.openai.com/docs/models) for current names
-
-### Audio not working
-- Start with `modalities: ["text"]` to verify tool calls work
-- Then switch to `["audio"]` once motion control is confirmed
-- Ensure microphone permissions are granted
-
-## Development
-
-### Project Structure
-
-```
-reachy-robot/
-  app/
-      __init__.py
-      tools.py      # Robot motion functions
-      agent.py      # Realtime agent setup
-  main.py           # Original example (not used by agent)
-  pyproject.toml    # Dependencies
-  .env.example      # API key template
-  README.md
-```
-
-### Adding New Motions
-
-1. Add method to `Robot` class in `app/tools.py`
-2. Create `@function_tool` wrapper in `app/agent.py`
-3. Add tool to agent's `tools=[...]` list
-4. Test in text mode first, then voice
-
-## Resources
-
-- [Reachy Mini SDK](https://github.com/pollen-robotics/reachy_mini)
-- [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)
-- [Realtime API Docs](https://platform.openai.com/docs/guides/realtime)
-- [Reachy Mini Docs](https://docs.pollen-robotics.com/)
-
-## License
-
-See LICENSE file.
