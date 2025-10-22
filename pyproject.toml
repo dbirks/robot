@@ -8,4 +8,5 @@ dependencies = [
     "reachy-mini[mujoco]==1.0.0rc5",
     "openai-agents==0.4.0",
     "python-dotenv==1.1.1",
+    "reachy-mini-dances-library==0.2.1",
 ]

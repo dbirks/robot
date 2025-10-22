@@ -2,9 +2,11 @@
 
 import asyncio
 import math
+import numpy as np
 from typing import Optional
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
+from reachy_mini_dances_library.collection.dance import AVAILABLE_MOVES
 
 
 class Robot:
@@ -86,6 +88,11 @@ class Robot:
     async def antenna_wiggle(self, seconds: int = 2):
         """Wiggle antennas for specified duration.
 
+        For subtle/cute wiggles, use smaller amplitudes:
+        - Subtle: 20° (0.35 rad) - like yeah_nod dance
+        - Moderate: 40° (0.70 rad) - like headbanger_combo
+        - Default: 10° amplitude with sine wave
+
         Args:
             seconds: Duration in seconds (clamped to 1-10)
         """
@@ -105,3 +112,111 @@ class Robot:
 
         # Return antennas to neutral
         self._rm.goto_target(antennas=[0.0, 0.0], duration=0.2)
+
+    async def _run_dance(
+        self,
+        move_name: str,
+        duration_seconds: float,
+        bpm: float = 120.0,
+        amplitude_scale: float = 1.0,
+        neutral_pos: np.ndarray = None,
+        neutral_eul: np.ndarray = None,
+    ):
+        """Execute a dance move from the library.
+
+        Args:
+            move_name: Name of the dance move from AVAILABLE_MOVES
+            duration_seconds: How long to perform the dance
+            bpm: Beats per minute (tempo)
+            amplitude_scale: Scale factor for all amplitudes (0.5 = half intensity)
+            neutral_pos: Neutral position offset [x, y, z] in meters
+            neutral_eul: Neutral orientation [roll, pitch, yaw] in radians
+        """
+        if neutral_pos is None:
+            neutral_pos = np.array([0.0, 0.0, 0.0])
+        if neutral_eul is None:
+            neutral_eul = np.zeros(3)
+
+        move_fn, base_params, _ = AVAILABLE_MOVES[move_name]
+
+        # Scale amplitudes
+        params = base_params.copy()
+        for key in params:
+            if "amplitude" in key or "_amp" in key:
+                params[key] *= amplitude_scale
+
+        # Time loop
+        control_ts = 0.01  # 100 Hz control loop
+        t_beats = 0.0
+        end_time = asyncio.get_event_loop().time() + duration_seconds
+
+        while asyncio.get_event_loop().time() < end_time:
+            loop_start = asyncio.get_event_loop().time()
+
+            # Calculate offsets from dance move
+            offsets = move_fn(t_beats, **params)
+
+            # Apply offsets to neutral pose
+            final_pos = neutral_pos + offsets.position_offset
+            final_eul = neutral_eul + offsets.orientation_offset
+            final_ant = offsets.antennas_offset
+
+            # Send to robot
+            pose = create_head_pose(*final_pos, *final_eul, degrees=False, mm=False)
+            self._rm.set_target(pose, antennas=final_ant)
+
+            # Update time in beats
+            beats_per_second = bpm / 60.0
+            t_beats += control_ts * beats_per_second
+
+            # Sleep to maintain control loop rate
+            elapsed = asyncio.get_event_loop().time() - loop_start
+            await asyncio.sleep(max(0, control_ts - elapsed))
+
+        # Return to neutral
+        pose = create_head_pose(*neutral_pos, *neutral_eul, degrees=False, mm=False)
+        self._rm.set_target(pose, antennas=np.zeros(2))
+
+    async def yeah_nod(self, duration: int = 4, bpm: int = 120):
+        """Perform an enthusiastic 'yeah' nod with subtle antenna wiggle.
+
+        This is an emphatic two-part nod gesture with both antennas moving
+        together in a cute, subtle 20° wiggle.
+
+        Args:
+            duration: Duration in seconds (clamped to 2-10)
+            bpm: Beats per minute / tempo (clamped to 60-180)
+        """
+        duration = max(2, min(10, int(duration)))
+        bpm = max(60, min(180, int(bpm)))
+        await self._run_dance("yeah_nod", duration, bpm=bpm)
+
+    async def headbanger_combo(self, duration: int = 4, bpm: int = 120, intensity: float = 1.0):
+        """Perform high-energy headbanging with vertical bounce.
+
+        Combines a strong 30° pitch nod with vertical body bounce and
+        synchronized antenna movement (40° amplitude).
+
+        Args:
+            duration: Duration in seconds (clamped to 2-10)
+            bpm: Beats per minute / tempo (clamped to 60-180)
+            intensity: Movement intensity multiplier (clamped to 0.3-2.0)
+        """
+        duration = max(2, min(10, int(duration)))
+        bpm = max(60, min(180, int(bpm)))
+        intensity = max(0.3, min(2.0, float(intensity)))
+        await self._run_dance("headbanger_combo", duration, bpm=bpm, amplitude_scale=intensity)
+
+    async def dizzy_spin(self, duration: int = 6, bpm: int = 100):
+        """Perform a circular, dizzying head motion.
+
+        Creates a slow, circular head motion by combining roll and pitch
+        movements with opposing antenna wiggle (45° amplitude).
+
+        Args:
+            duration: Duration in seconds (clamped to 3-15)
+            bpm: Beats per minute / tempo (clamped to 40-140)
+        """
+        duration = max(3, min(15, int(duration)))
+        bpm = max(40, min(140, int(bpm)))
+        await self._run_dance("dizzy_spin", duration, bpm=bpm)
