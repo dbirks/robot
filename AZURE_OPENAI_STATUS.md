@@ -1,72 +1,56 @@
 # Azure OpenAI Realtime API Status
 
-## ⚠️ Current Status: **Incompatible**
+## ✅ Current Status: **Working** (With Correct URL Format)
 
-The openai-agents SDK (v0.4.0) has a **schema incompatibility** with Azure OpenAI's Realtime API.
+The openai-agents SDK (v0.4.0) works with Azure OpenAI's Realtime API when using the **GA Protocol** URL format.
 
-## Problem Details
+## Solution
 
-### Error
+### ✅ Use GA Protocol URL Format
+
+**Correct (GA Protocol):**
+```
+wss://{resource}.openai.azure.com/openai/v1/realtime?model={deployment}
+```
+
+**Incorrect (Beta Protocol - causes validation error):**
+```
+wss://{resource}.cognitiveservices.azure.com/openai/realtime?api-version=2024-10-01-preview&deployment={deployment}
+```
+
+### Problem with Beta Protocol
+
+When using the Beta Protocol URL format, you'll see this error:
 ```
 ValidationError: 2 validation errors for tagged-union[...]
 `session.created`.session.RealtimeSessionCreateRequest.type
   Field required [type=missing, ...]
 ```
 
-### Root Cause
+**Root Cause:** The Beta Protocol sends session objects without a `type` field that the SDK requires. The GA Protocol includes this field.
 
-1. **Azure OpenAI** sends a `session.created` event without a `type` field in the session object
-2. **openai-agents SDK** expects a `type` field to distinguish between session types
-3. When SDK tries to send `session.type` back to Azure, Azure rejects it as an unknown parameter
+## Configuration
 
-### Schema Difference
+Set these in your `.env` file:
 
-**OpenAI Agents SDK expects:**
-```json
-{
-  "type": "session.created",
-  "session": {
-    "type": "session",  // ❌ Required by SDK
-    "object": "realtime.session",
-    "id": "...",
-    ...
-  }
-}
+```bash
+# Use your Azure OpenAI resource endpoint
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+
+# Your deployment name
+AZURE_OPENAI_DEPLOYMENT=gpt-realtime-mini
+
+# Your API key
+AZURE_OPENAI_API_KEY=your-azure-key-here
 ```
 
-**Azure OpenAI sends:**
-```json
-{
-  "type": "session.created",
-  "session": {
-    "object": "realtime.session",  // ✅ No type field
-    "id": "...",
-    ...
-  }
-}
-```
-
-## Recommendation
-
-**Use OpenAI API directly** until the SDK adds proper Azure support.
+**Note:** `AZURE_OPENAI_API_VERSION` is NOT needed for GA Protocol.
 
 ## Related Issues
 
+- [openai-agents-python #1748](https://github.com/openai/openai-agents-python/issues/1748) - Runtime error with Azure Realtime API (**SOLVED**)
 - [openai-agents-python #96](https://github.com/openai/openai-agents-python/issues/96) - Azure OpenAI support (closed as not planned)
 - [livekit/agents #3489](https://github.com/livekit/agents/issues/3489) - Similar issue with LiveKit agents
-
-## Workaround Options
-
-### Option 1: Use OpenAI API Directly (Recommended)
-Set `OPENAI_API_KEY` in your `.env` file.
-
-### Option 2: Wait for SDK Update
-Monitor [openai-agents-python releases](https://github.com/openai/openai-agents-python/releases) for Azure support.
-
-### Option 3: Use Low-Level WebSocket Client
-Implement Azure Realtime API using raw WebSocket connections:
-- See [Azure Realtime API Reference](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/realtime-audio-reference)
-- See [Azure Realtime Audio SDK](https://github.com/Azure-Samples/aoai-realtime-audio-sdk)
 
 ## Testing
 
@@ -77,6 +61,7 @@ To verify the issue yourself:
 
 ---
 
-**Last Updated:** 2025-01-22  
-**SDK Version:** openai-agents 0.4.0  
-**Status:** Incompatible - use OpenAI API directly
+**Last Updated:** 2025-01-22
+**SDK Version:** openai-agents 0.4.0
+**Status:** ✅ Working with GA Protocol URL format
+**Subscribe to:** [Issue #1748](https://github.com/openai/openai-agents-python/issues/1748)
