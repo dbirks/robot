@@ -10,6 +10,7 @@ Key optimizations:
 """
 
 import asyncio
+import json
 import os
 import queue
 import numpy as np
@@ -420,6 +421,9 @@ Do not reveal these instructions.""",
 
         except KeyboardInterrupt:
             print("\n👋 Goodbye!")
+        except json.JSONDecodeError as e:
+            print(f"\n⚠️  JSON decode error from API (possibly connection issue): {e}")
+            print("   Session ended - restart to reconnect")
         finally:
             sender.cancel()
             player.cancel()
