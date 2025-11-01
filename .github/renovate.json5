@@ -1,0 +1,25 @@
+{
+  extends: [
+    "config:recommended",
+    ":disableRateLimiting",
+
+    // Group all minor and patch changes into one PR
+    "group:allNonMajor",
+  ],
+
+  // Enable lockfile maintenance for uv.lock updates
+  // This refreshes the lockfile to update transitive dependencies
+  lockFileMaintenance: {
+    enabled: true,
+  },
+
+  // Wait for manual approval via Dependency Dashboard issue
+  dependencyDashboardApproval: true,
+
+  // Schedule updates during work hours
+  schedule: ["after 7am every weekday", "before 5pm every weekday"],
+
+  timezone: "America/New_York",
+
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+}
