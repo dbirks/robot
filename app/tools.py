@@ -3,8 +3,9 @@
 import asyncio
 import math
 import time
-import numpy as np
 from typing import Optional
+
+import numpy as np
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 from reachy_mini_dances_library.collection.dance import AVAILABLE_MOVES
@@ -32,7 +33,11 @@ class Robot:
             return  # Already initialized
 
         # Use default_no_video to skip camera in sim mode (avoids camera errors)
-        self._rm = ReachyMini(host=self._host, media_backend="default_no_video") if self._host else ReachyMini(media_backend="default_no_video")
+        self._rm = (
+            ReachyMini(host=self._host, media_backend="default_no_video")
+            if self._host
+            else ReachyMini(media_backend="default_no_video")
+        )
         # Wake up robot ONCE - enables motors and sets initial position
         self._rm.wake_up()
         print("🤖 Robot initialized and awake")
@@ -129,10 +134,7 @@ class Robot:
         while asyncio.get_event_loop().time() < end:
             amp = 10.0 * math.sin(phase)
             # Antenna control via goto_target - format: [right, left] in radians
-            self._rm.goto_target(
-                antennas=[-amp, amp],
-                duration=0.15
-            )
+            self._rm.goto_target(antennas=[-amp, amp], duration=0.15)
             await asyncio.sleep(0.15)
             phase += 0.8
 
