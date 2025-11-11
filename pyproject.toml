@@ -3,7 +3,7 @@ name = "reachy-robot"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13,<3.14" # for scipy dep of reachy-mini
+requires-python = ">=3.14,<3.15" # for scipy dep of reachy-mini
 dependencies = [
     "reachy-mini[mujoco]==1.0.0",
     "openai-agents==0.4.2",
