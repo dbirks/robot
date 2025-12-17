@@ -7,6 +7,7 @@ from typing import Optional
 
 import numpy as np
 from reachy_mini import ReachyMini
+from reachy_mini.motion.recorded_move import RecordedMoves
 from reachy_mini.utils import create_head_pose
 from reachy_mini_dances_library.collection.dance import AVAILABLE_MOVES
 
@@ -23,6 +24,7 @@ class Robot:
         """
         self._host = host
         self._rm: ReachyMini | None = None
+        self._emotions: RecordedMoves | None = None
 
     def init(self):
         """Initialize robot connection and wake up robot.
@@ -47,6 +49,15 @@ class Robot:
             print("🤖 Robot initialized (silent wake)")
         else:
             print("🤖 Robot initialized and awake")
+
+        # Load emotions library from HuggingFace
+        try:
+            print("📦 Loading emotions library from HuggingFace...")
+            self._emotions = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
+            print(f"😊 Loaded {len(self._emotions.list_moves())} emotions")
+        except Exception as e:
+            print(f"⚠️  Failed to load emotions library: {e}")
+            self._emotions = None
 
     def cleanup(self):
         """Clean up robot connection."""
@@ -291,3 +302,23 @@ class Robot:
         duration = max(3, min(15, int(duration)))
         bpm = max(40, min(140, int(bpm)))
         await self._run_dance("dizzy_spin", duration, bpm=bpm)
+
+    async def play_emotion(self, emotion_name: str, with_sound: bool = True):
+        """Play an emotion from the emotions library.
+
+        Args:
+            emotion_name: Name of the emotion (e.g., "laughing1", "surprised1")
+            with_sound: Whether to play the audio that accompanies the emotion
+
+        Raises:
+            ValueError: If emotion not found or emotions library not loaded
+        """
+        if self._emotions is None:
+            raise ValueError("Emotions library not loaded")
+
+        try:
+            move = self._emotions.get(emotion_name)
+            # Use async_play_move to avoid blocking - it returns immediately
+            self._rm.async_play_move(move, sound=with_sound)
+        except ValueError as e:
+            raise ValueError(f"Emotion '{emotion_name}' not found") from e
