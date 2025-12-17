@@ -211,8 +211,8 @@ async def _execute_dizzy_spin(duration: int, bpm: int):
 
 
 async def _execute_emotion(emotion_name: str):
-    """Execute emotion playback."""
-    await ROBOT.play_emotion(emotion_name, with_sound=True)
+    """Execute emotion playback (silent due to audio device limitations)."""
+    await ROBOT.play_emotion(emotion_name, with_sound=False)
 
 
 # --- Audio I/O ---
