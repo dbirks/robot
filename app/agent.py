@@ -330,16 +330,17 @@ async def main():
     for emotion_name in ROBOT._emotions.list_moves():
         # Create a closure that captures the emotion_name
         def make_emotion_tool(name):
-            @function_tool
-            async def emotion_func() -> str:
-                """Play an emotion animation."""
+            async def emotion_wrapper() -> str:
                 await movement_queue.put((_execute_emotion, (name,)))
                 return f"{name}"
 
-            # Set proper function name and docstring
-            emotion_func.__name__ = name
-            emotion_func.__doc__ = f"Express {name.replace('1', '').replace('2', '').replace('3', '')} emotion."
-            return emotion_func
+            # Set name and docstring BEFORE applying decorator (critical!)
+            # The decorator captures __name__ immediately, so we must set it first
+            emotion_wrapper.__name__ = name
+            emotion_wrapper.__doc__ = f"Express {name.replace('1', '').replace('2', '').replace('3', '')} emotion."
+
+            # Now apply decorator - it will capture the correct name
+            return function_tool(emotion_wrapper)
 
         tool = make_emotion_tool(emotion_name)
         emotion_tools.append(tool)
