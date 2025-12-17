@@ -225,6 +225,45 @@ class Robot:
         pose = create_head_pose(*neutral_pos, *neutral_eul, degrees=False)
         self._rm.set_target(pose, antennas=np.zeros(2))
 
+    def _play_move_blocking_100hz(self, move, with_sound: bool = True):
+        """Universal 100Hz blocking playback for any Move (RecordedMove or DanceMove).
+
+        Uses precise time.sleep() for smooth motion, matching the dance timing.
+        This method is intended to be run in an executor via run_in_executor().
+
+        Args:
+            move: A Move object (RecordedMove from emotions or DanceMove)
+            with_sound: Whether to play accompanying audio
+        """
+        control_ts = 0.01  # 100 Hz control loop (10ms per frame)
+
+        # Play sound if available (emotions have sound_path, dances don't)
+        if hasattr(move, 'sound_path') and move.sound_path and with_sound:
+            try:
+                self._rm.media_manager.play_sound(str(move.sound_path))
+            except Exception:
+                pass  # Ignore audio errors (device issues are common)
+
+        t0 = time.time()
+        while time.time() - t0 < move.duration:
+            loop_start = time.time()
+            t = min(time.time() - t0, move.duration - 1e-2)
+
+            # Evaluate move at current time
+            head, antennas, body_yaw = move.evaluate(t)
+
+            # Send commands to robot
+            if head is not None:
+                self._rm.set_target_head_pose(head)
+            if body_yaw is not None:
+                self._rm.set_target_body_yaw(body_yaw)
+            if antennas is not None:
+                self._rm.set_target_antenna_joint_positions(list(antennas))
+
+            # Precise sleep to maintain 100Hz
+            elapsed = time.time() - loop_start
+            time.sleep(max(0, control_ts - elapsed))
+
     async def _run_dance(
         self,
         move_name: str,
@@ -290,7 +329,9 @@ class Robot:
         await self._run_dance("dizzy_spin", duration, bpm=bpm)
 
     async def play_emotion(self, emotion_name: str, with_sound: bool = True):
-        """Play an emotion from the emotions library.
+        """Play an emotion from the emotions library with smooth 100Hz timing.
+
+        Uses blocking loop in executor (same as dances) for precise motion control.
 
         Args:
             emotion_name: Name of the emotion (e.g., "laughing1", "surprised1")
@@ -304,7 +345,14 @@ class Robot:
 
         try:
             move = self._emotions.get(emotion_name)
-            # Use async_play_move to avoid blocking - it returns immediately
-            await self._rm.async_play_move(move, sound=with_sound)
+
+            # Use blocking 100Hz loop in executor for smooth motion
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self._play_move_blocking_100hz,
+                move,
+                with_sound,
+            )
         except ValueError as e:
             raise ValueError(f"Emotion '{emotion_name}' not found") from e
