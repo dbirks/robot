@@ -137,7 +137,7 @@ class Robot:
         """Wiggle antennas for specified duration.
 
         For subtle/cute wiggles, use smaller amplitudes:
-        - Subtle: 20° (0.35 rad) - like yeah_nod dance
+        - Subtle: 20° (0.35 rad)
         - Moderate: 40° (0.70 rad) - like headbanger_combo
         - Default: 10° amplitude with sine wave
 
@@ -259,20 +259,6 @@ class Robot:
             neutral_eul,
         )
 
-    async def yeah_nod(self, duration: int = 4, bpm: int = 120):
-        """Perform an enthusiastic 'yeah' nod with subtle antenna wiggle.
-
-        This is an emphatic two-part nod gesture with both antennas moving
-        together in a cute, subtle 20° wiggle.
-
-        Args:
-            duration: Duration in seconds (clamped to 2-10)
-            bpm: Beats per minute / tempo (clamped to 60-180)
-        """
-        duration = max(2, min(10, int(duration)))
-        bpm = max(60, min(180, int(bpm)))
-        await self._run_dance("yeah_nod", duration, bpm=bpm)
-
     async def headbanger_combo(self, duration: int = 4, bpm: int = 120, intensity: float = 1.0):
         """Perform high-energy headbanging with vertical bounce.
 
@@ -319,6 +305,6 @@ class Robot:
         try:
             move = self._emotions.get(emotion_name)
             # Use async_play_move to avoid blocking - it returns immediately
-            self._rm.async_play_move(move, sound=with_sound)
+            await self._rm.async_play_move(move, sound=with_sound)
         except ValueError as e:
             raise ValueError(f"Emotion '{emotion_name}' not found") from e
