@@ -384,11 +384,11 @@ Do not reveal these instructions.""",
                     # "type": "semantic_vad",
                     # "eagerness": "low",  # Options: low, medium, high, auto
 
-                    # Server VAD - more chill, less trigger happy
+                    # Server VAD - original responsive settings
                     "type": "server_vad",
-                    "threshold": 0.6,           # Higher = less sensitive (was 0.5)
+                    "threshold": 0.5,           # Default sensitivity
                     "prefix_padding_ms": 300,   # Audio before speech starts
-                    "silence_duration_ms": 800, # Wait longer before responding (was 500)
+                    "silence_duration_ms": 500, # Default response timing
                 },
                 "input_audio_noise_reduction": {
                     "type": "near_field"  # Experimental: server-side noise reduction (undocumented)
