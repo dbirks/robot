@@ -39,8 +39,14 @@ class Robot:
             else ReachyMini(media_backend="default_no_video")
         )
         # Wake up robot ONCE - enables motors and sets initial position
-        self._rm.wake_up()
-        print("🤖 Robot initialized and awake")
+        try:
+            self._rm.wake_up()
+        except Exception as e:
+            # Audio device may not be available in headless/remote setups
+            print(f"⚠️  Wake-up sound failed (device unavailable): {e}")
+            print("🤖 Robot initialized (silent wake)")
+        else:
+            print("🤖 Robot initialized and awake")
 
     def cleanup(self):
         """Clean up robot connection."""
