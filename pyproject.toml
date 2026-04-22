@@ -1,28 +1,33 @@
 [project]
-name = "reachy-robot"
+name = "reachy-local-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local voice-driven agent for Reachy Mini"
 readme = "README.md"
-# requires-python = ">=3.13,<3.14" # for scipy dep of reachy-mini
+requires-python = ">=3.12"
 dependencies = [
-    "reachy-mini[mujoco]==1.2.2",
-    "openai-agents>=0.6.3",
-    "python-dotenv==1.2.1",
-    "reachy-mini-dances-library==0.2.1",
-    "datasets>=4.4.1",
-    "ddgs>=9.9.3",
-    "opencv-contrib-python>=4.12.0.88",
+    "reachy-mini>=1.6.0",
+    "faster-whisper>=1.1.0",
+    "piper-tts>=1.4.0",
+    "openai>=1.0.0",
+    "silero-vad>=5.1",
+    "sounddevice>=0.5.0",
+    "numpy>=1.26.0",
+    "python-dotenv>=1.0.0",
+    "opencv-contrib-python>=4.10.0",
 ]
+
+[project.optional-dependencies]
+sim = ["reachy-mini[mujoco]"]
+dances = ["reachy-mini-dances-library>=0.2.0"]
 
 [dependency-groups]
 dev = [
-    "ruff==0.14.3",
-    "ty==0.0.1a25",
+    "ruff>=0.14.0",
+    "ty>=0.0.1a25",
 ]
 
 [tool.ruff]
 line-length = 120
 
-# Enable import sorting
 [tool.ruff.lint]
-select = ["I"]  # Enable isort rules
+select = ["I"]
