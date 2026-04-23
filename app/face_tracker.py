@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 
 import cv2
@@ -12,6 +13,8 @@ FRAME_CENTER_Y = 0.4
 DEAD_ZONE = 0.08
 MAX_YAW = 35
 MAX_PITCH = 20
+EMA_ALPHA = 0.3
+TRACKING_HZ = 20
 
 
 class FaceTracker:
@@ -101,3 +104,43 @@ class FaceTracker:
         if best_sim >= threshold:
             return best_name
         return None
+
+    def run_tracking_loop(self, robot_mini, stop_event: threading.Event | None = None):
+        """Continuously track the largest face and move the robot head to follow it.
+
+        Runs until stop_event is set or KeyboardInterrupt. Call from a thread
+        so it doesn't block the main conversation loop.
+        """
+        from reachy_mini.utils import create_head_pose
+
+        if stop_event is None:
+            stop_event = threading.Event()
+
+        self.open_camera()
+        smooth_yaw, smooth_pitch = 0.0, 0.0
+        interval = 1.0 / TRACKING_HZ
+        log.info("Face tracking started at %d Hz", TRACKING_HZ)
+
+        try:
+            while not stop_event.is_set():
+                start = time.monotonic()
+                frame = self.grab_frame()
+                if frame is None:
+                    time.sleep(interval)
+                    continue
+
+                faces = self.detect(frame)
+                if faces:
+                    yaw, pitch = self.compute_head_target(faces[0])
+                    smooth_yaw = EMA_ALPHA * yaw + (1 - EMA_ALPHA) * smooth_yaw
+                    smooth_pitch = EMA_ALPHA * pitch + (1 - EMA_ALPHA) * smooth_pitch
+                    pose = create_head_pose(yaw=smooth_yaw, pitch=smooth_pitch, degrees=True)
+                    robot_mini.set_target(head=pose)
+
+                elapsed = time.monotonic() - start
+                sleep_time = interval - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+        finally:
+            self.close_camera()
+            log.info("Face tracking stopped")
