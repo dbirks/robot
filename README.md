@@ -71,11 +71,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### Reachy Mini USB permissions (Lite version)
 
 ```bash
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666", GROUP="dialout"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="38fb", ATTRS{idProduct}=="1001", MODE="0666", GROUP="dialout"' \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666", GROUP="uucp"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="38fb", ATTRS{idProduct}=="1001", MODE="0666", GROUP="uucp"' \
 | sudo tee /etc/udev/rules.d/99-reachy-mini.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
-sudo usermod -aG dialout $USER
+sudo usermod -aG uucp $USER
+# Log out and back in for the group change to take effect
 ```
 
 ## Setup
