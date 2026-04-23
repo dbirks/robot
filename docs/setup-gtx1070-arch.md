@@ -58,6 +58,7 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="38fb", ATTRS{idProduct}=="1001", MODE="0666"
 sudo udevadm control --reload-rules && sudo udevadm trigger
 sudo usermod -aG uucp $USER
 sudo usermod -aG video $USER
+sudo usermod -aG audio $USER
 # Log out and back in for group changes to take effect
 ```
 
