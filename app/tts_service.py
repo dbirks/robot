@@ -22,7 +22,7 @@ class TTSService:
         start = time.monotonic()
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
-            self.voice.synthesize(text, wf)
+            self.voice.synthesize_wav(text, wf)
         buf.seek(0)
         with wave.open(buf, "rb") as wf:
             audio = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
@@ -30,5 +30,6 @@ class TTSService:
         return audio
 
     def synthesize_stream(self, text: str) -> Iterator[np.ndarray]:
-        for chunk in self.voice.synthesize_stream_raw(text):
-            yield np.frombuffer(chunk, dtype=np.int16)
+        for chunk in self.voice.synthesize(text):
+            audio = (chunk.audio_float_array * 32767).astype(np.int16)
+            yield audio

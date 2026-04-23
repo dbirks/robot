@@ -47,6 +47,7 @@ class AgentClient:
                 messages=self.messages,
                 tools=self.tools if self.tools else None,
                 max_tokens=self.max_tokens,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             elapsed = time.monotonic() - start
             choice = response.choices[0]

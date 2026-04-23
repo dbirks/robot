@@ -45,17 +45,24 @@ Install these on the host machine (Arch Linux):
 
 ```bash
 # NVIDIA drivers + CUDA
-sudo pacman -S nvidia nvidia-utils cuda cudnn
+sudo pacman -S nvidia nvidia-utils cudnn
+# CUDA toolkit — see "GPU Compatibility" section below for version choice
+sudo pacman -S cuda
 
-# Audio libraries
-sudo pacman -S portaudio
+# Audio server + libraries
+sudo pacman -S pipewire pipewire-pulse pipewire-alsa wireplumber portaudio
+systemctl --user enable --now pipewire pipewire-pulse wireplumber
 
 # GStreamer (for Reachy camera)
 sudo pacman -S gstreamer gst-plugins-base gst-plugins-good
 
-# llama.cpp (build from source or install from AUR)
+# llama.cpp (build from source)
 # See: https://github.com/ggml-org/llama.cpp
-# Build with CUDA: cmake -B build -DGGML_CUDA=ON && cmake --build build
+git clone https://github.com/ggml-org/llama.cpp
+cd llama.cpp
+CUDACXX=/opt/cuda/bin/nvcc cmake -B build -DGGML_CUDA=ON -DCUDAToolkit_ROOT=/opt/cuda
+cmake --build build --config Release -j$(nproc)
+sudo cp build/bin/llama-server /usr/local/bin/
 
 # uv (Python package manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -78,9 +85,9 @@ sudo usermod -aG dialout $USER
 ```bash
 mkdir -p models/gguf models/piper
 
-# LLM — pick a Qwen 3.5 4B GGUF (Q4_K_M recommended for GTX 1070)
-# Download from https://huggingface.co/models?search=qwen3.5-4b+gguf
-# Place in models/gguf/
+# LLM — Qwen 3.5 4B Q4_K_M (recommended for GTX 1070)
+curl -L -o models/gguf/qwen3.5-4b-q4_k_m.gguf \
+  "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
 
 # TTS voice
 wget -O models/piper/en_GB-northern_english_male-medium.onnx \
@@ -167,22 +174,37 @@ The agent can call these tools during conversation:
 
 Add the OpenAI function schema to `TOOLS` in `robot_tools.py` and a handler function in `make_handlers()`. Handlers must return a JSON-serializable dict and never raise exceptions.
 
+## GPU Compatibility
+
+**CUDA 13 dropped support for Pascal GPUs** (GTX 1070 and older, compute capability < 7.5). If you have a Pascal card, you need CUDA 12.x:
+
+```bash
+# For Pascal GPUs (GTX 1070, etc.) — install CUDA 12.9 from AUR
+yay -S cuda-12.9   # replaces the cuda package
+```
+
+The `ctranslate2` library (used by faster-whisper) also needs a matching CUDA version. If you see `libcublas.so.12 not found` errors, your CUDA toolkit version doesn't match. Use `WHISPER_DEVICE=cpu` with `WHISPER_COMPUTE_TYPE=int8` as a reliable fallback — it's fast enough for small.en.
+
 ## VRAM Budget (GTX 1070, 8 GB)
 
 | Component | VRAM |
 |-----------|------|
-| faster-whisper small.en (float16) | ~1.5 GB |
+| faster-whisper small.en (int8, CUDA) | ~1 GB |
 | Qwen 3.5 4B Q4_K_M via llama.cpp | ~3 GB |
 | CUDA overhead | ~0.5 GB |
-| **Total** | **~5 GB** |
+| **Total** | **~4.5 GB** |
 
-If VRAM is tight, set `WHISPER_DEVICE=cpu` and `WHISPER_COMPUTE_TYPE=int8` in `.env` to run STT on CPU instead.
+To free more VRAM, set `WHISPER_DEVICE=cpu` and `WHISPER_COMPUTE_TYPE=int8` in `.env` to run STT on CPU instead (~0 VRAM, still fast).
 
 ## llama.cpp Notes
 
 The `--jinja` flag in `run_llama_server.sh` is **required** for tool calling to work. Without it, the server silently ignores the `tools` parameter.
 
 Context is set to 4096 by default (`LLAMA_CTX`). This is conservative but keeps memory low. Increase if the model needs more context for complex conversations.
+
+### Qwen 3.5 thinking mode
+
+Qwen 3.5 enables "thinking" by default — the model spends tokens on internal reasoning before responding. This is wasteful for a voice agent (adds latency, consumes the token budget). The agent client disables it via `chat_template_kwargs: {"enable_thinking": false}`, passed through the OpenAI client's `extra_body` parameter. If you swap to a non-thinking model, this parameter is harmlessly ignored.
 
 ## Agent Framework
 

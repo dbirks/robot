@@ -9,7 +9,7 @@ CTX="${LLAMA_CTX:-4096}"
 GPU_LAYERS="${LLAMA_GPU_LAYERS:-99}"
 
 exec llama-server \
-    --jinja -fa \
+    --jinja -fa on \
     -m "$MODEL_PATH" \
     -c "$CTX" \
     -ngl "$GPU_LAYERS" \
