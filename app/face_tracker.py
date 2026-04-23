@@ -8,13 +8,11 @@ from insightface.app import FaceAnalysis
 
 log = logging.getLogger(__name__)
 
-FRAME_CENTER_X = 0.5
-FRAME_CENTER_Y = 0.4
-DEAD_ZONE = 0.08
-MAX_YAW = 35
-MAX_PITCH = 20
-EMA_ALPHA = 0.3
-TRACKING_HZ = 20
+EMA_ALPHA = 0.25
+DECAY_ALPHA = 0.03
+MOVEMENT_HZ = 60
+OVERSHOOT_SCALE = 0.85
+FACE_LOST_TIMEOUT = 0.5
 
 
 class FaceTracker:
@@ -72,20 +70,11 @@ class FaceTracker:
         results.sort(key=lambda f: f["area"], reverse=True)
         return results
 
-    def compute_head_target(self, face: dict) -> tuple[float, float]:
-        """Return (yaw, pitch) in degrees to center the face in frame."""
+    def face_pixel_center(self, face: dict, frame_shape: tuple) -> tuple[int, int]:
+        """Return face center as (u, v) pixel coordinates."""
         cx, cy = face["center"]
-        dx = cx - FRAME_CENTER_X
-        dy = cy - FRAME_CENTER_Y
-
-        if abs(dx) < DEAD_ZONE:
-            dx = 0
-        if abs(dy) < DEAD_ZONE:
-            dy = 0
-
-        yaw = -dx * MAX_YAW * 2
-        pitch = -dy * MAX_PITCH * 2
-        return (np.clip(yaw, -MAX_YAW, MAX_YAW), np.clip(pitch, -MAX_PITCH, MAX_PITCH))
+        h, w = frame_shape[:2]
+        return (int(cx * w), int(cy * h))
 
     def register_face(self, name: str, embedding: np.ndarray):
         self.known_faces[name] = embedding / np.linalg.norm(embedding)
@@ -108,8 +97,15 @@ class FaceTracker:
     def run_tracking_loop(self, robot_mini, stop_event: threading.Event | None = None):
         """Continuously track the largest face and move the robot head to follow it.
 
-        Runs until stop_event is set or KeyboardInterrupt. Call from a thread
-        so it doesn't block the main conversation loop.
+        Uses a decoupled two-thread architecture for smooth movement:
+        - Detection thread: runs face detection as fast as it can and updates
+          a shared target pose via look_at_image().
+        - Movement thread: runs at MOVEMENT_HZ, applies EMA smoothing to the
+          latest target pose, and sends updates to the robot servos.
+
+        When no face is detected for FACE_LOST_TIMEOUT seconds, the head
+        slowly decays back to center.
+        Runs until stop_event is set. Call from a thread.
         """
         from reachy_mini.utils import create_head_pose
 
@@ -117,30 +113,76 @@ class FaceTracker:
             stop_event = threading.Event()
 
         self.open_camera()
-        smooth_yaw, smooth_pitch = 0.0, 0.0
-        interval = 1.0 / TRACKING_HZ
-        log.info("Face tracking started at %d Hz", TRACKING_HZ)
+        center_pose = create_head_pose(yaw=0, pitch=0, degrees=True)
 
-        try:
+        # Shared state between detection and movement threads
+        lock = threading.Lock()
+        shared = {
+            "target_pose": None,
+            "last_detection_time": 0.0,
+        }
+
+        def _detection_loop():
+            """Run face detection continuously, updating the shared target pose."""
+            log.info("Detection thread started")
             while not stop_event.is_set():
-                start = time.monotonic()
                 frame = self.grab_frame()
                 if frame is None:
-                    time.sleep(interval)
+                    time.sleep(0.01)
                     continue
 
                 faces = self.detect(frame)
                 if faces:
-                    yaw, pitch = self.compute_head_target(faces[0])
-                    smooth_yaw = EMA_ALPHA * yaw + (1 - EMA_ALPHA) * smooth_yaw
-                    smooth_pitch = EMA_ALPHA * pitch + (1 - EMA_ALPHA) * smooth_pitch
-                    pose = create_head_pose(yaw=smooth_yaw, pitch=smooth_pitch, degrees=True)
-                    robot_mini.set_target(head=pose)
+                    u, v = self.face_pixel_center(faces[0], frame.shape)
+                    raw_pose = robot_mini.look_at_image(u, v, perform_movement=False)
+                    # Scale toward center to reduce overshoot
+                    scaled_pose = OVERSHOOT_SCALE * raw_pose + (1 - OVERSHOOT_SCALE) * center_pose
+                    with lock:
+                        shared["target_pose"] = scaled_pose
+                        shared["last_detection_time"] = time.monotonic()
+            log.info("Detection thread stopped")
+
+        def _movement_loop():
+            """Send smoothed pose updates to the robot at a steady rate."""
+            log.info("Movement thread started at %d Hz", MOVEMENT_HZ)
+            smooth_pose = center_pose.copy()
+            interval = 1.0 / MOVEMENT_HZ
+
+            while not stop_event.is_set():
+                start = time.monotonic()
+
+                with lock:
+                    target_pose = shared["target_pose"]
+                    last_det = shared["last_detection_time"]
+
+                now = time.monotonic()
+                if target_pose is not None and (now - last_det) < FACE_LOST_TIMEOUT:
+                    # Face is being tracked — smooth toward target
+                    smooth_pose = EMA_ALPHA * target_pose + (1 - EMA_ALPHA) * smooth_pose
+                else:
+                    # No face detected recently — decay toward center
+                    smooth_pose = DECAY_ALPHA * center_pose + (1 - DECAY_ALPHA) * smooth_pose
+
+                robot_mini.set_target(head=smooth_pose)
 
                 elapsed = time.monotonic() - start
                 sleep_time = interval - elapsed
                 if sleep_time > 0:
                     time.sleep(sleep_time)
+            log.info("Movement thread stopped")
+
+        detection_thread = threading.Thread(target=_detection_loop, name="face-detection", daemon=True)
+        movement_thread = threading.Thread(target=_movement_loop, name="face-movement", daemon=True)
+
+        log.info("Face tracking started (detection + %d Hz movement)", MOVEMENT_HZ)
+        detection_thread.start()
+        movement_thread.start()
+
+        try:
+            # Block until stop is requested, then let threads wind down
+            stop_event.wait()
+            detection_thread.join(timeout=2.0)
+            movement_thread.join(timeout=2.0)
         finally:
             self.close_camera()
             log.info("Face tracking stopped")
