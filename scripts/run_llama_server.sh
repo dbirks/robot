@@ -20,5 +20,6 @@ exec llama-server \
     "${MMPROJ_ARGS[@]}" \
     -c "$CTX" \
     -ngl "$GPU_LAYERS" \
+    --cache-type-k q8_0 --cache-type-v q4_0 \
     --host "$HOST" \
     --port "$PORT"

@@ -32,7 +32,9 @@ class AudioRecorder:
     def _load_vad(self):
         import torch
 
-        self._vad_model, _utils = torch.hub.load("snakers4/silero-vad", "silero_vad", force_reload=False, trust_repo=True)
+        self._vad_model, _utils = torch.hub.load(
+            "snakers4/silero-vad", "silero_vad", force_reload=False, trust_repo=True
+        )
         log.info("Silero VAD loaded")
 
     def record_utterance(self) -> np.ndarray | None:

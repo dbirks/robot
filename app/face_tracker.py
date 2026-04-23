@@ -1,6 +1,8 @@
+import json
 import logging
 import threading
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -8,18 +10,15 @@ from insightface.app import FaceAnalysis
 
 log = logging.getLogger(__name__)
 
-EMA_ALPHA = 0.25
-DECAY_ALPHA = 0.03
-MOVEMENT_HZ = 60
-OVERSHOOT_SCALE = 0.85
-FACE_LOST_TIMEOUT = 0.5
+OVERSHOOT_SCALE = 0.6
+FACES_PATH = Path("data/known_faces.json")
 
 
 class FaceTracker:
     """Tracks the most prominent face in camera frames using InsightFace.
 
     Provides head yaw/pitch targets to keep the face centered in frame.
-    Optionally stores face embeddings for recognition.
+    Stores face embeddings for recognition, persisted to disk.
     """
 
     def __init__(self, camera_index: int = 0, det_size: tuple[int, int] = (640, 640)):
@@ -29,6 +28,7 @@ class FaceTracker:
         self.camera_index = camera_index
         self.known_faces: dict[str, np.ndarray] = {}
         self._cap: cv2.VideoCapture | None = None
+        self._load_faces()
 
     def open_camera(self):
         self._cap = cv2.VideoCapture(self.camera_index)
@@ -78,6 +78,7 @@ class FaceTracker:
 
     def register_face(self, name: str, embedding: np.ndarray):
         self.known_faces[name] = embedding / np.linalg.norm(embedding)
+        self._save_faces()
         log.info("Registered face: %s", name)
 
     def identify(self, embedding: np.ndarray, threshold: float = 0.4) -> str | None:
@@ -94,37 +95,23 @@ class FaceTracker:
             return best_name
         return None
 
-    def run_tracking_loop(self, robot_mini, stop_event: threading.Event | None = None):
-        """Continuously track the largest face and move the robot head to follow it.
+    def start_tracking(self, robot_mini, movement_manager, stop_event: threading.Event | None = None):
+        """Start face detection in a background thread.
 
-        Uses a decoupled two-thread architecture for smooth movement:
-        - Detection thread: runs face detection as fast as it can and updates
-          a shared target pose via look_at_image().
-        - Movement thread: runs at MOVEMENT_HZ, applies EMA smoothing to the
-          latest target pose, and sends updates to the robot servos.
-
-        When no face is detected for FACE_LOST_TIMEOUT seconds, the head
-        slowly decays back to center.
-        Runs until stop_event is set. Call from a thread.
+        Detects faces as fast as possible and feeds target poses to the
+        MovementManager, which handles smoothing and servo commands.
         """
         from reachy_mini.utils import create_head_pose
 
         if stop_event is None:
             stop_event = threading.Event()
 
+        self._stop_event = stop_event
         self.open_camera()
         center_pose = create_head_pose(yaw=0, pitch=0, degrees=True)
 
-        # Shared state between detection and movement threads
-        lock = threading.Lock()
-        shared = {
-            "target_pose": None,
-            "last_detection_time": 0.0,
-        }
-
         def _detection_loop():
-            """Run face detection continuously, updating the shared target pose."""
-            log.info("Detection thread started")
+            log.info("Face detection thread started")
             while not stop_event.is_set():
                 frame = self.grab_frame()
                 if frame is None:
@@ -135,54 +122,35 @@ class FaceTracker:
                 if faces:
                     u, v = self.face_pixel_center(faces[0], frame.shape)
                     raw_pose = robot_mini.look_at_image(u, v, perform_movement=False)
-                    # Scale toward center to reduce overshoot
                     scaled_pose = OVERSHOOT_SCALE * raw_pose + (1 - OVERSHOOT_SCALE) * center_pose
-                    with lock:
-                        shared["target_pose"] = scaled_pose
-                        shared["last_detection_time"] = time.monotonic()
-            log.info("Detection thread stopped")
+                    movement_manager.set_face_target(scaled_pose)
+            log.info("Face detection thread stopped")
 
-        def _movement_loop():
-            """Send smoothed pose updates to the robot at a steady rate."""
-            log.info("Movement thread started at %d Hz", MOVEMENT_HZ)
-            smooth_pose = center_pose.copy()
-            interval = 1.0 / MOVEMENT_HZ
+        self._detection_thread = threading.Thread(target=_detection_loop, name="face-detection", daemon=True)
+        self._detection_thread.start()
+        log.info("Face tracking started (detection → MovementManager)")
 
-            while not stop_event.is_set():
-                start = time.monotonic()
+    def stop_tracking(self):
+        if hasattr(self, "_stop_event") and self._stop_event:
+            self._stop_event.set()
+        if hasattr(self, "_detection_thread") and self._detection_thread:
+            self._detection_thread.join(timeout=2.0)
+        self.close_camera()
+        log.info("Face tracking stopped")
 
-                with lock:
-                    target_pose = shared["target_pose"]
-                    last_det = shared["last_detection_time"]
-
-                now = time.monotonic()
-                if target_pose is not None and (now - last_det) < FACE_LOST_TIMEOUT:
-                    # Face is being tracked — smooth toward target
-                    smooth_pose = EMA_ALPHA * target_pose + (1 - EMA_ALPHA) * smooth_pose
-                else:
-                    # No face detected recently — decay toward center
-                    smooth_pose = DECAY_ALPHA * center_pose + (1 - DECAY_ALPHA) * smooth_pose
-
-                robot_mini.set_target(head=smooth_pose)
-
-                elapsed = time.monotonic() - start
-                sleep_time = interval - elapsed
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-            log.info("Movement thread stopped")
-
-        detection_thread = threading.Thread(target=_detection_loop, name="face-detection", daemon=True)
-        movement_thread = threading.Thread(target=_movement_loop, name="face-movement", daemon=True)
-
-        log.info("Face tracking started (detection + %d Hz movement)", MOVEMENT_HZ)
-        detection_thread.start()
-        movement_thread.start()
-
+    def _load_faces(self):
+        if not FACES_PATH.exists():
+            return
         try:
-            # Block until stop is requested, then let threads wind down
-            stop_event.wait()
-            detection_thread.join(timeout=2.0)
-            movement_thread.join(timeout=2.0)
-        finally:
-            self.close_camera()
-            log.info("Face tracking stopped")
+            data = json.loads(FACES_PATH.read_text())
+            for name, emb_list in data.items():
+                self.known_faces[name] = np.array(emb_list, dtype=np.float32)
+            log.info("Loaded %d known faces from disk", len(self.known_faces))
+        except Exception:
+            log.exception("Failed to load known faces")
+
+    def _save_faces(self):
+        FACES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data = {name: emb.tolist() for name, emb in self.known_faces.items()}
+        FACES_PATH.write_text(json.dumps(data))
+        log.info("Saved %d known faces to disk", len(self.known_faces))
