@@ -14,7 +14,7 @@ class RobotConnection:
 
     def connect(self) -> ReachyMini:
         log.info("Connecting to Reachy Mini at %s", self.config.reachy_host)
-        self.mini = ReachyMini(media_backend="gstreamer")
+        self.mini = ReachyMini(media_backend="no_media")
         self.mini.__enter__()
         log.info("Connected to Reachy Mini")
         return self.mini

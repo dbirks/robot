@@ -1,6 +1,9 @@
 import logging
 import sys
 import threading
+import time
+
+import numpy as np
 
 from .agent_client import AgentClient
 from .audio_io import AudioRecorder
@@ -10,9 +13,11 @@ from .head_wobbler import HeadWobbler
 from .movement_manager import MovementManager
 from .orchestrator import run_loop
 from .robot_state import RobotConnection
-from .robot_tools import TOOLS, make_handlers
+from .robot_tools import SLEEP_ANTENNAS, SLEEP_HEAD_POSE, TOOLS, make_handlers
 from .stt_service import STTService
 from .tts_service import TTSService
+
+INIT_ANTENNAS = [-0.1745, 0.1745]
 
 
 def main():
@@ -36,9 +41,6 @@ def main():
     except Exception:
         log.warning("Could not connect to Reachy Mini — running without robot")
 
-    agent = AgentClient(config, tools=TOOLS)
-    agent.register_handlers(make_handlers(robot, agent=agent))
-
     stt = STTService(config)
     tts = TTSService(config)
     recorder = AudioRecorder(config)
@@ -49,6 +51,10 @@ def main():
     stop_event = threading.Event()
 
     if robot.connected and robot.mini is not None:
+        log.info("Waking up robot...")
+        robot.mini.goto_target(head=np.eye(4), antennas=INIT_ANTENNAS, duration=2)
+        time.sleep(0.5)
+
         movement = MovementManager(robot.mini)
         wobbler = HeadWobbler(movement.set_speech_offsets)
         movement.start()
@@ -57,8 +63,13 @@ def main():
         tracker = FaceTracker()
         tracker.start_tracking(robot.mini, movement, stop_event)
 
+    sleep_event = threading.Event()
+
+    agent = AgentClient(config, tools=TOOLS)
+    agent.register_handlers(make_handlers(robot, agent=agent, face_tracker=tracker, sleep_event=sleep_event))
+
     try:
-        run_loop(recorder, stt, agent, tts, movement, wobbler)
+        run_loop(recorder, stt, agent, tts, movement, wobbler, sleep_event=sleep_event, robot_mini=robot.mini)
     finally:
         stop_event.set()
         if tracker:
@@ -67,6 +78,13 @@ def main():
             wobbler.stop()
         if movement:
             movement.stop()
+        if robot.mini is not None:
+            try:
+                log.info("Putting robot to sleep...")
+                robot.mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=2)
+                time.sleep(2)
+            except Exception:
+                log.exception("Sleep animation failed")
         robot.disconnect()
 
 

@@ -11,6 +11,8 @@ from insightface.app import FaceAnalysis
 log = logging.getLogger(__name__)
 
 OVERSHOOT_SCALE = 0.6
+MAX_YAW = 45
+MAX_PITCH = 25
 FACES_PATH = Path("data/known_faces.json")
 
 
@@ -110,7 +112,15 @@ class FaceTracker:
         self.open_camera()
         center_pose = create_head_pose(yaw=0, pitch=0, degrees=True)
 
+        use_sdk_lookat = True
+
+        def _pose_from_pixels(cx_norm, cy_norm):
+            yaw = -(cx_norm - 0.5) * 2 * MAX_YAW
+            pitch = (cy_norm - 0.5) * 2 * MAX_PITCH
+            return create_head_pose(yaw=yaw, pitch=pitch, degrees=True)
+
         def _detection_loop():
+            nonlocal use_sdk_lookat
             log.info("Face detection thread started")
             while not stop_event.is_set():
                 frame = self.grab_frame()
@@ -120,8 +130,17 @@ class FaceTracker:
 
                 faces = self.detect(frame)
                 if faces:
-                    u, v = self.face_pixel_center(faces[0], frame.shape)
-                    raw_pose = robot_mini.look_at_image(u, v, perform_movement=False)
+                    face = faces[0]
+                    if use_sdk_lookat:
+                        try:
+                            u, v = self.face_pixel_center(face, frame.shape)
+                            raw_pose = robot_mini.look_at_image(u, v, perform_movement=False)
+                        except RuntimeError:
+                            log.info("look_at_image unavailable, using pixel-based tracking")
+                            use_sdk_lookat = False
+                            raw_pose = _pose_from_pixels(*face["center"])
+                    else:
+                        raw_pose = _pose_from_pixels(*face["center"])
                     scaled_pose = OVERSHOOT_SCALE * raw_pose + (1 - OVERSHOOT_SCALE) * center_pose
                     movement_manager.set_face_target(scaled_pose)
             log.info("Face detection thread stopped")

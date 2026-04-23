@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -113,7 +114,65 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "learn_face",
+            "description": "Learn and remember the face of the person currently in front of the camera. Use when someone tells you their name and you want to recognize them later.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The person's name to associate with their face",
+                    }
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "identify_face",
+            "description": "Try to identify who is currently in front of the camera by comparing their face against known faces. Use when you want to greet someone by name or check who you're talking to.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "forget_face",
+            "description": "Remove a previously learned face from memory. Use when asked to forget someone or to clean up incorrect face entries.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the person whose face to forget",
+                    }
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "go_to_sleep",
+            "description": "Put the robot to sleep. The robot will lower its head, fold its antennas, and stop responding until someone wakes it up. Use when told to go to sleep, take a nap, or shut down.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
+
+SLEEP_HEAD_POSE = np.array([
+    [0.911, 0.004, 0.413, -0.021],
+    [-0.004, 1.0, -0.001, 0.001],
+    [-0.413, -0.001, 0.911, -0.044],
+    [0.0, 0.0, 0.0, 1.0],
+])
+SLEEP_ANTENNAS = [-3.05, 3.05]
 
 MOTION_DURATION = 0.8
 NOD_DURATION = 0.3
@@ -121,10 +180,23 @@ NOD_ANGLE = 15
 LOOK_ANGLE = 30
 
 
-def make_handlers(robot: RobotConnection, agent=None) -> dict[str, Callable]:
+def make_handlers(robot: RobotConnection, agent=None, face_tracker=None, sleep_event: threading.Event | None = None) -> dict[str, Callable]:
     def _require_robot():
         if not robot.connected or robot.mini is None:
             return {"ok": False, "error": "Robot not connected"}
+        return None
+
+    def _grab_camera_frame():
+        if face_tracker is not None:
+            frame = face_tracker.grab_frame()
+            if frame is not None:
+                return frame
+        cap = cv2.VideoCapture(0)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            cap.release()
+            if ret:
+                return frame
         return None
 
     def look_left(**_kwargs: Any) -> dict:
@@ -178,10 +250,8 @@ def make_handlers(robot: RobotConnection, agent=None) -> dict[str, Callable]:
             return {"ok": False, "error": str(e)}
 
     def take_snapshot(**_kwargs: Any) -> dict:
-        if err := _require_robot():
-            return err
         try:
-            frame = robot.mini.media.get_frame()
+            frame = _grab_camera_frame()
             if frame is None:
                 return {"ok": False, "error": "No frame available from camera"}
             ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -201,10 +271,8 @@ def make_handlers(robot: RobotConnection, agent=None) -> dict[str, Callable]:
         return {"time": datetime.now(tz=timezone.utc).isoformat()}
 
     def describe_scene(question: str = "", **_kwargs: Any) -> dict:
-        if err := _require_robot():
-            return err
         try:
-            frame = robot.mini.media.get_frame()
+            frame = _grab_camera_frame()
             if frame is None:
                 return {"ok": False, "error": "No frame available from camera"}
             _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -243,6 +311,68 @@ def make_handlers(robot: RobotConnection, agent=None) -> dict[str, Callable]:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def learn_face(name: str = "", **_kwargs: Any) -> dict:
+        if not name:
+            return {"ok": False, "error": "No name provided"}
+        if face_tracker is None:
+            return {"ok": False, "error": "Face tracker not available"}
+        try:
+            frame = _grab_camera_frame()
+            if frame is None:
+                return {"ok": False, "error": "No frame available from camera"}
+            faces = face_tracker.detect(frame)
+            if not faces:
+                return {"ok": False, "error": "No face detected in frame"}
+            face_tracker.register_face(name, faces[0]["embedding"])
+            return {"ok": True, "name": name, "known_faces": list(face_tracker.known_faces.keys())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def identify_face(**_kwargs: Any) -> dict:
+        if face_tracker is None:
+            return {"ok": False, "error": "Face tracker not available"}
+        try:
+            frame = _grab_camera_frame()
+            if frame is None:
+                return {"ok": False, "error": "No frame available from camera"}
+            faces = face_tracker.detect(frame)
+            if not faces:
+                return {"ok": False, "error": "No face detected in frame"}
+            name = face_tracker.identify(faces[0]["embedding"])
+            if name:
+                return {"ok": True, "name": name, "confidence": "recognized"}
+            return {"ok": True, "name": None, "confidence": "unknown face"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def forget_face(name: str = "", **_kwargs: Any) -> dict:
+        if not name:
+            return {"ok": False, "error": "No name provided"}
+        if face_tracker is None:
+            return {"ok": False, "error": "Face tracker not available"}
+        try:
+            if name not in face_tracker.known_faces:
+                return {"ok": False, "error": f"No face named '{name}' found", "known_faces": list(face_tracker.known_faces.keys())}
+            del face_tracker.known_faces[name]
+            face_tracker._save_faces()
+            log.info("Forgot face: %s", name)
+            return {"ok": True, "forgotten": name, "known_faces": list(face_tracker.known_faces.keys())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def go_to_sleep(**_kwargs: Any) -> dict:
+        if err := _require_robot():
+            return err
+        if sleep_event is None:
+            return {"ok": False, "error": "Sleep not supported"}
+        try:
+            robot.mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=2)
+            sleep_event.set()
+            log.info("Robot going to sleep")
+            return {"ok": True, "action": "sleeping"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     return {
         "look_left": look_left,
         "look_right": look_right,
@@ -254,4 +384,8 @@ def make_handlers(robot: RobotConnection, agent=None) -> dict[str, Callable]:
         "get_robot_status": get_robot_status,
         "get_time": get_time,
         "remember": remember,
+        "learn_face": learn_face,
+        "identify_face": identify_face,
+        "forget_face": forget_face,
+        "go_to_sleep": go_to_sleep,
     }

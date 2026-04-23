@@ -192,7 +192,7 @@ class MovementManager:
 
             target_antennas = [0.0, 0.0]
 
-            if processing and self._processing_amplitude > 0:
+            if self._processing_amplitude > 0:
                 amp = self._processing_amplitude
                 t = now
                 target_antennas[0] = amp * THINKING_ANTENNA_AMP * math.sin(2 * math.pi * THINKING_ANTENNA_FREQ * t)
