@@ -90,6 +90,10 @@ mkdir -p models/gguf models/piper
 curl -L -o models/gguf/qwen3.5-4b-q4_k_m.gguf \
   "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
 
+# Vision projector (enables image understanding)
+curl -L -o models/gguf/mmproj-BF16.gguf \
+  "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-BF16.gguf"
+
 # TTS voice
 wget -O models/piper/en_GB-northern_english_male-medium.onnx \
   "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx?download=true"
@@ -210,6 +214,10 @@ Qwen 3.5 enables "thinking" by default — the model spends tokens on internal r
 ## Agent Framework
 
 The current agent layer (`agent_client.py`) is a thin OpenAI-compatible client that handles tool-calling loops directly against the llama.cpp server. It uses the same tool schema format as [Hermes](https://github.com/NousResearch/hermes-agent), so swapping in Hermes later requires minimal changes — point Hermes at the same llama.cpp endpoint and register the same tool handlers.
+
+## Machine-Specific Setup
+
+- [GTX 1070 + Arch Linux](docs/setup-gtx1070-arch.md) — CUDA 12 requirement, PipeWire, permissions, VRAM budget
 
 ## Milestone Roadmap
 
