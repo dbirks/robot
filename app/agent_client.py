@@ -16,7 +16,10 @@ You are a helpful robot assistant controlling a Reachy Mini desk robot.
 Keep responses short: 1 to 3 sentences, suitable for spoken output.
 Use tools when the user asks for physical actions or sensor readings.
 Confirm physical actions briefly. If a tool fails, say so and suggest retrying.
-Be friendly, concise, and natural.\
+Be friendly, concise, and natural.
+When asked about people (who is here, who do you see, do you recognize me, etc.), \
+ALWAYS use identify_face first — it's fast. Only use describe_scene for non-people \
+questions about the environment (what's on the table, what color is the wall, etc.).\
 """
 
 MEMORY_PATH = Path("data/memory.md")
@@ -65,7 +68,12 @@ class AgentClient:
             if not msg.tool_calls:
                 log.info("LLM %.2fs: %r", elapsed, msg.content)
                 self.session.log_turn("assistant", content=msg.content)
-                return msg.content or ""
+                result = msg.content or ""
+                if getattr(self, "_pending_reset", False):
+                    self._pending_reset = False
+                    self.reset()
+                    log.info("Conversation reset")
+                return result
 
             for tc in msg.tool_calls:
                 result = self._execute_tool(tc.function.name, tc.function.arguments)
@@ -79,7 +87,8 @@ class AgentClient:
                     }
                 )
 
-        return self.messages[-1].get("content", "")
+        log.warning("Max tool rounds (%d) reached", MAX_TOOL_ROUNDS)
+        return "Sorry, I got a bit confused there. Could you try asking again?"
 
     def _execute_tool(self, name: str, arguments: str) -> dict:
         handler = self.tool_handlers.get(name)

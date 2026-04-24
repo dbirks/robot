@@ -35,6 +35,7 @@ def run_loop(
     wobbler: HeadWobbler | None = None,
     sleep_event: threading.Event | None = None,
     robot_mini=None,
+    face_tracker=None,
 ):
     """Main conversation loop: listen -> transcribe -> agent -> TTS -> play."""
     log.info("Conversation loop started. Speak to begin.")
@@ -72,6 +73,8 @@ def run_loop(
                         movement.start()
                     if wobbler:
                         wobbler.start()
+                    if face_tracker and robot_mini and movement:
+                        face_tracker.start_tracking(robot_mini, movement, threading.Event())
                     greeting = tts.synthesize("Good morning! I'm awake.")
                     log.info("Assistant: Good morning! I'm awake.")
                     if wobbler:
@@ -95,6 +98,8 @@ def run_loop(
                 movement.set_processing(False)
 
             if sleep_event is not None and sleep_event.is_set():
+                if face_tracker:
+                    face_tracker.stop_tracking()
                 if movement:
                     movement.stop()
                 if wobbler:

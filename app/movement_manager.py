@@ -61,6 +61,10 @@ class MovementManager:
         self._face_target: np.ndarray | None = None
         self._face_last_seen = 0.0
 
+        # DOA (direction of arrival) state — lower priority than face
+        self._doa_target: np.ndarray | None = None
+        self._doa_last_seen = 0.0
+
         # Secondary offsets (x, y, z, roll, pitch, yaw) in meters/radians
         self._speech_offsets = np.zeros(6)
 
@@ -79,6 +83,7 @@ class MovementManager:
         self._last_activity = time.monotonic()
 
     def start(self):
+        self._stop.clear()
         self._thread = threading.Thread(target=self._run_loop, name="movement-manager", daemon=True)
         self._thread.start()
         log.info("MovementManager started at %d Hz", CONTROL_HZ)
@@ -98,6 +103,12 @@ class MovementManager:
     def clear_face_target(self):
         with self._lock:
             self._face_target = None
+
+    def set_doa_target(self, pose: np.ndarray):
+        with self._lock:
+            self._doa_target = pose
+            self._doa_last_seen = time.monotonic()
+            self._last_activity = time.monotonic()
 
     def set_speech_offsets(self, offsets: tuple[float, ...]):
         with self._lock:
@@ -128,6 +139,8 @@ class MovementManager:
             with self._lock:
                 face_target = self._face_target.copy() if self._face_target is not None else None
                 face_last_seen = self._face_last_seen
+                doa_target = self._doa_target.copy() if self._doa_target is not None else None
+                doa_last_seen = self._doa_last_seen
                 speech_offsets = self._speech_offsets.copy()
                 listening = self._listening
                 processing = self._processing
@@ -136,10 +149,13 @@ class MovementManager:
 
             now = time.monotonic()
 
-            # --- Primary pose: face tracking with EMA smoothing ---
+            # --- Primary pose: face tracking > DOA > decay to center ---
             face_active = face_target is not None and (now - face_last_seen) < FACE_LOST_TIMEOUT
+            doa_active = not face_active and doa_target is not None and (now - doa_last_seen) < FACE_LOST_TIMEOUT
             if face_active:
                 smooth_primary = FACE_EMA_ALPHA * face_target + (1 - FACE_EMA_ALPHA) * smooth_primary
+            elif doa_active:
+                smooth_primary = FACE_DECAY_ALPHA * doa_target + (1 - FACE_DECAY_ALPHA) * smooth_primary
             else:
                 smooth_primary = FACE_DECAY_ALPHA * self._center + (1 - FACE_DECAY_ALPHA) * smooth_primary
 

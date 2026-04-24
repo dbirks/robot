@@ -1,13 +1,17 @@
 import base64
 import json
 import logging
+import random
 import threading
 import time
+import wave
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 import cv2
 import numpy as np
+import sounddevice as sd
 from openai import OpenAI
 from reachy_mini.utils import create_head_pose
 
@@ -84,7 +88,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "describe_scene",
-            "description": "Look through the camera and describe what you see. Use this when someone asks what you see, or to comment on your surroundings.",
+            "description": "Describe the general scene through the camera (objects, colors, environment). This is SLOW (~10s). Do NOT use for identifying people — use identify_face instead, which is instant.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -135,7 +139,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "identify_face",
-            "description": "Try to identify who is currently in front of the camera by comparing their face against known faces. Use when you want to greet someone by name or check who you're talking to.",
+            "description": "Identify all faces currently visible in the camera. Returns a list of all detected faces with their names (if recognized). Use when you want to see who is in the room.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -159,19 +163,54 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "web_search",
+            "description": "Search the web using DuckDuckGo. Use when the user asks a question you don't know the answer to, or asks you to look something up.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reset_conversation",
+            "description": "Reset the conversation and start fresh. Use when the user says things like 'start over', 'new conversation', 'forget what we talked about', or 'reset'.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "go_to_sleep",
-            "description": "Put the robot to sleep. The robot will lower its head, fold its antennas, and stop responding until someone wakes it up. Use when told to go to sleep, take a nap, or shut down.",
+            "description": "Put the robot to sleep. ONLY use this when the user directly and explicitly tells you to go to sleep or shut down. Never call this just because someone mentions sleep or says goodbye.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "peekaboo",
+            "description": "Play peekaboo! Hide the robot's head down, then pop up. Great for playing with kids.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
 ]
 
-SLEEP_HEAD_POSE = np.array([
-    [0.911, 0.004, 0.413, -0.021],
-    [-0.004, 1.0, -0.001, 0.001],
-    [-0.413, -0.001, 0.911, -0.044],
-    [0.0, 0.0, 0.0, 1.0],
-])
+SLEEP_HEAD_POSE = np.array(
+    [
+        [0.911, 0.004, 0.413, -0.021],
+        [-0.004, 1.0, -0.001, 0.001],
+        [-0.413, -0.001, 0.911, -0.044],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
 SLEEP_ANTENNAS = [-3.05, 3.05]
 
 MOTION_DURATION = 0.8
@@ -180,11 +219,39 @@ NOD_ANGLE = 15
 LOOK_ANGLE = 30
 
 
-def make_handlers(robot: RobotConnection, agent=None, face_tracker=None, sleep_event: threading.Event | None = None) -> dict[str, Callable]:
+def make_handlers(
+    robot: RobotConnection,
+    agent=None,
+    face_tracker=None,
+    sleep_event: threading.Event | None = None,
+    movement=None,
+    wobbler=None,
+) -> dict[str, Callable]:
     def _require_robot():
         if not robot.connected or robot.mini is None:
             return {"ok": False, "error": "Robot not connected"}
         return None
+
+    def _play_sdk_sound(name: str):
+        import importlib.resources
+
+        sound_path = Path(importlib.resources.files("reachy_mini") / "assets" / name)
+        if not sound_path.exists():
+            log.warning("Sound not found: %s", name)
+            return
+        with wave.open(str(sound_path)) as wf:
+            audio = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+            sr = wf.getframerate()
+            ch = wf.getnchannels()
+        if ch > 1:
+            audio = audio.reshape(-1, ch)[:, 0]
+        from .playback import _output_device, _device_sr, _resample
+
+        if _device_sr and sr != _device_sr:
+            audio = _resample(audio, sr, _device_sr)
+            sr = _device_sr
+        sd.play(audio, samplerate=sr, device=_output_device)
+        sd.wait()
 
     def _grab_camera_frame():
         if face_tracker is not None:
@@ -275,7 +342,11 @@ def make_handlers(robot: RobotConnection, agent=None, face_tracker=None, sleep_e
             frame = _grab_camera_frame()
             if frame is None:
                 return {"ok": False, "error": "No frame available from camera"}
-            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            h, w = frame.shape[:2]
+            if w > 320:
+                scale = 320 / w
+                frame = cv2.resize(frame, (320, int(h * scale)))
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
             b64 = base64.b64encode(buf).decode()
 
             prompt = question if question else "Describe what you see briefly in 1-2 sentences."
@@ -338,10 +409,11 @@ def make_handlers(robot: RobotConnection, agent=None, face_tracker=None, sleep_e
             faces = face_tracker.detect(frame)
             if not faces:
                 return {"ok": False, "error": "No face detected in frame"}
-            name = face_tracker.identify(faces[0]["embedding"])
-            if name:
-                return {"ok": True, "name": name, "confidence": "recognized"}
-            return {"ok": True, "name": None, "confidence": "unknown face"}
+            results = []
+            for face in faces:
+                name = face_tracker.identify(face["embedding"])
+                results.append({"name": name, "recognized": name is not None})
+            return {"ok": True, "faces": results, "count": len(results)}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -352,11 +424,56 @@ def make_handlers(robot: RobotConnection, agent=None, face_tracker=None, sleep_e
             return {"ok": False, "error": "Face tracker not available"}
         try:
             if name not in face_tracker.known_faces:
-                return {"ok": False, "error": f"No face named '{name}' found", "known_faces": list(face_tracker.known_faces.keys())}
+                return {
+                    "ok": False,
+                    "error": f"No face named '{name}' found",
+                    "known_faces": list(face_tracker.known_faces.keys()),
+                }
             del face_tracker.known_faces[name]
             face_tracker._save_faces()
             log.info("Forgot face: %s", name)
             return {"ok": True, "forgotten": name, "known_faces": list(face_tracker.known_faces.keys())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def reset_conversation(**_kwargs: Any) -> dict:
+        if agent is None:
+            return {"ok": False, "error": "Agent not available"}
+        try:
+            agent._pending_reset = True
+            return {"ok": True, "action": "conversation_reset", "message": "Say a brief greeting to start fresh."}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def web_search(query: str = "", **_kwargs: Any) -> dict:
+        if not query:
+            return {"ok": False, "error": "No query provided"}
+        try:
+            from duckduckgo_search import DDGS
+
+            results = DDGS().text(query, max_results=3)
+            snippets = [{"title": r["title"], "body": r["body"]} for r in results]
+            return {"ok": True, "results": snippets}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def peekaboo(**_kwargs: Any) -> dict:
+        if err := _require_robot():
+            return err
+        try:
+            robot.mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=1.0)
+            time.sleep(1.0)
+            hide_time = random.uniform(1.5, 4.0)
+            time.sleep(hide_time)
+            robot.mini.goto_target(
+                head=create_head_pose(pitch=-10, degrees=True),
+                antennas=[0.5, 0.5],
+                duration=0.2,
+            )
+            _play_sdk_sound("wake_up.wav")
+            time.sleep(0.8)
+            robot.mini.goto_target(head=create_head_pose(), antennas=[-0.1745, 0.1745], duration=0.8)
+            return {"ok": True, "action": "peekaboo"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -366,6 +483,14 @@ def make_handlers(robot: RobotConnection, agent=None, face_tracker=None, sleep_e
         if sleep_event is None:
             return {"ok": False, "error": "Sleep not supported"}
         try:
+            # Stop movement systems BEFORE the sleep animation so they
+            # don't fight the goto_target with their 60Hz control loop.
+            if face_tracker:
+                face_tracker.stop_tracking()
+            if wobbler:
+                wobbler.stop()
+            if movement:
+                movement.stop()
             robot.mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=2)
             sleep_event.set()
             log.info("Robot going to sleep")
@@ -387,5 +512,8 @@ def make_handlers(robot: RobotConnection, agent=None, face_tracker=None, sleep_e
         "learn_face": learn_face,
         "identify_face": identify_face,
         "forget_face": forget_face,
+        "reset_conversation": reset_conversation,
+        "web_search": web_search,
+        "peekaboo": peekaboo,
         "go_to_sleep": go_to_sleep,
     }

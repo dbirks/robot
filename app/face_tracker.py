@@ -83,7 +83,7 @@ class FaceTracker:
         self._save_faces()
         log.info("Registered face: %s", name)
 
-    def identify(self, embedding: np.ndarray, threshold: float = 0.4) -> str | None:
+    def identify(self, embedding: np.ndarray, threshold: float = 0.3) -> str | None:
         if not self.known_faces:
             return None
         emb_norm = embedding / np.linalg.norm(embedding)

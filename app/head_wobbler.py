@@ -35,6 +35,7 @@ class HeadWobbler:
         self._last_speech = 0.0
 
     def start(self):
+        self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="head-wobbler", daemon=True)
         self._thread.start()
         log.info("HeadWobbler started")
