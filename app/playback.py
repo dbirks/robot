@@ -76,3 +76,13 @@ def play_audio_with_wobble(audio: np.ndarray, sample_rate: int, wobbler):
 
     _play(audio, sample_rate)
     wobbler.reset()
+
+
+def play_sentence_with_wobble(audio: np.ndarray, sample_rate: int, wobbler):
+    """Play a single sentence's audio with wobble. Blocks until done."""
+    for i in range(0, len(audio), WOBBLE_CHUNK_SAMPLES):
+        chunk = audio[i : i + WOBBLE_CHUNK_SAMPLES]
+        wobbler.feed(chunk)
+
+    _play(audio, sample_rate)
+    wobbler.reset()

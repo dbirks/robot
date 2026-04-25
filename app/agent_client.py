@@ -1,8 +1,9 @@
 import json
 import logging
+import re
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Generator
 
 from openai import OpenAI
 
@@ -25,6 +26,8 @@ questions about the environment (what's on the table, what color is the wall, et
 MEMORY_PATH = Path("data/memory.md")
 
 MAX_TOOL_ROUNDS = 5
+
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s")
 
 
 class AgentClient:
@@ -89,6 +92,96 @@ class AgentClient:
 
         log.warning("Max tool rounds (%d) reached", MAX_TOOL_ROUNDS)
         return "Sorry, I got a bit confused there. Could you try asking again?"
+
+    def send_streaming(self, text: str) -> Generator[str, None, None]:
+        """Stream LLM response, yielding complete sentences as they form."""
+        self.messages.append({"role": "user", "content": text})
+        self.session.log_turn("user", content=text)
+
+        for _round in range(MAX_TOOL_ROUNDS):
+            start = time.monotonic()
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=self.messages,
+                tools=self.tools if self.tools else None,
+                max_tokens=self.max_tokens,
+                stream=True,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+
+            content_buf = ""
+            full_content = ""
+            tool_calls: dict[int, dict] = {}
+
+            for chunk in response:
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                if delta.content:
+                    content_buf += delta.content
+                    full_content += delta.content
+                    while True:
+                        m = _SENTENCE_END.search(content_buf)
+                        if not m:
+                            break
+                        sentence = content_buf[: m.end()].strip()
+                        content_buf = content_buf[m.end() :]
+                        if sentence:
+                            yield sentence
+
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls:
+                            tool_calls[idx] = {"id": "", "name": "", "args": ""}
+                        if tc.id:
+                            tool_calls[idx]["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            tool_calls[idx]["name"] += tc.function.name
+                        if tc.function and tc.function.arguments:
+                            tool_calls[idx]["args"] += tc.function.arguments
+
+            if content_buf.strip():
+                yield content_buf.strip()
+                full_content += ""
+
+            elapsed = time.monotonic() - start
+
+            if not tool_calls:
+                log.info("LLM %.2fs (streamed): %r", elapsed, full_content)
+                self.messages.append({"role": "assistant", "content": full_content})
+                self.session.log_turn("assistant", content=full_content)
+                if getattr(self, "_pending_reset", False):
+                    self._pending_reset = False
+                    self.reset()
+                    log.info("Conversation reset")
+                return
+
+            self.messages.append(
+                {
+                    "role": "assistant",
+                    "content": full_content if full_content else None,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {"name": tc["name"], "arguments": tc["args"]},
+                        }
+                        for tc in tool_calls.values()
+                    ],
+                }
+            )
+
+            for tc in tool_calls.values():
+                result = self._execute_tool(tc["name"], tc["args"])
+                log.info("Tool %s -> %s", tc["name"], json.dumps(result))
+                self.session.log_turn("tool", content=json.dumps(result), tool_call_id=tc["id"])
+                self.messages.append(
+                    {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)}
+                )
+
+        log.warning("Max tool rounds (%d) reached (streaming)", MAX_TOOL_ROUNDS)
+        yield "Sorry, I got a bit confused there. Could you try asking again?"
 
     def _execute_tool(self, name: str, arguments: str) -> dict:
         handler = self.tool_handlers.get(name)

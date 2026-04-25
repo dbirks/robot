@@ -9,7 +9,7 @@ from .agent_client import AgentClient
 from .audio_io import AudioRecorder
 from .head_wobbler import HeadWobbler
 from .movement_manager import MovementManager
-from .playback import play_audio_with_wobble
+from .playback import play_audio_with_wobble, play_sentence_with_wobble
 from .stt_service import STTService
 from .tts_service import TTSService
 from .wake_detector import WakeDetector
@@ -107,10 +107,31 @@ def run_loop(
             if movement:
                 movement.set_processing(True)
 
-            response = agent.send(text)
+            first_sentence = True
+            full_response = []
+            for sentence in agent.send_streaming(text):
+                if first_sentence and movement:
+                    movement.set_processing(False)
+                    first_sentence = False
 
-            if movement:
+                full_response.append(sentence)
+
+                if sleep_event is not None and sleep_event.is_set():
+                    break
+
+                tts_audio = tts.synthesize(sentence)
+                if wobbler:
+                    play_sentence_with_wobble(tts_audio, tts.sample_rate, wobbler)
+                else:
+                    from .playback import play_audio
+                    play_audio(tts_audio, tts.sample_rate)
+
+            if first_sentence and movement:
                 movement.set_processing(False)
+
+            response_text = " ".join(full_response)
+            if response_text:
+                log.info("Assistant: %s", response_text)
 
             if sleep_event is not None and sleep_event.is_set():
                 if face_tracker:
@@ -121,21 +142,6 @@ def run_loop(
                     wobbler.stop()
                 log.info("Robot is now sleeping")
                 continue
-
-            if not response.strip():
-                log.debug("Empty agent response, skipping")
-                continue
-
-            log.info("Assistant: %s", response)
-
-            tts_audio = tts.synthesize(response)
-
-            if wobbler:
-                play_audio_with_wobble(tts_audio, tts.sample_rate, wobbler)
-            else:
-                from .playback import play_audio
-
-                play_audio(tts_audio, tts.sample_rate)
 
             log.info("Turn complete in %.2fs", time.monotonic() - loop_start)
 
