@@ -49,7 +49,16 @@ class AgentClient:
     def register_handlers(self, handlers: dict[str, Callable]):
         self.tool_handlers.update(handlers)
 
+    def _trim_context(self):
+        """Keep conversation under context limit by dropping oldest turns."""
+        max_messages = 20
+        if len(self.messages) > max_messages:
+            system = self.messages[0]
+            self.messages = [system] + self.messages[-(max_messages - 1) :]
+            log.info("Trimmed conversation to %d messages", len(self.messages))
+
     def send(self, text: str) -> str:
+        self._trim_context()
         self.messages.append({"role": "user", "content": text})
         self.session.log_turn("user", content=text)
 
@@ -95,6 +104,7 @@ class AgentClient:
 
     def send_streaming(self, text: str) -> Generator[str, None, None]:
         """Stream LLM response, yielding complete sentences as they form."""
+        self._trim_context()
         self.messages.append({"role": "user", "content": text})
         self.session.log_turn("user", content=text)
 
