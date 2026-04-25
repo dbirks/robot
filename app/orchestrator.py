@@ -116,15 +116,15 @@ def run_loop(
 
                 full_response.append(sentence)
 
-                if sleep_event is not None and sleep_event.is_set():
-                    break
-
                 tts_audio = tts.synthesize(sentence)
                 if wobbler:
                     play_sentence_with_wobble(tts_audio, tts.sample_rate, wobbler)
                 else:
                     from .playback import play_audio
                     play_audio(tts_audio, tts.sample_rate)
+
+                if sleep_event is not None and sleep_event.is_set():
+                    break
 
             if first_sentence and movement:
                 movement.set_processing(False)
