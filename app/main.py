@@ -16,6 +16,7 @@ from .movement_manager import MovementManager
 from .orchestrator import run_loop
 from .robot_state import RobotConnection
 from .robot_tools import SLEEP_ANTENNAS, SLEEP_HEAD_POSE, TOOLS, make_handlers
+from .wake_detector import WakeDetector
 from .stt_service import STTService
 from .tts_service import TTSService
 
@@ -41,6 +42,7 @@ def main():
     tts = TTSService(config)
     recorder = AudioRecorder(config)
     tracker = FaceTracker()
+    wake_detector = WakeDetector()
     log.info("All models loaded")
 
     robot = RobotConnection(config)
@@ -99,6 +101,7 @@ def main():
             sleep_event=sleep_event,
             robot_mini=robot.mini,
             face_tracker=tracker,
+            wake_detector=wake_detector,
         )
     finally:
         log.info("Cleaning up...")

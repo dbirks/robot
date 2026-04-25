@@ -188,6 +188,23 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "set_volume",
+            "description": "Adjust the robot's speaking volume. Use when asked to be louder, quieter, or set a specific volume level.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "level": {
+                        "type": "string",
+                        "description": "Volume level: 'low', 'medium', 'high', or a number 1-10",
+                    }
+                },
+                "required": ["level"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "go_to_sleep",
             "description": "Put the robot to sleep. ONLY use this when the user directly and explicitly tells you to go to sleep or shut down. Never call this just because someone mentions sleep or says goodbye.",
             "parameters": {"type": "object", "properties": {}, "required": []},
@@ -436,6 +453,24 @@ def make_handlers(
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def set_volume(level: str = "medium", **_kwargs: Any) -> dict:
+        try:
+            from .playback import set_volume_boost
+            level_map = {"low": 0.5, "quiet": 0.5, "medium": 1.0, "normal": 1.0, "high": 1.8, "loud": 1.8}
+            if level.lower() in level_map:
+                boost = level_map[level.lower()]
+            else:
+                try:
+                    num = float(level)
+                    boost = max(0.1, min(3.0, num / 5.0))
+                except ValueError:
+                    return {"ok": False, "error": f"Unknown volume level: {level}"}
+            set_volume_boost(boost)
+            log.info("Volume set to %.1f (level=%s)", boost, level)
+            return {"ok": True, "volume": boost, "level": level}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def reset_conversation(**_kwargs: Any) -> dict:
         if agent is None:
             return {"ok": False, "error": "Agent not available"}
@@ -512,6 +547,7 @@ def make_handlers(
         "learn_face": learn_face,
         "identify_face": identify_face,
         "forget_face": forget_face,
+        "set_volume": set_volume,
         "reset_conversation": reset_conversation,
         "web_search": web_search,
         "peekaboo": peekaboo,

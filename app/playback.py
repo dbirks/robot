@@ -38,6 +38,12 @@ def _resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
 VOLUME_BOOST = float(os.getenv("VOLUME_BOOST", "1.4"))
 
 
+def set_volume_boost(boost: float):
+    global VOLUME_BOOST
+    VOLUME_BOOST = boost
+    log.info("Volume boost set to %.1f", boost)
+
+
 def _apply_boost(audio: np.ndarray) -> np.ndarray:
     if VOLUME_BOOST == 1.0:
         return audio

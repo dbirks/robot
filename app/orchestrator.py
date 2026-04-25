@@ -1,5 +1,4 @@
 import logging
-import re
 import threading
 import time
 
@@ -13,15 +12,11 @@ from .movement_manager import MovementManager
 from .playback import play_audio_with_wobble
 from .stt_service import STTService
 from .tts_service import TTSService
+from .wake_detector import WakeDetector
 
 log = logging.getLogger(__name__)
 
 WOBBLE_CHUNK_SIZE = 1600  # ~100ms at 16kHz
-
-WAKE_PATTERNS = re.compile(
-    r"wake\s*up|good\s*morning|time\s*to\s*(?:get\s*up|wake)|rise\s*and\s*shine|hey\s*robot|hello\s*robot|are\s*you\s*(?:there|awake)",
-    re.IGNORECASE,
-)
 
 INIT_ANTENNAS = [-0.1745, 0.1745]
 
@@ -36,6 +31,7 @@ def run_loop(
     sleep_event: threading.Event | None = None,
     robot_mini=None,
     face_tracker=None,
+    wake_detector: WakeDetector | None = None,
 ):
     """Main conversation loop: listen -> transcribe -> agent -> TTS -> play."""
     log.info("Conversation loop started. Speak to begin.")
@@ -63,8 +59,14 @@ def run_loop(
                 continue
 
             if sleeping:
-                if WAKE_PATTERNS.search(text):
-                    log.info("Wake phrase detected: %s", text)
+                should_wake = False
+                if wake_detector:
+                    should_wake = wake_detector.should_wake(text)
+                else:
+                    should_wake = any(w in text.lower() for w in ("wake up", "good morning", "hey robot"))
+
+                if should_wake:
+                    log.info("Waking up from: %s", text)
                     sleep_event.clear()
                     if robot_mini is not None:
                         robot_mini.goto_target(head=np.eye(4), antennas=INIT_ANTENNAS, duration=2)
@@ -75,17 +77,30 @@ def run_loop(
                         wobbler.start()
                     if face_tracker and robot_mini and movement:
                         face_tracker.start_tracking(robot_mini, movement, threading.Event())
-                    greeting = tts.synthesize("Good morning! I'm awake.")
-                    log.info("Assistant: Good morning! I'm awake.")
-                    if wobbler:
-                        play_audio_with_wobble(greeting, tts.sample_rate, wobbler)
-                    else:
-                        from .playback import play_audio
-                        play_audio(greeting, tts.sample_rate)
-                    continue
                 else:
-                    log.debug("Sleeping, ignoring: %s", text)
                     continue
+
+                log.info("User: %s", text)
+
+                if movement:
+                    movement.set_processing(True)
+
+                response = agent.send(text)
+
+                if movement:
+                    movement.set_processing(False)
+
+                if not response.strip():
+                    continue
+
+                log.info("Assistant: %s", response)
+                tts_audio = tts.synthesize(response)
+                if wobbler:
+                    play_audio_with_wobble(tts_audio, tts.sample_rate, wobbler)
+                else:
+                    from .playback import play_audio
+                    play_audio(tts_audio, tts.sample_rate)
+                continue
 
             log.info("User: %s", text)
 
