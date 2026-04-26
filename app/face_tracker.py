@@ -122,7 +122,9 @@ class FaceTracker:
         def _detection_loop():
             nonlocal use_sdk_lookat
             log.info("Face detection thread started")
+            target_interval = 0.2  # 5 FPS max
             while not stop_event.is_set():
+                tick_start = time.monotonic()
                 frame = self.grab_frame()
                 if frame is None:
                     time.sleep(0.01)
@@ -143,6 +145,10 @@ class FaceTracker:
                         raw_pose = _pose_from_pixels(*face["center"])
                     scaled_pose = OVERSHOOT_SCALE * raw_pose + (1 - OVERSHOOT_SCALE) * center_pose
                     movement_manager.set_face_target(scaled_pose)
+                elapsed = time.monotonic() - tick_start
+                remaining = target_interval - elapsed
+                if remaining > 0:
+                    time.sleep(remaining)
             log.info("Face detection thread stopped")
 
         self._detection_thread = threading.Thread(target=_detection_loop, name="face-detection", daemon=True)
