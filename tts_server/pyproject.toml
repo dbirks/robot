@@ -1,0 +1,11 @@
+[project]
+name = "reachy-tts-server"
+version = "0.1.0"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "qwen-tts>=0.1.1",
+    "transformers==4.57.3",
+    "flask>=3.0",
+    "soundfile>=0.13",
+    "numpy>=1.26",
+]

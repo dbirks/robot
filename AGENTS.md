@@ -35,6 +35,10 @@ The voice agent runs a synchronous conversation loop: listen → transcribe → 
 - **Robot tools never raise exceptions.** They catch errors and return `{"ok": False, "error": "..."}`.
 - **No async in the main loop.** The conversation is inherently sequential (listen, think, speak). Threading is used only for audio capture.
 
+## Workflow
+
+- **Commit often.** Don't let large amounts of work accumulate uncommitted. Commit and push at natural breakpoints — after implementing a feature, fixing a bug, or completing a research-and-implement cycle.
+
 ## Working with this codebase
 
 ### Package management

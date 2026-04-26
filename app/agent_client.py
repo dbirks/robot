@@ -186,9 +186,7 @@ class AgentClient:
                 result = self._execute_tool(tc["name"], tc["args"])
                 log.info("Tool %s -> %s", tc["name"], json.dumps(result))
                 self.session.log_turn("tool", content=json.dumps(result), tool_call_id=tc["id"])
-                self.messages.append(
-                    {"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)}
-                )
+                self.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
 
         log.warning("Max tool rounds (%d) reached (streaming)", MAX_TOOL_ROUNDS)
         yield "Sorry, I got a bit confused there. Could you try asking again?"
