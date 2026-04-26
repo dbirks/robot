@@ -12,6 +12,7 @@ from .config import Config
 from .doa_tracker import DoATracker
 from .face_tracker import FaceTracker
 from .head_wobbler import HeadWobbler
+from .interruptible_player import InterruptiblePlayer
 from .movement_manager import MovementManager
 from .orchestrator import run_loop
 from .robot_state import RobotConnection
@@ -43,6 +44,15 @@ def main():
     recorder = AudioRecorder(config)
     tracker = FaceTracker()
     wake_detector = WakeDetector()
+    from .playback import _output_device, _device_sr
+
+    player = InterruptiblePlayer(
+        vad_model=recorder._vad_model,
+        sample_rate=config.sample_rate,
+        vad_threshold=config.vad_threshold,
+        output_device=_output_device,
+        output_sr=_device_sr,
+    )
     log.info("All models loaded")
 
     robot = RobotConnection(config)
@@ -103,6 +113,7 @@ def main():
             face_tracker=tracker,
             wake_detector=wake_detector,
             doa_tracker=doa,
+            player=player,
         )
     finally:
         log.info("Cleaning up...")

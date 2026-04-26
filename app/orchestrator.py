@@ -8,6 +8,7 @@ from reachy_mini.utils import create_head_pose
 from .agent_client import PROCESSING_SENTINEL, AgentClient
 from .audio_io import AudioRecorder
 from .head_wobbler import HeadWobbler
+from .interruptible_player import InterruptiblePlayer
 from .movement_manager import MovementManager
 from .playback import play_audio_with_wobble, play_sentence_with_wobble
 from .stt_service import STTService
@@ -33,6 +34,7 @@ def run_loop(
     face_tracker=None,
     wake_detector: WakeDetector | None = None,
     doa_tracker=None,
+    player: InterruptiblePlayer | None = None,
 ):
     """Main conversation loop: listen -> transcribe -> agent -> TTS -> play."""
     log.info("Conversation loop started. Speak to begin.")
@@ -115,6 +117,7 @@ def run_loop(
 
             first_sentence = True
             full_response = []
+            barge_in_text = None
             for sentence in agent.send_streaming(text):
                 if sentence == PROCESSING_SENTINEL:
                     if movement:
@@ -130,7 +133,16 @@ def run_loop(
                 full_response.append(sentence)
 
                 tts_audio = tts.synthesize(sentence)
-                if wobbler:
+
+                if player:
+                    was_interrupted, barge_audio = player.play(tts_audio, tts.sample_rate, wobbler)
+                    if was_interrupted and barge_audio is not None:
+                        log.info("User interrupted mid-speech")
+                        barge_in_text = stt.transcribe(barge_audio)
+                        if barge_in_text and barge_in_text.strip():
+                            log.info("Barge-in: %s", barge_in_text)
+                        break
+                elif wobbler:
                     play_sentence_with_wobble(tts_audio, tts.sample_rate, wobbler)
                 else:
                     from .playback import play_audio
@@ -148,6 +160,43 @@ def run_loop(
             response_text = " ".join(full_response)
             if response_text:
                 log.info("Assistant: %s", response_text)
+
+            # Handle barge-in: process the interruption as a new user turn
+            if barge_in_text and barge_in_text.strip():
+                text = barge_in_text
+                log.info("User (barge-in): %s", text)
+                if movement:
+                    movement.set_processing(True)
+                # Continue with this text as the new user input
+                # by not going back to record_utterance
+                first_sentence = True
+                full_response = []
+                for sentence in agent.send_streaming(text):
+                    if sentence == PROCESSING_SENTINEL:
+                        if movement:
+                            movement.set_speaking(False)
+                            movement.set_processing(True)
+                        continue
+                    if first_sentence and movement:
+                        movement.set_processing(False)
+                        movement.set_speaking(True)
+                        first_sentence = False
+                    full_response.append(sentence)
+                    tts_audio = tts.synthesize(sentence)
+                    if player:
+                        player.play(tts_audio, tts.sample_rate, wobbler)
+                    elif wobbler:
+                        play_sentence_with_wobble(tts_audio, tts.sample_rate, wobbler)
+                    else:
+                        from .playback import play_audio
+                        play_audio(tts_audio, tts.sample_rate)
+                if first_sentence and movement:
+                    movement.set_processing(False)
+                if movement:
+                    movement.set_speaking(False)
+                barge_response = " ".join(full_response)
+                if barge_response:
+                    log.info("Assistant (after barge-in): %s", barge_response)
 
             if sleep_event is not None and sleep_event.is_set():
                 if face_tracker:
