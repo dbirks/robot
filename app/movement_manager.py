@@ -13,10 +13,12 @@ log = logging.getLogger(__name__)
 
 CONTROL_HZ = 60
 
-# Face tracking smoothing (moved from face_tracker.py)
-FACE_EMA_ALPHA = 0.25
-FACE_DECAY_ALPHA = 0.03
+# Face tracking — critically damped spring
+FACE_SPRING_HALFLIFE = 0.35
+FACE_MAX_VELOCITY = math.radians(50)
+FACE_DEAD_ZONE = math.radians(2.5)
 FACE_LOST_TIMEOUT = 2.0
+CENTER_SPRING_HALFLIFE = 0.8
 
 # Breathing (idle)
 BREATHING_DELAY = 0.3
@@ -27,16 +29,17 @@ BREATHING_ANTENNA_AMP = math.radians(15)
 BREATHING_ANTENNA_FREQ = 0.5
 
 # Thinking (during LLM inference)
-THINKING_RAMP_DURATION = 0.5
-THINKING_YAW_AMP = math.radians(12)
-THINKING_YAW_FREQ = 0.15
-THINKING_PITCH_BASE = math.radians(6)
-THINKING_PITCH_AMP = math.radians(3)
-THINKING_PITCH_FREQ = 0.2
-THINKING_Z_AMP = 0.003
-THINKING_Z_FREQ = 0.12
-THINKING_ANTENNA_AMP = math.radians(20)
-THINKING_ANTENNA_FREQ = 0.4
+THINKING_RAMP_DURATION = 1.0
+THINKING_RAMP_DOWN_RATE = 1.0
+THINKING_YAW_AMP = math.radians(8)
+THINKING_YAW_FREQ = 0.12
+THINKING_PITCH_BASE = math.radians(4)
+THINKING_PITCH_AMP = math.radians(2)
+THINKING_PITCH_FREQ = 0.18
+THINKING_Z_AMP = 0.002
+THINKING_Z_FREQ = 0.10
+THINKING_ANTENNA_AMP = math.radians(15)
+THINKING_ANTENNA_FREQ = 0.35
 THINKING_ANTENNA_PHASE = 1.2
 
 # Antenna unfreeze
@@ -62,6 +65,25 @@ def _minimum_jerk(t: float) -> float:
 def _lerp_pose(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
     """Linear interpolation between two 4x4 matrices (good enough at 60 Hz)."""
     return (1.0 - t) * a + t * b
+
+
+def _spring_update(
+    pos: np.ndarray, vel: np.ndarray, target: np.ndarray, halflife: float, dt: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Critically damped spring: smooth acceleration/deceleration, zero overshoot."""
+    y = (4.0 * 0.693147) / (halflife + 1e-5) / 2.0
+    j0 = pos - target
+    j1 = vel + j0 * y
+    eydt = math.exp(-y * dt)
+    new_pos = eydt * (j0 + j1 * dt) + target
+    new_vel = eydt * (vel - j1 * y * dt)
+    return new_pos, new_vel
+
+
+def _pose_angular_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """Rough angular distance between two 4x4 pose matrices (radians)."""
+    diff = a[:3, :3] - b[:3, :3]
+    return float(np.linalg.norm(diff))
 
 
 @dataclass
@@ -103,6 +125,7 @@ class MovementManager:
         # Face tracking state
         self._face_target: np.ndarray | None = None
         self._face_last_seen = 0.0
+        self._spring_vel: np.ndarray = np.zeros((4, 4))
 
         # DOA (direction of arrival) state — lower priority than face
         self._doa_target: np.ndarray | None = None
@@ -401,11 +424,18 @@ class MovementManager:
             face_active = face_target is not None and (now - face_last_seen) < FACE_LOST_TIMEOUT
             doa_active = not face_active and doa_target is not None and (now - doa_last_seen) < FACE_LOST_TIMEOUT
             if face_active:
-                smooth_primary = FACE_EMA_ALPHA * face_target + (1 - FACE_EMA_ALPHA) * smooth_primary
+                if _pose_angular_distance(smooth_primary, face_target) > FACE_DEAD_ZONE:
+                    smooth_primary, self._spring_vel = _spring_update(
+                        smooth_primary, self._spring_vel, face_target, FACE_SPRING_HALFLIFE, dt
+                    )
             elif doa_active:
-                smooth_primary = FACE_DECAY_ALPHA * doa_target + (1 - FACE_DECAY_ALPHA) * smooth_primary
+                smooth_primary, self._spring_vel = _spring_update(
+                    smooth_primary, self._spring_vel, doa_target, FACE_SPRING_HALFLIFE, dt
+                )
             else:
-                smooth_primary = FACE_DECAY_ALPHA * self._center + (1 - FACE_DECAY_ALPHA) * smooth_primary
+                smooth_primary, self._spring_vel = _spring_update(
+                    smooth_primary, self._spring_vel, self._center, CENTER_SPRING_HALFLIFE, dt
+                )
 
             # --- Animation system ---
             with self._lock:
@@ -423,16 +453,16 @@ class MovementManager:
             # Speech wobble
             total_offsets += speech_offsets
 
-            # Thinking animation
+            # Thinking animation (smooth ramp, relative time)
             if processing:
                 elapsed = now - processing_start
-                ramp = min(1.0, elapsed / THINKING_RAMP_DURATION)
+                ramp = _smooth_step(min(1.0, elapsed / THINKING_RAMP_DURATION))
                 self._processing_amplitude = ramp
             elif self._processing_amplitude > 0:
-                self._processing_amplitude = max(0.0, self._processing_amplitude - 2.0 / CONTROL_HZ)
+                self._processing_amplitude = max(0.0, self._processing_amplitude - THINKING_RAMP_DOWN_RATE / CONTROL_HZ)
 
             if self._processing_amplitude > 0:
-                t = now
+                t = now - processing_start
                 amp = self._processing_amplitude
                 total_offsets[2] += amp * THINKING_Z_AMP * math.sin(2 * math.pi * THINKING_Z_FREQ * t)
                 total_offsets[4] += amp * (
@@ -511,7 +541,7 @@ class MovementManager:
                         self._unfreeze_start = None
 
             # Smooth antenna movement
-            antenna_alpha = 0.3
+            antenna_alpha = 0.15
             current_antennas = [
                 antenna_alpha * target_antennas[i] + (1 - antenna_alpha) * current_antennas[i] for i in range(2)
             ]
