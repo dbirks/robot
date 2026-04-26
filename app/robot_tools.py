@@ -507,7 +507,7 @@ def make_handlers(
 
             level_map = {
                 "whisper": 0.3, "low": 0.7, "quiet": 0.7,
-                "medium": 1.2, "normal": 1.2,
+                "medium": 1.8, "normal": 1.8,
                 "high": 1.8, "loud": 1.8, "max": 2.5,
             }
             if level.lower() in level_map:
