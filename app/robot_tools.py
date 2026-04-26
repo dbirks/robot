@@ -15,6 +15,8 @@ import sounddevice as sd
 from openai import OpenAI
 from reachy_mini.utils import create_head_pose
 
+from .emotion_loader import available_emotions, load_emotion
+from .movement_manager import AnimationKeyframe
 from .robot_state import RobotConnection
 
 log = logging.getLogger(__name__)
@@ -218,6 +220,23 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "play_emotion",
+            "description": "Express an emotion through body language. Available: hello, goodbye, cheerful, curious, surprised, confused, laughing, sad, attentive, dance.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "emotion": {
+                        "type": "string",
+                        "description": "The emotion to express",
+                    }
+                },
+                "required": ["emotion"],
+            },
+        },
+    },
 ]
 
 SLEEP_HEAD_POSE = np.array(
@@ -262,7 +281,7 @@ def make_handlers(
             ch = wf.getnchannels()
         if ch > 1:
             audio = audio.reshape(-1, ch)[:, 0]
-        from .playback import _output_device, _device_sr, _resample
+        from .playback import _device_sr, _output_device, _resample
 
         if _device_sr and sr != _device_sr:
             audio = _resample(audio, sr, _device_sr)
@@ -286,8 +305,13 @@ def make_handlers(
     def look_left(**_kwargs: Any) -> dict:
         if err := _require_robot():
             return err
+        if movement is None:
+            return {"ok": False, "error": "Movement manager not available"}
         try:
-            robot.mini.goto_target(head=create_head_pose(yaw=LOOK_ANGLE, degrees=True), duration=MOTION_DURATION)
+            movement.queue_animation(
+                [AnimationKeyframe(pose=create_head_pose(yaw=LOOK_ANGLE, degrees=True), duration=MOTION_DURATION)],
+                blend_in=0.1,
+            )
             return {"ok": True, "action": "look_left"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -295,8 +319,13 @@ def make_handlers(
     def look_right(**_kwargs: Any) -> dict:
         if err := _require_robot():
             return err
+        if movement is None:
+            return {"ok": False, "error": "Movement manager not available"}
         try:
-            robot.mini.goto_target(head=create_head_pose(yaw=-LOOK_ANGLE, degrees=True), duration=MOTION_DURATION)
+            movement.queue_animation(
+                [AnimationKeyframe(pose=create_head_pose(yaw=-LOOK_ANGLE, degrees=True), duration=MOTION_DURATION)],
+                blend_in=0.1,
+            )
             return {"ok": True, "action": "look_right"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -304,8 +333,13 @@ def make_handlers(
     def look_center(**_kwargs: Any) -> dict:
         if err := _require_robot():
             return err
+        if movement is None:
+            return {"ok": False, "error": "Movement manager not available"}
         try:
-            robot.mini.goto_target(head=create_head_pose(), duration=MOTION_DURATION)
+            movement.queue_animation(
+                [AnimationKeyframe(pose=create_head_pose(), duration=MOTION_DURATION)],
+                blend_in=0.1,
+            )
             return {"ok": True, "action": "look_center"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -313,10 +347,17 @@ def make_handlers(
     def nod(**_kwargs: Any) -> dict:
         if err := _require_robot():
             return err
+        if movement is None:
+            return {"ok": False, "error": "Movement manager not available"}
         try:
-            robot.mini.goto_target(head=create_head_pose(pitch=-NOD_ANGLE, degrees=True), duration=NOD_DURATION)
-            robot.mini.goto_target(head=create_head_pose(pitch=NOD_ANGLE, degrees=True), duration=NOD_DURATION)
-            robot.mini.goto_target(head=create_head_pose(), duration=NOD_DURATION)
+            movement.queue_animation(
+                [
+                    AnimationKeyframe(pose=create_head_pose(pitch=-NOD_ANGLE, degrees=True), duration=NOD_DURATION),
+                    AnimationKeyframe(pose=create_head_pose(pitch=NOD_ANGLE, degrees=True), duration=NOD_DURATION),
+                    AnimationKeyframe(pose=create_head_pose(), duration=NOD_DURATION),
+                ],
+                blend_in=0.1,
+            )
             return {"ok": True, "action": "nod"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -324,11 +365,18 @@ def make_handlers(
     def shake_head(**_kwargs: Any) -> dict:
         if err := _require_robot():
             return err
+        if movement is None:
+            return {"ok": False, "error": "Movement manager not available"}
         try:
-            robot.mini.goto_target(head=create_head_pose(yaw=20, degrees=True), duration=NOD_DURATION)
-            robot.mini.goto_target(head=create_head_pose(yaw=-20, degrees=True), duration=NOD_DURATION)
-            robot.mini.goto_target(head=create_head_pose(yaw=20, degrees=True), duration=NOD_DURATION)
-            robot.mini.goto_target(head=create_head_pose(), duration=NOD_DURATION)
+            movement.queue_animation(
+                [
+                    AnimationKeyframe(pose=create_head_pose(yaw=20, degrees=True), duration=NOD_DURATION),
+                    AnimationKeyframe(pose=create_head_pose(yaw=-20, degrees=True), duration=NOD_DURATION),
+                    AnimationKeyframe(pose=create_head_pose(yaw=20, degrees=True), duration=NOD_DURATION),
+                    AnimationKeyframe(pose=create_head_pose(), duration=NOD_DURATION),
+                ],
+                blend_in=0.1,
+            )
             return {"ok": True, "action": "shake_head"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -456,6 +504,7 @@ def make_handlers(
     def set_volume(level: str = "medium", **_kwargs: Any) -> dict:
         try:
             from .playback import set_volume_boost
+
             level_map = {"low": 0.5, "quiet": 0.5, "medium": 1.0, "normal": 1.0, "high": 1.8, "loud": 1.8}
             if level.lower() in level_map:
                 boost = level_map[level.lower()]
@@ -495,20 +544,51 @@ def make_handlers(
     def peekaboo(**_kwargs: Any) -> dict:
         if err := _require_robot():
             return err
+        if movement is None:
+            return {"ok": False, "error": "Movement manager not available"}
         try:
-            robot.mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=1.0)
-            time.sleep(1.0)
             hide_time = random.uniform(1.5, 4.0)
-            time.sleep(hide_time)
-            robot.mini.goto_target(
-                head=create_head_pose(pitch=-10, degrees=True),
-                antennas=[0.5, 0.5],
-                duration=0.2,
+            movement.queue_animation(
+                [
+                    # Go to sleep pose
+                    AnimationKeyframe(pose=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=1.0),
+                    # Hold hidden (same pose, just wait)
+                    AnimationKeyframe(pose=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=hide_time),
+                    # Pop up!
+                    AnimationKeyframe(
+                        pose=create_head_pose(pitch=-10, degrees=True),
+                        antennas=[0.5, 0.5],
+                        duration=0.2,
+                    ),
+                    # Return to center
+                    AnimationKeyframe(pose=create_head_pose(), antennas=[-0.1745, 0.1745], duration=0.8),
+                ],
+                blend_in=0.1,
+                blend_out=0.2,
             )
-            _play_sdk_sound("wake_up.wav")
-            time.sleep(0.8)
-            robot.mini.goto_target(head=create_head_pose(), antennas=[-0.1745, 0.1745], duration=0.8)
+            # Play wake_up sound after the hide phase completes (non-blocking)
+            total_delay = 1.0 + hide_time + 0.2  # blend_in + hide + hold + pop duration
+            threading.Thread(
+                target=lambda: (time.sleep(total_delay), _play_sdk_sound("wake_up.wav")),
+                daemon=True,
+            ).start()
             return {"ok": True, "action": "peekaboo"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def play_emotion(emotion: str = "", **_kwargs: Any) -> dict:
+        if err := _require_robot():
+            return err
+        if movement is None:
+            return {"ok": False, "error": "Movement manager not available"}
+        if not emotion:
+            return {"ok": False, "error": "No emotion specified", "available": available_emotions()}
+        try:
+            keyframes = load_emotion(emotion)
+            if keyframes is None:
+                return {"ok": False, "error": f"Unknown emotion: {emotion}", "available": available_emotions()}
+            movement.queue_animation(keyframes, blend_in=0.2, blend_out=0.3, preempt=True, priority=1)
+            return {"ok": True, "action": "play_emotion", "emotion": emotion}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -551,5 +631,6 @@ def make_handlers(
         "reset_conversation": reset_conversation,
         "web_search": web_search,
         "peekaboo": peekaboo,
+        "play_emotion": play_emotion,
         "go_to_sleep": go_to_sleep,
     }

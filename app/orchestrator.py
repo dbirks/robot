@@ -99,6 +99,7 @@ def run_loop(
                     play_audio_with_wobble(tts_audio, tts.sample_rate, wobbler)
                 else:
                     from .playback import play_audio
+
                     play_audio(tts_audio, tts.sample_rate)
                 continue
 
@@ -121,6 +122,7 @@ def run_loop(
                     play_sentence_with_wobble(tts_audio, tts.sample_rate, wobbler)
                 else:
                     from .playback import play_audio
+
                     play_audio(tts_audio, tts.sample_rate)
 
                 if sleep_event is not None and sleep_event.is_set():

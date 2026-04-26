@@ -16,9 +16,9 @@ from .movement_manager import MovementManager
 from .orchestrator import run_loop
 from .robot_state import RobotConnection
 from .robot_tools import SLEEP_ANTENNAS, SLEEP_HEAD_POSE, TOOLS, make_handlers
-from .wake_detector import WakeDetector
 from .stt_service import STTService
 from .tts_service import TTSService
+from .wake_detector import WakeDetector
 
 INIT_ANTENNAS = [-0.1745, 0.1745]
 
