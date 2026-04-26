@@ -537,9 +537,9 @@ def make_handlers(
         if not query:
             return {"ok": False, "error": "No query provided"}
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
 
-            results = DDGS().text(query, max_results=3)
+            results = list(DDGS().text(query, max_results=3))
             snippets = [{"title": r["title"], "body": r["body"]} for r in results]
             return {"ok": True, "results": snippets}
         except Exception as e:

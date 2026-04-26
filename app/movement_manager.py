@@ -12,7 +12,7 @@ from reachy_mini.utils.interpolation import compose_world_offset
 
 log = logging.getLogger(__name__)
 
-CONTROL_HZ = 60
+CONTROL_HZ = 30
 
 # Face tracking — critically damped spring
 FACE_SPRING_HALFLIFE = 0.35
