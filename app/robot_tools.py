@@ -606,7 +606,7 @@ def make_handlers(
         if sleep_event is None:
             return {"ok": False, "error": "Sleep not supported"}
         uptime = time.monotonic() - _session_start
-        if uptime < 120:
+        if uptime < 30:
             return {"ok": False, "error": "Too early to sleep — conversation just started. Stay awake and chat!"}
         now = time.monotonic()
         if now - _last_sleep_request > 30:
