@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 import re
 import time
 from pathlib import Path
@@ -28,6 +29,21 @@ MEMORY_PATH = Path("data/memory.md")
 MAX_TOOL_ROUNDS = 5
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s")
+
+TOOL_FILLER_PHRASES: dict[str, list[str]] = {
+    "web_search": [
+        "Let me search for that.",
+        "One moment while I look that up.",
+        "Let me check.",
+    ],
+    "describe_scene": [
+        "Let me take a look.",
+        "One moment while I look around.",
+        "Let me see what's here.",
+    ],
+}
+
+PROCESSING_SENTINEL = "\x00PROCESSING"
 
 
 class AgentClient:
@@ -181,6 +197,12 @@ class AgentClient:
                     ],
                 }
             )
+
+            if not full_content.strip():
+                filler_tools = [tc["name"] for tc in tool_calls.values() if tc["name"] in TOOL_FILLER_PHRASES]
+                if filler_tools:
+                    yield random.choice(TOOL_FILLER_PHRASES[filler_tools[0]])
+                    yield PROCESSING_SENTINEL
 
             for tc in tool_calls.values():
                 result = self._execute_tool(tc["name"], tc["args"])

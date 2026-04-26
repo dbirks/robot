@@ -5,7 +5,7 @@ import time
 import numpy as np
 from reachy_mini.utils import create_head_pose
 
-from .agent_client import AgentClient
+from .agent_client import PROCESSING_SENTINEL, AgentClient
 from .audio_io import AudioRecorder
 from .head_wobbler import HeadWobbler
 from .movement_manager import MovementManager
@@ -116,6 +116,12 @@ def run_loop(
             first_sentence = True
             full_response = []
             for sentence in agent.send_streaming(text):
+                if sentence == PROCESSING_SENTINEL:
+                    if movement:
+                        movement.set_speaking(False)
+                        movement.set_processing(True)
+                    continue
+
                 if first_sentence and movement:
                     movement.set_processing(False)
                     movement.set_speaking(True)
