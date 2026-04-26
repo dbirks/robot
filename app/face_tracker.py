@@ -23,8 +23,10 @@ class FaceTracker:
     Stores face embeddings for recognition, persisted to disk.
     """
 
-    def __init__(self, camera_index: int = 0, det_size: tuple[int, int] = (640, 640)):
+    def __init__(self, camera_index: int = 0, det_size: tuple[int, int] = (320, 320)):
         log.info("Loading InsightFace buffalo_sc...")
+        import os
+        os.environ.setdefault("OMP_NUM_THREADS", "2")
         self.app = FaceAnalysis(name="buffalo_sc", providers=["CPUExecutionProvider"])
         self.app.prepare(ctx_id=-1, det_size=det_size)
         self.camera_index = camera_index
@@ -122,7 +124,7 @@ class FaceTracker:
         def _detection_loop():
             nonlocal use_sdk_lookat
             log.info("Face detection thread started")
-            target_interval = 0.2  # 5 FPS max
+            target_interval = 0.33  # 3 FPS max
             while not stop_event.is_set():
                 tick_start = time.monotonic()
                 frame = self.grab_frame()
