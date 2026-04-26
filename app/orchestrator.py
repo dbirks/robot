@@ -32,6 +32,7 @@ def run_loop(
     robot_mini=None,
     face_tracker=None,
     wake_detector: WakeDetector | None = None,
+    doa_tracker=None,
 ):
     """Main conversation loop: listen -> transcribe -> agent -> TTS -> play."""
     log.info("Conversation loop started. Speak to begin.")
@@ -42,11 +43,15 @@ def run_loop(
 
             if not sleeping and movement:
                 movement.set_listening(True)
+            if not sleeping and doa_tracker:
+                doa_tracker.set_locked(True)
 
             audio = recorder.record_utterance()
 
             if not sleeping and movement:
                 movement.set_listening(False)
+            if not sleeping and doa_tracker:
+                doa_tracker.set_locked(False)
 
             if audio is None or len(audio) < 1600:
                 continue
@@ -113,6 +118,7 @@ def run_loop(
             for sentence in agent.send_streaming(text):
                 if first_sentence and movement:
                     movement.set_processing(False)
+                    movement.set_speaking(True)
                     first_sentence = False
 
                 full_response.append(sentence)
@@ -130,6 +136,8 @@ def run_loop(
 
             if first_sentence and movement:
                 movement.set_processing(False)
+            if movement:
+                movement.set_speaking(False)
 
             response_text = " ".join(full_response)
             if response_text:

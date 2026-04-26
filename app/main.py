@@ -102,6 +102,7 @@ def main():
             robot_mini=robot.mini,
             face_tracker=tracker,
             wake_detector=wake_detector,
+            doa_tracker=doa,
         )
     finally:
         log.info("Cleaning up...")

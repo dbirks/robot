@@ -28,16 +28,19 @@ BREATHING_Z_FREQ = 0.1
 BREATHING_ANTENNA_AMP = math.radians(15)
 BREATHING_ANTENNA_FREQ = 0.5
 
-# Thinking (during LLM inference)
-THINKING_RAMP_DURATION = 1.0
-THINKING_RAMP_DOWN_RATE = 1.0
-THINKING_YAW_AMP = math.radians(8)
-THINKING_YAW_FREQ = 0.12
-THINKING_PITCH_BASE = math.radians(4)
-THINKING_PITCH_AMP = math.radians(2)
-THINKING_PITCH_FREQ = 0.18
+# Thinking gaze aversion (deliberate look-away, not scanning)
+THINKING_AVERT_YAW = math.radians(10)
+THINKING_AVERT_PITCH = math.radians(3)
+THINKING_AVERT_DURATION = 0.5
+THINKING_RETURN_DURATION = 0.3
+THINKING_MICRO_YAW_AMP = math.radians(1.5)
+THINKING_MICRO_YAW_FREQ = 0.08
+THINKING_MICRO_PITCH_AMP = math.radians(0.8)
+THINKING_MICRO_PITCH_FREQ = 0.12
 THINKING_Z_AMP = 0.002
 THINKING_Z_FREQ = 0.10
+THINKING_RAMP_DURATION = 1.0
+THINKING_RAMP_DOWN_RATE = 1.0
 THINKING_ANTENNA_AMP = math.radians(15)
 THINKING_ANTENNA_FREQ = 0.35
 THINKING_ANTENNA_PHASE = 1.2
@@ -139,6 +142,9 @@ class MovementManager:
         self._processing = False
         self._processing_start = 0.0
         self._processing_amplitude = 0.0
+        self._speaking = False
+        self._thinking_avert_progress = 0.0
+        self._thinking_direction = 1.0
 
         # Antenna freeze
         self._frozen_antennas: tuple[float, float] | None = None
@@ -175,8 +181,11 @@ class MovementManager:
 
     def set_face_target(self, pose: np.ndarray):
         with self._lock:
-            self._face_target = pose
-            self._face_last_seen = time.monotonic()
+            if self._listening and self._face_target is not None:
+                self._face_last_seen = time.monotonic()
+            else:
+                self._face_target = pose
+                self._face_last_seen = time.monotonic()
             self._last_activity = time.monotonic()
 
     def clear_face_target(self):
@@ -204,7 +213,13 @@ class MovementManager:
         with self._lock:
             if processing and not self._processing:
                 self._processing_start = time.monotonic()
+                self._thinking_direction *= -1.0
             self._processing = processing
+            self._last_activity = time.monotonic()
+
+    def set_speaking(self, speaking: bool):
+        with self._lock:
+            self._speaking = speaking
             self._last_activity = time.monotonic()
 
     # --- Animation API ---
@@ -453,22 +468,39 @@ class MovementManager:
             # Speech wobble
             total_offsets += speech_offsets
 
-            # Thinking animation (smooth ramp, relative time)
+            # Thinking gaze aversion (deliberate look-away + subtle micro-drift)
+            if processing:
+                self._thinking_avert_progress = min(
+                    1.0, self._thinking_avert_progress + dt / THINKING_AVERT_DURATION
+                )
+            elif self._thinking_avert_progress > 0:
+                self._thinking_avert_progress = max(
+                    0.0, self._thinking_avert_progress - dt / THINKING_RETURN_DURATION
+                )
+
+            if self._thinking_avert_progress > 0:
+                avert_t = _minimum_jerk(self._thinking_avert_progress)
+                direction = self._thinking_direction
+                t = now - processing_start
+
+                avert_yaw = avert_t * THINKING_AVERT_YAW * direction
+                avert_pitch = avert_t * THINKING_AVERT_PITCH
+
+                micro_blend = max(0.0, (avert_t - 0.7) / 0.3)
+                micro_yaw = micro_blend * THINKING_MICRO_YAW_AMP * math.sin(2 * math.pi * THINKING_MICRO_YAW_FREQ * t)
+                micro_pitch = micro_blend * THINKING_MICRO_PITCH_AMP * math.sin(2 * math.pi * THINKING_MICRO_PITCH_FREQ * t)
+
+                total_offsets[4] += avert_pitch + micro_pitch
+                total_offsets[5] += avert_yaw + micro_yaw
+                total_offsets[2] += avert_t * THINKING_Z_AMP * math.sin(2 * math.pi * THINKING_Z_FREQ * t)
+
+            # Update processing amplitude for antenna animation
             if processing:
                 elapsed = now - processing_start
                 ramp = _smooth_step(min(1.0, elapsed / THINKING_RAMP_DURATION))
                 self._processing_amplitude = ramp
             elif self._processing_amplitude > 0:
                 self._processing_amplitude = max(0.0, self._processing_amplitude - THINKING_RAMP_DOWN_RATE / CONTROL_HZ)
-
-            if self._processing_amplitude > 0:
-                t = now - processing_start
-                amp = self._processing_amplitude
-                total_offsets[2] += amp * THINKING_Z_AMP * math.sin(2 * math.pi * THINKING_Z_FREQ * t)
-                total_offsets[4] += amp * (
-                    THINKING_PITCH_BASE + THINKING_PITCH_AMP * math.sin(2 * math.pi * THINKING_PITCH_FREQ * t)
-                )
-                total_offsets[5] += amp * THINKING_YAW_AMP * math.sin(2 * math.pi * THINKING_YAW_FREQ * t)
 
             # --- Compose final head pose ---
             if np.any(total_offsets != 0):
