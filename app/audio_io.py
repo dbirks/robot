@@ -1,5 +1,4 @@
 import logging
-import os
 import threading
 import time
 
@@ -14,16 +13,6 @@ CHUNK_SAMPLES = 512
 SILENCE_CHUNKS_THRESHOLD = 25  # ~800ms at 16kHz/512 samples
 
 
-def _get_input_device() -> int | None:
-    env = os.getenv("AUDIO_INPUT_DEVICE", "")
-    if env:
-        return int(env)
-    for i, d in enumerate(sd.query_devices()):
-        if "Reachy Mini" in d["name"] and d["max_input_channels"] > 0:
-            return i
-    return None
-
-
 class AudioRecorder:
     """VAD-gated microphone recorder.
 
@@ -36,11 +25,6 @@ class AudioRecorder:
         self.vad_threshold = config.vad_threshold
         silence_ms = config.vad_min_silence_ms
         self.silence_limit = max(1, int(silence_ms / (CHUNK_SAMPLES / config.sample_rate * 1000)))
-        self._input_device = _get_input_device()
-        if self._input_device is not None:
-            log.info("Audio input: device %s", self._input_device)
-        else:
-            log.info("Audio input: system default")
 
         self._vad_model = None
         self._load_vad()
@@ -63,7 +47,7 @@ class AudioRecorder:
 
         log.debug("Listening...")
 
-        with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype="int16", blocksize=CHUNK_SAMPLES, device=self._input_device) as stream:
+        with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype="int16", blocksize=CHUNK_SAMPLES) as stream:
             while True:
                 data, _overflowed = stream.read(CHUNK_SAMPLES)
                 audio_int16 = data[:, 0]
