@@ -505,13 +505,17 @@ def make_handlers(
         try:
             from .playback import set_volume_boost
 
-            level_map = {"low": 0.5, "quiet": 0.5, "medium": 1.0, "normal": 1.0, "high": 1.8, "loud": 1.8}
+            level_map = {
+                "whisper": 0.3, "low": 0.7, "quiet": 0.7,
+                "medium": 1.2, "normal": 1.2,
+                "high": 1.8, "loud": 1.8, "max": 2.5,
+            }
             if level.lower() in level_map:
                 boost = level_map[level.lower()]
             else:
                 try:
                     num = float(level)
-                    boost = max(0.1, min(3.0, num / 5.0))
+                    boost = max(0.1, min(5.0, num / 2.0))
                 except ValueError:
                     return {"ok": False, "error": f"Unknown volume level: {level}"}
             set_volume_boost(boost)
