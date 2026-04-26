@@ -72,6 +72,7 @@ def _parse_emotion_file(path: str | Path) -> list[AnimationKeyframe]:
         frame = frames[idx]
         pose = np.array(frame["head"], dtype=np.float64)
         antennas = frame.get("antennas")
+        body_yaw = frame.get("body_yaw", 0.0)
 
         # Calculate duration: time delta from previous sampled frame
         if i == 0:
@@ -87,6 +88,7 @@ def _parse_emotion_file(path: str | Path) -> list[AnimationKeyframe]:
             AnimationKeyframe(
                 pose=pose,
                 antennas=list(antennas) if antennas is not None else None,
+                body_yaw=float(body_yaw) if body_yaw else None,
                 duration=duration,
             )
         )

@@ -1,6 +1,7 @@
 import collections
 import logging
 import math
+import random
 import threading
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,14 @@ FACE_MAX_VELOCITY = math.radians(50)
 FACE_DEAD_ZONE = math.radians(2.5)
 FACE_LOST_TIMEOUT = 2.0
 CENTER_SPRING_HALFLIFE = 0.8
+
+# Gaze aversion during idle face tracking (prevents staring)
+GAZE_HOLD_MIN = 3.0
+GAZE_HOLD_MAX = 6.0
+GAZE_AWAY_MIN = 0.5
+GAZE_AWAY_MAX = 1.5
+GAZE_AWAY_YAW = math.radians(12)
+GAZE_AWAY_PITCH = math.radians(5)
 
 # Breathing (idle)
 BREATHING_DELAY = 0.3
@@ -95,6 +104,7 @@ class AnimationKeyframe:
 
     pose: np.ndarray  # 4x4 head matrix
     antennas: list[float] | None = None  # optional antenna positions
+    body_yaw: float | None = None  # optional base rotation in radians
     duration: float = 0.3  # seconds to reach this keyframe
 
 
@@ -145,6 +155,12 @@ class MovementManager:
         self._speaking = False
         self._thinking_avert_progress = 0.0
         self._thinking_direction = 1.0
+
+        # Idle gaze aversion (prevents staring)
+        self._gaze_avert_active = False
+        self._gaze_next_avert = time.monotonic() + random.uniform(GAZE_HOLD_MIN, GAZE_HOLD_MAX)
+        self._gaze_avert_end = 0.0
+        self._gaze_avert_offset = np.zeros(6)
 
         # Antenna freeze
         self._frozen_antennas: tuple[float, float] | None = None
@@ -371,10 +387,12 @@ class MovementManager:
         if kf_idx == 0:
             start_pose = self._animation_start_pose
             start_antennas = self._animation_start_antennas
+            start_body_yaw = 0.0
         else:
             prev_kf = anim.keyframes[kf_idx - 1]
             start_pose = prev_kf.pose
             start_antennas = prev_kf.antennas
+            start_body_yaw = prev_kf.body_yaw if prev_kf.body_yaw is not None else 0.0
 
         # Interpolation progress within this keyframe
         if kf.duration > 0:
@@ -395,10 +413,15 @@ class MovementManager:
             else:
                 self._animation_antennas = [kf.antennas[i] * s for i in range(len(kf.antennas))]
         elif start_antennas is not None and kf_idx == 0:
-            # First keyframe has no antennas but we have a start — keep start
             self._animation_antennas = start_antennas
         else:
             self._animation_antennas = None
+
+        # Interpolate body_yaw
+        if kf.body_yaw is not None:
+            self._animation_body_yaw = (1.0 - s) * start_body_yaw + s * kf.body_yaw
+        else:
+            self._animation_body_yaw = None
 
         # Check if we should advance to the next keyframe
         if t >= 1.0:
@@ -414,6 +437,7 @@ class MovementManager:
     def _run_loop(self):
         smooth_primary = self._center.copy()
         current_antennas = [0.0, 0.0]
+        current_body_yaw = 0.0
         interval = 1.0 / CONTROL_HZ
         last_tick = time.monotonic()
 
@@ -467,6 +491,31 @@ class MovementManager:
 
             # Speech wobble
             total_offsets += speech_offsets
+
+            # Idle gaze aversion (prevents staring when not in conversation)
+            in_conversation = listening or processing or self._speaking or self._thinking_avert_progress > 0
+            if face_active and not in_conversation:
+                if not self._gaze_avert_active and now >= self._gaze_next_avert:
+                    self._gaze_avert_active = True
+                    self._gaze_avert_end = now + random.uniform(GAZE_AWAY_MIN, GAZE_AWAY_MAX)
+                    direction = random.choice([-1.0, 1.0])
+                    self._gaze_avert_offset = np.array([
+                        0, 0, 0, 0,
+                        GAZE_AWAY_PITCH * random.uniform(0.5, 1.0),
+                        GAZE_AWAY_YAW * direction * random.uniform(0.6, 1.0),
+                    ])
+                elif self._gaze_avert_active and now >= self._gaze_avert_end:
+                    self._gaze_avert_active = False
+                    self._gaze_next_avert = now + random.uniform(GAZE_HOLD_MIN, GAZE_HOLD_MAX)
+                    self._gaze_avert_offset = np.zeros(6)
+
+                if self._gaze_avert_active:
+                    total_offsets += self._gaze_avert_offset
+            else:
+                if self._gaze_avert_active:
+                    self._gaze_avert_active = False
+                    self._gaze_avert_offset = np.zeros(6)
+                self._gaze_next_avert = now + random.uniform(GAZE_HOLD_MIN, GAZE_HOLD_MAX)
 
             # Thinking gaze aversion (deliberate look-away + subtle micro-drift)
             if processing:
@@ -579,7 +628,14 @@ class MovementManager:
             ]
 
             # --- Issue command ---
-            self._robot.set_target(head=final_head, antennas=current_antennas)
+            # Body yaw from animation (if any)
+            target_body_yaw = 0.0
+            if anim_weight > 0.0 and hasattr(self, '_animation_body_yaw') and self._animation_body_yaw is not None:
+                target_body_yaw = anim_weight * self._animation_body_yaw
+            body_alpha = 0.1
+            current_body_yaw = body_alpha * target_body_yaw + (1 - body_alpha) * current_body_yaw
+
+            self._robot.set_target(head=final_head, antennas=current_antennas, body_yaw=current_body_yaw)
 
             elapsed = time.monotonic() - tick_start
             sleep_time = interval - elapsed

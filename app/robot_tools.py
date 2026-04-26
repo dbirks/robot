@@ -208,7 +208,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "go_to_sleep",
-            "description": "Put the robot to sleep. ONLY use this when the user directly and explicitly tells you to go to sleep or shut down. Never call this just because someone mentions sleep or says goodbye.",
+            "description": "Put the robot to sleep. ONLY use when the user says EXACTLY 'go to sleep', 'time to sleep', or 'shut down'. NEVER use for: goodbye, bye, see you later, goodnight, or any other farewell. If unsure, do NOT call this tool.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -596,14 +596,23 @@ def make_handlers(
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    _session_start = time.monotonic()
+    _last_sleep_request = 0.0
+
     def go_to_sleep(**_kwargs: Any) -> dict:
+        nonlocal _last_sleep_request
         if err := _require_robot():
             return err
         if sleep_event is None:
             return {"ok": False, "error": "Sleep not supported"}
+        uptime = time.monotonic() - _session_start
+        if uptime < 120:
+            return {"ok": False, "error": "Too early to sleep — conversation just started. Stay awake and chat!"}
+        now = time.monotonic()
+        if now - _last_sleep_request > 30:
+            _last_sleep_request = now
+            return {"ok": False, "error": "Are you sure you want me to sleep? Tell me again to confirm."}
         try:
-            # Stop movement systems BEFORE the sleep animation so they
-            # don't fight the goto_target with their 60Hz control loop.
             if face_tracker:
                 face_tracker.stop_tracking()
             if wobbler:
