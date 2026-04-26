@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- Left Column: Services + GPU + Faces -->
+    <div class="lg:col-span-1 space-y-6">
+        <!-- Services -->
+        <div id="services-panel"
+             hx-get="/partials/services"
+             hx-trigger="every 5s"
+             hx-swap="innerHTML">
+            {% include "partials/services.html" %}
+        </div>
+
+        <!-- GPU Stats -->
+        <div id="gpu-panel"
+             hx-get="/partials/gpu"
+             hx-trigger="every 10s"
+             hx-swap="innerHTML">
+            {% include "partials/gpu.html" %}
+        </div>
+
+        <!-- Known Faces -->
+        <div id="faces-panel">
+            {% include "partials/faces.html" %}
+        </div>
+    </div>
+
+    <!-- Middle Column: Conversation -->
+    <div class="lg:col-span-1">
+        <div id="conversation-panel">
+            {% include "partials/conversation.html" %}
+        </div>
+    </div>
+
+    <!-- Right Column: Settings -->
+    <div class="lg:col-span-1">
+        <div id="settings-panel">
+            {% include "partials/settings.html" %}
+        </div>
+    </div>
+
+</div>
+{% endblock %}

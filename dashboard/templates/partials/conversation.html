@@ -1,0 +1,147 @@
+<div class="card" style="height: calc(100vh - 8rem);">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-white">Conversation</h2>
+        {% if session_id %}
+        <span class="text-xs text-slate-500 font-mono">{{ session_id }}</span>
+        {% endif %}
+    </div>
+
+    <!-- Conversation messages -->
+    <div id="conversation-scroll"
+         class="overflow-y-auto space-y-3 pr-1"
+         style="height: calc(100% - 3rem);"
+         hx-ext="sse"
+         sse-connect="/sse/conversation"
+         sse-swap="new_turn"
+         hx-swap="beforeend scroll:bottom">
+
+        {% for turn in turns %}
+        {% if turn.role == "user" %}
+        <div class="flex justify-end">
+            <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-sky-600/30 border border-sky-500/20">
+                <div class="text-xs text-sky-400 mb-1">You &middot; {{ turn.timestamp | format_ts }}</div>
+                <div class="text-sm text-slate-200">{{ turn.content or "" }}</div>
+            </div>
+        </div>
+        {% elif turn.role == "assistant" %}
+        <div class="flex justify-start">
+            <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-slate-700/50 border border-slate-600/30">
+                <div class="text-xs text-emerald-400 mb-1">Reachy &middot; {{ turn.timestamp | format_ts }}</div>
+                {% if turn.content %}
+                <div class="text-sm text-slate-200">{{ turn.content }}</div>
+                {% endif %}
+                {% if turn.tool_calls %}
+                <details class="mt-2">
+                    <summary class="text-xs text-amber-400 cursor-pointer hover:text-amber-300">
+                        Tool calls ({{ turn.tool_calls | length }})
+                    </summary>
+                    <div class="mt-1.5 space-y-1">
+                        {% for tc in turn.tool_calls %}
+                        <div class="text-xs bg-slate-800 rounded p-2 font-mono text-slate-400 overflow-x-auto">
+                            {% if tc is mapping %}
+                                <span class="text-amber-300">{{ tc.get("function", {}).get("name", "unknown") }}</span>
+                                <span class="text-slate-500">({{ tc.get("function", {}).get("arguments", "{}") }})</span>
+                            {% else %}
+                                {{ tc }}
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+                {% endif %}
+            </div>
+        </div>
+        {% elif turn.role == "tool" %}
+        <div class="flex justify-start">
+            <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-amber-900/20 border border-amber-500/20">
+                <div class="text-xs text-amber-400 mb-1">Tool result &middot; {{ turn.timestamp | format_ts }}</div>
+                <details>
+                    <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-300">Show result</summary>
+                    <div class="mt-1.5 text-xs bg-slate-800 rounded p-2 font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap">{{ turn.content or "" }}</div>
+                </details>
+            </div>
+        </div>
+        {% elif turn.role == "system" %}
+        <div class="flex justify-center">
+            <div class="text-xs text-slate-500 italic px-3 py-1">System prompt set</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+
+        {% if not turns %}
+        <div class="flex items-center justify-center h-full">
+            <div class="text-sm text-slate-500 text-center">
+                <div class="mb-2">No conversation yet</div>
+                <div class="text-xs">Turns will appear here when the agent is running</div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+// Handle SSE new turns — render them as HTML
+document.body.addEventListener('sse:new_turn', function(event) {
+    const container = document.getElementById('conversation-scroll');
+    if (!container) return;
+
+    try {
+        const turn = JSON.parse(event.detail.data);
+        let html = '';
+        const time = new Date(turn.timestamp * 1000).toLocaleTimeString();
+
+        if (turn.role === 'user') {
+            html = `<div class="flex justify-end">
+                <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-sky-600/30 border border-sky-500/20">
+                    <div class="text-xs text-sky-400 mb-1">You &middot; ${time}</div>
+                    <div class="text-sm text-slate-200">${turn.content || ''}</div>
+                </div></div>`;
+        } else if (turn.role === 'assistant') {
+            let toolHtml = '';
+            if (turn.tool_calls && turn.tool_calls.length > 0) {
+                const tcItems = turn.tool_calls.map(tc => {
+                    const name = tc?.function?.name || 'unknown';
+                    const args = tc?.function?.arguments || '{}';
+                    return `<div class="text-xs bg-slate-800 rounded p-2 font-mono text-slate-400 overflow-x-auto">
+                        <span class="text-amber-300">${name}</span>
+                        <span class="text-slate-500">(${args})</span></div>`;
+                }).join('');
+                toolHtml = `<details class="mt-2">
+                    <summary class="text-xs text-amber-400 cursor-pointer hover:text-amber-300">Tool calls (${turn.tool_calls.length})</summary>
+                    <div class="mt-1.5 space-y-1">${tcItems}</div></details>`;
+            }
+            html = `<div class="flex justify-start">
+                <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-slate-700/50 border border-slate-600/30">
+                    <div class="text-xs text-emerald-400 mb-1">Reachy &middot; ${time}</div>
+                    ${turn.content ? `<div class="text-sm text-slate-200">${turn.content}</div>` : ''}
+                    ${toolHtml}
+                </div></div>`;
+        } else if (turn.role === 'tool') {
+            html = `<div class="flex justify-start">
+                <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-amber-900/20 border border-amber-500/20">
+                    <div class="text-xs text-amber-400 mb-1">Tool result &middot; ${time}</div>
+                    <details>
+                        <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-300">Show result</summary>
+                        <div class="mt-1.5 text-xs bg-slate-800 rounded p-2 font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap">${turn.content || ''}</div>
+                    </details>
+                </div></div>`;
+        }
+
+        if (html) {
+            container.insertAdjacentHTML('beforeend', html);
+            container.scrollTop = container.scrollHeight;
+        }
+    } catch (e) {
+        console.error('SSE parse error:', e);
+    }
+
+    // Prevent HTMX from swapping (we handle it ourselves)
+    event.preventDefault();
+});
+
+// Auto-scroll on load
+document.addEventListener('DOMContentLoaded', function() {
+    const el = document.getElementById('conversation-scroll');
+    if (el) el.scrollTop = el.scrollHeight;
+});
+</script>

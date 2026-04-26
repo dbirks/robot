@@ -1,0 +1,53 @@
+<div class="card">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-white">GPU</h2>
+        <span class="htmx-indicator text-xs text-slate-400">updating...</span>
+    </div>
+    {% if gpu %}
+    <div class="space-y-4">
+        <div class="text-sm text-slate-400">{{ gpu.name }}</div>
+
+        <!-- VRAM -->
+        <div>
+            <div class="flex justify-between text-sm mb-1.5">
+                <span class="text-slate-400">VRAM</span>
+                <span class="text-slate-300">{{ gpu.mem_used }} / {{ gpu.mem_total }} MB</span>
+            </div>
+            <div class="h-2.5 bg-slate-700 rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500
+                    {% if gpu.mem_pct > 90 %}bg-red-500{% elif gpu.mem_pct > 70 %}bg-amber-500{% else %}bg-emerald-500{% endif %}"
+                    style="width: {{ gpu.mem_pct }}%">
+                </div>
+            </div>
+            <div class="text-xs text-slate-500 mt-1">{{ gpu.mem_pct }}%</div>
+        </div>
+
+        <!-- Utilization -->
+        <div>
+            <div class="flex justify-between text-sm mb-1.5">
+                <span class="text-slate-400">Utilization</span>
+                <span class="text-slate-300">{{ gpu.util }}%</span>
+            </div>
+            <div class="h-2.5 bg-slate-700 rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500
+                    {% if gpu.util > 90 %}bg-red-500{% elif gpu.util > 70 %}bg-amber-500{% else %}bg-sky-500{% endif %}"
+                    style="width: {{ gpu.util }}%">
+                </div>
+            </div>
+        </div>
+
+        <!-- Temperature -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-slate-800/50">
+            <span class="text-sm text-slate-400">Temperature</span>
+            <span class="text-lg font-mono
+                {% if gpu.temp > 85 %}text-red-400{% elif gpu.temp > 70 %}text-amber-400{% else %}text-emerald-400{% endif %}">
+                {{ gpu.temp }}&deg;C
+            </span>
+        </div>
+    </div>
+    {% else %}
+    <div class="text-sm text-slate-500 text-center py-4">
+        GPU not available or nvidia-smi not found
+    </div>
+    {% endif %}
+</div>

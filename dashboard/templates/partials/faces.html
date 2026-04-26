@@ -1,0 +1,40 @@
+<div class="card">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-white">Known Faces</h2>
+        <span class="text-xs text-slate-500">{{ faces | length }} registered</span>
+    </div>
+
+    {% if deleted is defined and deleted %}
+    <div class="mb-3 px-3 py-2 rounded-lg bg-red-900/20 border border-red-500/20 text-sm text-red-300">
+        Deleted "{{ deleted }}"
+    </div>
+    {% endif %}
+
+    {% if faces %}
+    <div class="space-y-2">
+        {% for name in faces %}
+        <div class="flex items-center justify-between p-3 rounded-lg bg-slate-800/50">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-medium text-slate-300">
+                    {{ name[0] | upper }}
+                </div>
+                <span class="text-sm text-slate-200">{{ name }}</span>
+            </div>
+            <button
+                hx-delete="/faces/{{ name }}"
+                hx-target="#faces-panel"
+                hx-swap="innerHTML"
+                hx-confirm="Delete face '{{ name }}'?"
+                class="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-700 text-red-400
+                       hover:bg-red-900/50 hover:text-red-300 transition-colors">
+                Delete
+            </button>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-sm text-slate-500 text-center py-4">
+        No known faces registered
+    </div>
+    {% endif %}
+</div>

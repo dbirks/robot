@@ -1,0 +1,88 @@
+<div class="card">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-white">Settings</h2>
+        {% if saved is defined and saved %}
+        <span class="text-xs text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded-md">Saved</span>
+        {% endif %}
+        {% if restarted is defined and restarted %}
+        <span class="text-xs text-sky-400 bg-sky-400/10 px-2 py-1 rounded-md">Saved &amp; Restarting Agent...</span>
+        {% endif %}
+    </div>
+
+    <form class="space-y-5">
+        <!-- Volume Boost -->
+        <div>
+            <label class="block text-sm font-medium text-slate-300 mb-2">
+                Volume Boost
+                <span id="volume-value" class="text-slate-400 font-mono ml-2">{{ settings.VOLUME_BOOST }}</span>
+            </label>
+            <input type="range" name="volume_boost" min="0.5" max="5.0" step="0.1"
+                   value="{{ settings.VOLUME_BOOST }}"
+                   oninput="document.getElementById('volume-value').textContent = this.value"
+                   class="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer
+                          [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
+                          [&::-webkit-slider-thumb]:bg-sky-500 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer">
+        </div>
+
+        <!-- TTS Engine -->
+        <div>
+            <label class="block text-sm font-medium text-slate-300 mb-2">TTS Engine</label>
+            <select name="tts_engine"
+                    onchange="document.getElementById('kokoro-opts').style.display = this.value === 'kokoro' ? 'block' : 'none'"
+                    class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200
+                           focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500">
+                <option value="piper" {% if settings.TTS_ENGINE == "piper" %}selected{% endif %}>Piper</option>
+                <option value="kokoro" {% if settings.TTS_ENGINE == "kokoro" %}selected{% endif %}>Kokoro</option>
+                <option value="qwen3" {% if settings.TTS_ENGINE == "qwen3" %}selected{% endif %}>Qwen3 TTS</option>
+            </select>
+        </div>
+
+        <!-- Kokoro Voice (shown only when kokoro selected) -->
+        <div id="kokoro-opts" {% if settings.TTS_ENGINE != "kokoro" %}style="display: none"{% endif %}>
+            <label class="block text-sm font-medium text-slate-300 mb-2">Kokoro Voice</label>
+            <select name="kokoro_voice"
+                    class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200
+                           focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500">
+                <option value="bm_george" {% if settings.KOKORO_VOICE == "bm_george" %}selected{% endif %}>George</option>
+                <option value="bm_daniel" {% if settings.KOKORO_VOICE == "bm_daniel" %}selected{% endif %}>Daniel</option>
+                <option value="bm_fable" {% if settings.KOKORO_VOICE == "bm_fable" %}selected{% endif %}>Fable</option>
+                <option value="bm_lewis" {% if settings.KOKORO_VOICE == "bm_lewis" %}selected{% endif %}>Lewis</option>
+            </select>
+        </div>
+
+        <!-- Whisper Model -->
+        <div>
+            <label class="block text-sm font-medium text-slate-300 mb-2">Whisper Model</label>
+            <select name="whisper_model"
+                    class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200
+                           focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500">
+                <option value="tiny.en" {% if settings.WHISPER_MODEL == "tiny.en" %}selected{% endif %}>tiny.en (fastest, least accurate)</option>
+                <option value="small.en" {% if settings.WHISPER_MODEL == "small.en" %}selected{% endif %}>small.en (balanced)</option>
+                <option value="medium.en" {% if settings.WHISPER_MODEL == "medium.en" %}selected{% endif %}>medium.en (most accurate)</option>
+            </select>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="flex gap-3 pt-2">
+            <button type="button"
+                    hx-post="/settings/save"
+                    hx-target="#settings-panel"
+                    hx-swap="innerHTML"
+                    hx-include="closest form"
+                    class="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg bg-slate-700 text-slate-200
+                           hover:bg-slate-600 transition-colors">
+                Save
+            </button>
+            <button type="button"
+                    hx-post="/settings/apply-restart"
+                    hx-target="#settings-panel"
+                    hx-swap="innerHTML"
+                    hx-include="closest form"
+                    hx-confirm="Save settings and restart the agent?"
+                    class="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg bg-sky-600 text-white
+                           hover:bg-sky-500 transition-colors">
+                Apply &amp; Restart Agent
+            </button>
+        </div>
+    </form>
+</div>
