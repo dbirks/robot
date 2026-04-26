@@ -35,7 +35,7 @@ def _resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     return np.interp(indices, np.arange(len(audio)), audio.astype(np.float64)).astype(np.int16)
 
 
-VOLUME_BOOST = float(os.getenv("VOLUME_BOOST", "1.8"))
+VOLUME_BOOST = float(os.getenv("VOLUME_BOOST", "2.2"))
 
 
 def set_volume_boost(boost: float):

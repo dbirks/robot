@@ -11,10 +11,10 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
-TTS_ENGINE = os.getenv("TTS_ENGINE", "piper")
+TTS_ENGINE = os.getenv("TTS_ENGINE", "kokoro")
 TTS_SERVER_URL = os.getenv("TTS_SERVER_URL", "http://127.0.0.1:5100")
 TTS_SPEAKER = os.getenv("TTS_SPEAKER", "Ryan")
-KOKORO_VOICE = os.getenv("KOKORO_VOICE", "bm_george")
+KOKORO_VOICE = os.getenv("KOKORO_VOICE", "bm_daniel")
 KOKORO_LANG = os.getenv("KOKORO_LANG", "b")
 
 
