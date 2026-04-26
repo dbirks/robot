@@ -1,40 +1,39 @@
-<div class="card">
+<div class="border-3 border-black bg-blush-light p-4" style="border-width: 3px;">
     <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold text-white">Known Faces</h2>
-        <span class="text-xs text-slate-500">{{ faces | length }} registered</span>
+        <h2 class="text-lg font-extrabold uppercase tracking-widest">Known Faces</h2>
+        <span class="text-xs font-bold bg-white border-2 border-black px-2 py-1">{{ faces | length }} REGISTERED</span>
     </div>
 
     {% if deleted is defined and deleted %}
-    <div class="mb-3 px-3 py-2 rounded-lg bg-red-900/20 border border-red-500/20 text-sm text-red-300">
-        Deleted "{{ deleted }}"
+    <div class="mb-3 px-3 py-2 border-2 border-black bg-red-200 text-sm font-bold">
+        DELETED "{{ deleted }}"
     </div>
     {% endif %}
 
     {% if faces %}
     <div class="space-y-2">
         {% for name in faces %}
-        <div class="flex items-center justify-between p-3 rounded-lg bg-slate-800/50">
+        <div class="flex items-center justify-between p-3 border-2 border-black bg-white">
             <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-medium text-slate-300">
+                <div class="w-8 h-8 bg-blush border-2 border-black flex items-center justify-center text-xs font-extrabold">
                     {{ name[0] | upper }}
                 </div>
-                <span class="text-sm text-slate-200">{{ name }}</span>
+                <span class="text-sm font-bold">{{ name }}</span>
             </div>
             <button
                 hx-delete="/faces/{{ name }}"
                 hx-target="#faces-panel"
                 hx-swap="innerHTML"
                 hx-confirm="Delete face '{{ name }}'?"
-                class="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-700 text-red-400
-                       hover:bg-red-900/50 hover:text-red-300 transition-colors">
+                class="px-3 py-1 text-xs font-bold uppercase border-2 border-black bg-red-200 hover:bg-red-300">
                 Delete
             </button>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <div class="text-sm text-slate-500 text-center py-4">
-        No known faces registered
+    <div class="text-sm font-bold text-center py-6 border-2 border-black bg-white">
+        NO KNOWN FACES REGISTERED
     </div>
     {% endif %}
 </div>

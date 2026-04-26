@@ -1,14 +1,14 @@
-<div class="card" style="height: calc(100vh - 8rem);">
+<div class="border-3 border-black bg-cream p-4" style="border-width: 3px; height: calc(100vh - 7rem);">
     <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold text-white">Conversation</h2>
+        <h2 class="text-lg font-extrabold uppercase tracking-widest">Conversation</h2>
         {% if session_id %}
-        <span class="text-xs text-slate-500 font-mono">{{ session_id }}</span>
+        <span class="text-xs font-mono bg-butter border-2 border-black px-2 py-1">{{ session_id[:12] }}</span>
         {% endif %}
     </div>
 
     <!-- Conversation messages -->
     <div id="conversation-scroll"
-         class="overflow-y-auto space-y-3 pr-1"
+         class="overflow-y-auto space-y-3 scroll-area"
          style="height: calc(100% - 3rem);"
          hx-ext="sse"
          sse-connect="/sse/conversation"
@@ -18,60 +18,70 @@
         {% for turn in turns %}
         {% if turn.role == "user" %}
         <div class="flex justify-end">
-            <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-sky-600/30 border border-sky-500/20">
-                <div class="text-xs text-sky-400 mb-1">You &middot; {{ turn.timestamp | format_ts }}</div>
-                <div class="text-sm text-slate-200">{{ turn.content or "" }}</div>
+            <div class="max-w-[85%] border-2 border-black bg-blush px-4 py-3">
+                <div class="text-xs font-bold uppercase mb-1">YOU // {{ turn.timestamp | format_ts }}</div>
+                <div class="text-sm">{{ turn.content or "" }}</div>
             </div>
         </div>
-        {% elif turn.role == "assistant" %}
+
+        {% elif turn.role == "assistant" and turn.tool_calls %}
+        <!-- Assistant message WITH tool calls — show as lavender tool block -->
         <div class="flex justify-start">
-            <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-slate-700/50 border border-slate-600/30">
-                <div class="text-xs text-emerald-400 mb-1">Reachy &middot; {{ turn.timestamp | format_ts }}</div>
+            <div class="max-w-[85%] border-2 border-black bg-lavender px-4 py-3">
+                <div class="text-xs font-bold uppercase mb-1">REACHY // {{ turn.timestamp | format_ts }}</div>
                 {% if turn.content %}
-                <div class="text-sm text-slate-200">{{ turn.content }}</div>
+                <div class="text-sm mb-2">{{ turn.content }}</div>
                 {% endif %}
-                {% if turn.tool_calls %}
-                <details class="mt-2">
-                    <summary class="text-xs text-amber-400 cursor-pointer hover:text-amber-300">
-                        Tool calls ({{ turn.tool_calls | length }})
-                    </summary>
-                    <div class="mt-1.5 space-y-1">
-                        {% for tc in turn.tool_calls %}
-                        <div class="text-xs bg-slate-800 rounded p-2 font-mono text-slate-400 overflow-x-auto">
-                            {% if tc is mapping %}
-                                <span class="text-amber-300">{{ tc.get("function", {}).get("name", "unknown") }}</span>
-                                <span class="text-slate-500">({{ tc.get("function", {}).get("arguments", "{}") }})</span>
-                            {% else %}
-                                {{ tc }}
-                            {% endif %}
+                <div class="space-y-2">
+                    {% for tc in turn.tool_calls %}
+                    <div class="border-2 border-black bg-lavender-light p-2">
+                        {% if tc is mapping %}
+                        <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">
+                            TOOL: {{ tc.get("function", {}).get("name", "unknown") }}
                         </div>
-                        {% endfor %}
+                        <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">{{ tc.get("function", {}).get("arguments", "{}") }}</pre>
+                        {% else %}
+                        <pre class="text-xs overflow-x-auto whitespace-pre-wrap">{{ tc }}</pre>
+                        {% endif %}
                     </div>
-                </details>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        {% elif turn.role == "assistant" %}
+        <!-- Assistant message WITHOUT tool calls -->
+        <div class="flex justify-start">
+            <div class="max-w-[85%] border-2 border-black bg-mint px-4 py-3">
+                <div class="text-xs font-bold uppercase mb-1">REACHY // {{ turn.timestamp | format_ts }}</div>
+                {% if turn.content %}
+                <div class="text-sm">{{ turn.content }}</div>
                 {% endif %}
             </div>
         </div>
+
         {% elif turn.role == "tool" %}
         <div class="flex justify-start">
-            <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-amber-900/20 border border-amber-500/20">
-                <div class="text-xs text-amber-400 mb-1">Tool result &middot; {{ turn.timestamp | format_ts }}</div>
-                <details>
-                    <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-300">Show result</summary>
-                    <div class="mt-1.5 text-xs bg-slate-800 rounded p-2 font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap">{{ turn.content or "" }}</div>
-                </details>
+            <div class="max-w-[85%] border-2 border-black bg-lavender-light px-4 py-3">
+                <div class="text-xs font-bold uppercase mb-1">
+                    <span class="bg-black text-lavender inline-block px-2 py-0.5">TOOL RESULT</span>
+                    <span class="ml-2">{{ turn.timestamp | format_ts }}</span>
+                </div>
+                <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">{{ turn.content or "" }}</pre>
             </div>
         </div>
+
         {% elif turn.role == "system" %}
         <div class="flex justify-center">
-            <div class="text-xs text-slate-500 italic px-3 py-1">System prompt set</div>
+            <div class="text-xs font-bold uppercase bg-butter border-2 border-black px-3 py-1">SYSTEM PROMPT SET</div>
         </div>
         {% endif %}
         {% endfor %}
 
         {% if not turns %}
         <div class="flex items-center justify-center h-full">
-            <div class="text-sm text-slate-500 text-center">
-                <div class="mb-2">No conversation yet</div>
+            <div class="text-center">
+                <div class="text-sm font-bold uppercase mb-2">No conversation yet</div>
                 <div class="text-xs">Turns will appear here when the agent is running</div>
             </div>
         </div>
@@ -92,38 +102,42 @@ document.body.addEventListener('sse:new_turn', function(event) {
 
         if (turn.role === 'user') {
             html = `<div class="flex justify-end">
-                <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-sky-600/30 border border-sky-500/20">
-                    <div class="text-xs text-sky-400 mb-1">You &middot; ${time}</div>
-                    <div class="text-sm text-slate-200">${turn.content || ''}</div>
+                <div class="max-w-[85%] border-2 border-black bg-blush px-4 py-3">
+                    <div class="text-xs font-bold uppercase mb-1">YOU // ${time}</div>
+                    <div class="text-sm">${turn.content || ''}</div>
                 </div></div>`;
         } else if (turn.role === 'assistant') {
-            let toolHtml = '';
-            if (turn.tool_calls && turn.tool_calls.length > 0) {
+            const hasTools = turn.tool_calls && turn.tool_calls.length > 0;
+            if (hasTools) {
                 const tcItems = turn.tool_calls.map(tc => {
                     const name = tc?.function?.name || 'unknown';
                     const args = tc?.function?.arguments || '{}';
-                    return `<div class="text-xs bg-slate-800 rounded p-2 font-mono text-slate-400 overflow-x-auto">
-                        <span class="text-amber-300">${name}</span>
-                        <span class="text-slate-500">(${args})</span></div>`;
+                    return `<div class="border-2 border-black bg-lavender-light p-2">
+                        <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">TOOL: ${name}</div>
+                        <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">${args}</pre>
+                    </div>`;
                 }).join('');
-                toolHtml = `<details class="mt-2">
-                    <summary class="text-xs text-amber-400 cursor-pointer hover:text-amber-300">Tool calls (${turn.tool_calls.length})</summary>
-                    <div class="mt-1.5 space-y-1">${tcItems}</div></details>`;
+                html = `<div class="flex justify-start">
+                    <div class="max-w-[85%] border-2 border-black bg-lavender px-4 py-3">
+                        <div class="text-xs font-bold uppercase mb-1">REACHY // ${time}</div>
+                        ${turn.content ? `<div class="text-sm mb-2">${turn.content}</div>` : ''}
+                        <div class="space-y-2">${tcItems}</div>
+                    </div></div>`;
+            } else {
+                html = `<div class="flex justify-start">
+                    <div class="max-w-[85%] border-2 border-black bg-mint px-4 py-3">
+                        <div class="text-xs font-bold uppercase mb-1">REACHY // ${time}</div>
+                        ${turn.content ? `<div class="text-sm">${turn.content}</div>` : ''}
+                    </div></div>`;
             }
-            html = `<div class="flex justify-start">
-                <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-slate-700/50 border border-slate-600/30">
-                    <div class="text-xs text-emerald-400 mb-1">Reachy &middot; ${time}</div>
-                    ${turn.content ? `<div class="text-sm text-slate-200">${turn.content}</div>` : ''}
-                    ${toolHtml}
-                </div></div>`;
         } else if (turn.role === 'tool') {
             html = `<div class="flex justify-start">
-                <div class="max-w-[85%] rounded-xl px-4 py-2.5 bg-amber-900/20 border border-amber-500/20">
-                    <div class="text-xs text-amber-400 mb-1">Tool result &middot; ${time}</div>
-                    <details>
-                        <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-300">Show result</summary>
-                        <div class="mt-1.5 text-xs bg-slate-800 rounded p-2 font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap">${turn.content || ''}</div>
-                    </details>
+                <div class="max-w-[85%] border-2 border-black bg-lavender-light px-4 py-3">
+                    <div class="text-xs font-bold uppercase mb-1">
+                        <span class="bg-black text-lavender inline-block px-2 py-0.5">TOOL RESULT</span>
+                        <span class="ml-2">${time}</span>
+                    </div>
+                    <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">${turn.content || ''}</pre>
                 </div></div>`;
         }
 

@@ -1,38 +1,36 @@
-<div class="card">
+<div class="border-3 border-black bg-mint-light p-4" style="border-width: 3px;">
     <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold text-white">Services</h2>
-        <span class="htmx-indicator text-xs text-slate-400">updating...</span>
+        <h2 class="text-lg font-extrabold uppercase tracking-widest">Services</h2>
+        <span class="htmx-indicator text-xs font-bold">UPDATING...</span>
     </div>
-    <div class="space-y-3">
+    <div class="space-y-2">
         {% for svc in services %}
-        <div class="flex items-center justify-between p-3 rounded-lg bg-slate-800/50">
+        <div class="flex items-center justify-between p-3 border-2 border-black bg-white">
             <div class="flex items-center gap-3">
-                <!-- Status dot -->
+                <!-- Status square -->
                 {% if svc.running %}
-                <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50"></div>
+                <div class="w-4 h-4 bg-green-500 border-2 border-black"></div>
                 {% else %}
-                <div class="w-2.5 h-2.5 rounded-full bg-red-400 shadow-sm shadow-red-400/50"></div>
+                <div class="w-4 h-4 bg-red-400 border-2 border-black"></div>
                 {% endif %}
                 <div>
-                    <div class="text-sm font-medium text-slate-200">{{ svc.name }}</div>
-                    <div class="text-xs text-slate-500">{{ svc.active }} ({{ svc.sub }})</div>
+                    <div class="text-sm font-bold">{{ svc.name }}</div>
+                    <div class="text-xs">{{ svc.active }} ({{ svc.sub }})</div>
                 </div>
             </div>
-            <div class="flex gap-1.5">
+            <div class="flex gap-1">
                 <button
                     hx-post="/services/{{ svc.name }}/restart"
                     hx-target="#services-panel"
                     hx-swap="innerHTML"
-                    class="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white transition-colors"
-                    title="Restart {{ svc.name }}">
+                    class="px-3 py-1 text-xs font-bold uppercase border-2 border-black bg-mint hover:bg-green-300">
                     Restart
                 </button>
                 <button
                     hx-post="/services/{{ svc.name }}/stop"
                     hx-target="#services-panel"
                     hx-swap="innerHTML"
-                    class="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-700 text-red-400 hover:bg-red-900/50 hover:text-red-300 transition-colors"
-                    title="Stop {{ svc.name }}">
+                    class="px-3 py-1 text-xs font-bold uppercase border-2 border-black bg-blush hover:bg-red-300">
                     Stop
                 </button>
             </div>

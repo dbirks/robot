@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
@@ -122,9 +122,7 @@ def get_recent_turns(limit: int = 100) -> tuple[list[dict], str | None]:
         conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         # Find most recent session
-        row = conn.execute(
-            "SELECT session_id FROM turns ORDER BY timestamp DESC LIMIT 1"
-        ).fetchone()
+        row = conn.execute("SELECT session_id FROM turns ORDER BY timestamp DESC LIMIT 1").fetchone()
         if not row:
             conn.close()
             return [], None
@@ -209,18 +207,52 @@ def render(request: Request, template: str, ctx: dict | None = None, **kwargs) -
 # ---------------------------------------------------------------------------
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+@app.get("/")
+async def index():
+    """Redirect root to conversation page."""
+    return RedirectResponse(url="/conversation")
+
+
+@app.get("/conversation", response_class=HTMLResponse)
+async def conversation_page(request: Request):
     turns, session_id = get_recent_turns()
     return render(
         request,
-        "index.html",
-        services=get_all_services(),
-        gpu=get_gpu_stats(),
-        settings=get_env_settings(),
+        "conversation.html",
         turns=turns,
         session_id=session_id,
+        active_page="conversation",
+    )
+
+
+@app.get("/services", response_class=HTMLResponse)
+async def services_page(request: Request):
+    return render(
+        request,
+        "services.html",
+        services=get_all_services(),
+        gpu=get_gpu_stats(),
+        active_page="services",
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    return render(
+        request,
+        "settings.html",
+        settings=get_env_settings(),
+        active_page="settings",
+    )
+
+
+@app.get("/faces", response_class=HTMLResponse)
+async def faces_page(request: Request):
+    return render(
+        request,
+        "faces.html",
         faces=get_known_faces(),
+        active_page="faces",
     )
 
 
@@ -239,9 +271,7 @@ async def service_action(request: Request, name: str, action: str):
     if name not in SERVICES or action not in ("restart", "stop"):
         return HTMLResponse("Invalid", status_code=400)
     try:
-        subprocess.run(
-            ["systemctl", "--user", action, name], capture_output=True, text=True, timeout=10
-        )
+        subprocess.run(["systemctl", "--user", action, name], capture_output=True, text=True, timeout=10)
     except Exception as e:
         log.error("Service %s %s failed: %s", action, name, e)
     # Small delay to let systemd state settle
@@ -313,9 +343,7 @@ async def partial_faces(request: Request):
 @app.delete("/faces/{name}", response_class=HTMLResponse)
 async def delete_face(request: Request, name: str):
     deleted = delete_known_face(name)
-    return render(
-        request, "partials/faces.html", faces=get_known_faces(), deleted=name if deleted else None
-    )
+    return render(request, "partials/faces.html", faces=get_known_faces(), deleted=name if deleted else None)
 
 
 # ---------------------------------------------------------------------------
@@ -345,9 +373,7 @@ async def sse_conversation(request: Request):
                 break
             if DB_PATH.exists():
                 try:
-                    conn = sqlite3.connect(
-                        f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False
-                    )
+                    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
                     conn.row_factory = sqlite3.Row
                     rows = conn.execute(
                         "SELECT id, session_id, timestamp, role, content, tool_calls, tool_call_id "

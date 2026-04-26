@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Services{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div id="services-panel"
+         hx-get="/partials/services"
+         hx-trigger="every 5s"
+         hx-swap="innerHTML">
+        {% include "partials/services.html" %}
+    </div>
+    <div id="gpu-panel"
+         hx-get="/partials/gpu"
+         hx-trigger="every 10s"
+         hx-swap="innerHTML">
+        {% include "partials/gpu.html" %}
+    </div>
+</div>
+{% endblock %}

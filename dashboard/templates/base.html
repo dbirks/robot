@@ -1,50 +1,99 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reachy Mini Dashboard</title>
+    <title>Reachy Mini — {% block title %}Dashboard{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
     <script>
         tailwind.config = {
-            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        cream: '#f5f0eb',
+                        mint: '#d5e8d4',
+                        'mint-light': '#e8f5e6',
+                        blush: '#f4d4d4',
+                        'blush-light': '#fce8e8',
+                        lavender: '#d4d4f4',
+                        'lavender-light': '#e8e8fc',
+                        butter: '#f4f0d4',
+                        'butter-light': '#faf8e8',
+                    },
+                    fontFamily: {
+                        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+                    },
+                },
+            },
         }
     </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
     <style>
-        body { background-color: #0f172a; }
-        .card {
-            background-color: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 0.75rem;
-            padding: 1.5rem;
-        }
-        /* Custom scrollbar for conversation */
-        #conversation-scroll::-webkit-scrollbar { width: 6px; }
-        #conversation-scroll::-webkit-scrollbar-track { background: #1e293b; }
-        #conversation-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        body { background-color: #f5f0eb; font-family: 'JetBrains Mono', monospace; }
+
+        /* Scrollbar */
+        .scroll-area::-webkit-scrollbar { width: 8px; }
+        .scroll-area::-webkit-scrollbar-track { background: #f5f0eb; border-left: 2px solid #000; }
+        .scroll-area::-webkit-scrollbar-thumb { background: #000; }
+
         /* HTMX loading indicator */
         .htmx-request .htmx-indicator { display: inline-block; }
         .htmx-indicator { display: none; }
+
+        /* Range slider brutalist style */
+        input[type="range"] { -webkit-appearance: none; appearance: none; height: 8px; background: #000; }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 20px; height: 20px; background: #d4d4f4; border: 3px solid #000; cursor: pointer;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px; height: 20px; background: #d4d4f4; border: 3px solid #000; cursor: pointer;
+        }
+
+        /* Select brutalist style */
+        select { -webkit-appearance: none; appearance: none; }
     </style>
 </head>
-<body class="min-h-screen text-slate-200">
-    <!-- Header -->
-    <header class="border-b border-slate-700 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <div class="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center text-sm font-bold text-white">R</div>
-                <h1 class="text-xl font-semibold text-white">Reachy Mini Dashboard</h1>
-            </div>
-            <div class="text-sm text-slate-400">
-                <span id="clock"></span>
-            </div>
-        </div>
-    </header>
+<body class="min-h-screen font-mono text-black">
 
-    <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 py-6">
+    <!-- NAV BAR -->
+    <nav class="fixed top-0 left-0 right-0 z-50 bg-butter border-b-3 border-black"
+         style="border-bottom: 3px solid #000;">
+        <div class="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
+            <div class="flex items-center gap-4">
+                <span class="text-lg font-extrabold tracking-widest uppercase">REACHY MINI</span>
+            </div>
+            <div class="flex items-center gap-0">
+                <a href="/conversation"
+                   class="px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black
+                          {% if active_page == 'conversation' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-blush{% endif %}">
+                    Conversation
+                </a>
+                <a href="/services"
+                   class="px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-l-0
+                          {% if active_page == 'services' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-mint{% endif %}">
+                    Services
+                </a>
+                <a href="/settings"
+                   class="px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-l-0
+                          {% if active_page == 'settings' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-lavender{% endif %}">
+                    Settings
+                </a>
+                <a href="/faces"
+                   class="px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-l-0
+                          {% if active_page == 'faces' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-butter{% endif %}">
+                    Faces
+                </a>
+            </div>
+            <div class="text-xs font-bold" id="clock"></div>
+        </div>
+    </nav>
+
+    <!-- MAIN CONTENT -->
+    <main class="max-w-6xl mx-auto px-4 pt-20 pb-8">
         {% block content %}{% endblock %}
     </main>
 
