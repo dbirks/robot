@@ -92,18 +92,7 @@
             <div class="flex items-center gap-4">
                 <span class="text-lg font-extrabold tracking-widest uppercase">REACHY MINI</span>
             </div>
-            <!-- Hamburger button (mobile) -->
-            <button onclick="document.getElementById('nav-links').classList.toggle('hidden')"
-                    class="md:hidden border-black bg-cream flex items-center justify-center"
-                    style="border: 3px solid #000; width: 44px; height: 44px;"
-                    aria-label="Menu">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square">
-                    <line x1="3" y1="5" x2="21" y2="5"/>
-                    <line x1="3" y1="12" x2="21" y2="12"/>
-                    <line x1="3" y1="19" x2="21" y2="19"/>
-                </svg>
-            </button>
-            <!-- Nav links -->
+            <!-- Nav links (desktop: inline, mobile: dropdown) -->
             <div id="nav-links" class="hidden md:flex items-center gap-0 absolute md:relative top-full left-0 right-0 md:top-auto bg-butter md:bg-transparent border-b-3 md:border-0 border-black"
                  style="border-bottom: 3px solid #000;">
                 <a href="/conversation"
@@ -127,7 +116,7 @@
                     Faces
                 </a>
             </div>
-            <!-- Mic + Agent controls -->
+            <!-- Mic + Agent controls + Hamburger -->
             <div class="flex items-center gap-2">
                 <div id="mic-btn"
                      hx-get="/partials/mic_button" hx-trigger="load, every 2s" hx-swap="innerHTML">
@@ -135,6 +124,17 @@
                 <div id="agent-btn"
                      hx-get="/partials/agent_button" hx-trigger="load, every 3s" hx-swap="innerHTML">
                 </div>
+                <!-- Hamburger button (mobile only, far right) -->
+                <button onclick="document.getElementById('nav-links').classList.toggle('hidden')"
+                        class="md:hidden flex items-center justify-center bg-cream"
+                        style="border: 3px solid #000; width: 44px; height: 44px;"
+                        aria-label="Menu">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square">
+                        <line x1="3" y1="5" x2="21" y2="5"/>
+                        <line x1="3" y1="12" x2="21" y2="12"/>
+                        <line x1="3" y1="19" x2="21" y2="19"/>
+                    </svg>
+                </button>
                 <div class="text-xs font-bold hidden md:block ml-2" id="clock"></div>
             </div>
         </div>

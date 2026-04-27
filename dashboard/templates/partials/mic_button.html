@@ -1,29 +1,11 @@
 {% if mic_muted %}
 <button hx-post="/api/mic_toggle" hx-target="#mic-btn" hx-swap="innerHTML"
-        hx-on::after-request="setTimeout(()=>htmx.ajax('GET','/partials/mic_button','#mic-btn'),200)"
-        class="flex items-center justify-center border-3 border-black"
-        style="border: 3px solid #000; width: 40px; height: 40px; background: #f4d4d4;"
-        title="Mic MUTED — click to unmute">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b91c1c" stroke-width="2.5" stroke-linecap="square">
-        <line x1="1" y1="1" x2="23" y2="23"/>
-        <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/>
-        <path d="M17 16.95A7 7 0 0 1 5 12"/>
-        <path d="M19 12a7 7 0 0 1-.11 1.23"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-        <line x1="8" y1="23" x2="16" y2="23"/>
-    </svg>
-</button>
+        class="px-2 py-1 text-xs font-bold uppercase tracking-wide"
+        style="border: 3px solid #000; background: #ef4444; color: #fff;"
+        title="Mic MUTED — click to unmute">MIC</button>
 {% else %}
 <button hx-post="/api/mic_toggle" hx-target="#mic-btn" hx-swap="innerHTML"
-        hx-on::after-request="setTimeout(()=>htmx.ajax('GET','/partials/mic_button','#mic-btn'),200)"
-        class="flex items-center justify-center border-3 border-black"
-        style="border: 3px solid #000; width: 40px; height: 40px; background: #d5e8d4;"
-        title="Mic LIVE — click to mute">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2.5" stroke-linecap="square">
-        <rect x="9" y="1" width="6" height="12" rx="3"/>
-        <path d="M19 12a7 7 0 0 1-14 0"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-        <line x1="8" y1="23" x2="16" y2="23"/>
-    </svg>
-</button>
+        class="px-2 py-1 text-xs font-bold uppercase tracking-wide"
+        style="border: 3px solid #000; background: #22c55e; color: #fff;"
+        title="Mic LIVE — click to mute">MIC</button>
 {% endif %}

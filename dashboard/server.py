@@ -265,9 +265,43 @@ def pretty_json(value: str) -> str:
         return value
 
 
+def _html_escape(s: str) -> str:
+    """Minimal HTML escaping."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def format_tool_result(value: str) -> str:
+    """Format tool result JSON as HTML key-value pairs."""
+    try:
+        data = json.loads(value)
+        if isinstance(data, dict):
+            rows = []
+            for k, v in data.items():
+                key_html = f'<span class="font-bold text-black/60 min-w-[80px]">{_html_escape(str(k))}</span>'
+                if k == "ok":
+                    if v:
+                        v_html = '<span class="text-green-700 font-bold">✓</span>'
+                    else:
+                        v_html = '<span class="text-red-700 font-bold">✗</span>'
+                elif isinstance(v, bool):
+                    color = "text-green-700" if v else "text-red-700"
+                    v_html = f'<span class="{color}">{_html_escape(str(v).lower())}</span>'
+                elif isinstance(v, (dict, list)):
+                    v_str = json.dumps(v, indent=2)
+                    v_html = f'<pre class="text-xs whitespace-pre-wrap break-all">{_html_escape(v_str)}</pre>'
+                else:
+                    v_html = f'<span>{_html_escape(str(v))}</span>'
+                rows.append(f'<div class="flex gap-2">{key_html}{v_html}</div>')
+            return "\n".join(rows)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return _html_escape(value)
+
+
 # Register template filters
 templates.env.filters["format_ts"] = format_timestamp
 templates.env.filters["pretty_json"] = pretty_json
+templates.env.filters["format_result"] = format_tool_result
 
 
 def render(request: Request, template: str, ctx: dict | None = None, **kwargs) -> HTMLResponse:
@@ -482,8 +516,8 @@ async def mic_status():
     return {"muted": _get_mic_muted()}
 
 
-@app.post("/api/mic_toggle")
-async def mic_toggle():
+@app.post("/api/mic_toggle", response_class=HTMLResponse)
+async def mic_toggle(request: Request):
     try:
         subprocess.run(
             ["wpctl", "set-mute", "@DEFAULT_SOURCE@", "toggle"],
@@ -493,7 +527,7 @@ async def mic_toggle():
     except Exception as e:
         log.error("Mic toggle failed: %s", e)
     await asyncio.sleep(0.1)
-    return {"muted": _get_mic_muted()}
+    return render(request, "partials/mic_button.html", mic_muted=_get_mic_muted())
 
 
 @app.get("/partials/mic_button", response_class=HTMLResponse)
@@ -512,8 +546,8 @@ def _get_agent_running() -> bool:
     return status["running"]
 
 
-@app.post("/api/agent_toggle")
-async def agent_toggle():
+@app.post("/api/agent_toggle", response_class=HTMLResponse)
+async def agent_toggle(request: Request):
     running = _get_agent_running()
     action = "stop" if running else "start"
     try:
@@ -526,7 +560,7 @@ async def agent_toggle():
     except Exception as e:
         log.error("Agent %s failed: %s", action, e)
     await asyncio.sleep(0.5)
-    return {"running": _get_agent_running()}
+    return render(request, "partials/agent_button.html", agent_running=_get_agent_running())
 
 
 @app.get("/partials/agent_button", response_class=HTMLResponse)

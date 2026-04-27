@@ -39,7 +39,9 @@
                         </div>
                         <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">Args: {{ tc.get("function", {}).get("arguments", "{}") }}</pre>
                         {% if tc.get("_result") is not none %}
-                        <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">Result: {{ tc.get("_result", "") | pretty_json }}</pre>
+                        <div class="mt-1 bg-white border-2 border-black p-2 text-xs space-y-0.5">
+                            {{ tc.get("_result", "") | format_result | safe }}
+                        </div>
                         {% endif %}
                         {% else %}
                         <pre class="text-xs overflow-x-auto whitespace-pre-wrap">{{ tc }}</pre>
@@ -98,6 +100,32 @@ function escapeHtml(s) {
     return d.innerHTML;
 }
 
+function formatResult(jsonStr) {
+    try {
+        const data = JSON.parse(jsonStr);
+        if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+            return Object.entries(data).map(([k, v]) => {
+                const keyHtml = `<span class="font-bold text-black/60 min-w-[80px]">${escapeHtml(k)}</span>`;
+                let vHtml;
+                if (k === 'ok') {
+                    vHtml = v
+                        ? '<span class="text-green-700 font-bold">✓</span>'
+                        : '<span class="text-red-700 font-bold">✗</span>';
+                } else if (typeof v === 'boolean') {
+                    const color = v ? 'text-green-700' : 'text-red-700';
+                    vHtml = `<span class="${color}">${escapeHtml(String(v))}</span>`;
+                } else if (typeof v === 'object' && v !== null) {
+                    vHtml = `<pre class="text-xs whitespace-pre-wrap break-all">${escapeHtml(JSON.stringify(v, null, 2))}</pre>`;
+                } else {
+                    vHtml = `<span>${escapeHtml(String(v))}</span>`;
+                }
+                return `<div class="flex gap-2">${keyHtml}${vHtml}</div>`;
+            }).join('');
+        }
+    } catch(e) {}
+    return escapeHtml(jsonStr);
+}
+
 function renderToolBlock(turn) {
     const time = new Date(turn.timestamp * 1000).toLocaleTimeString();
     const results = turn._results || {};
@@ -107,7 +135,7 @@ function renderToolBlock(turn) {
         const tcId = tc?.id || '';
         const result = results[tcId];
         const resultHtml = result !== undefined
-            ? `<pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">Result: ${escapeHtml(prettyJson(result))}</pre>`
+            ? `<div class="mt-1 bg-white border-2 border-black p-2 text-xs space-y-0.5">${formatResult(result)}</div>`
             : '';
         return `<div class="border-2 border-black bg-lavender-light p-2">
             <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">TOOL: ${escapeHtml(name)}</div>
