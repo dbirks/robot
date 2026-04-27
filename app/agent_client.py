@@ -105,6 +105,17 @@ class AgentClient:
                     log.info("Conversation reset")
                 return result
 
+            # Log the assistant turn that triggered tool calls
+            tc_list = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ]
+            self.session.log_turn("assistant", content=msg.content, tool_calls=tc_list)
+
             for tc in msg.tool_calls:
                 result = self._execute_tool(tc.function.name, tc.function.arguments)
                 log.info("Tool %s -> %s", tc.function.name, json.dumps(result))
@@ -185,20 +196,23 @@ class AgentClient:
                     log.info("Conversation reset")
                 return
 
+            tc_list = [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {"name": tc["name"], "arguments": tc["args"]},
+                }
+                for tc in tool_calls.values()
+            ]
             self.messages.append(
                 {
                     "role": "assistant",
                     "content": full_content if full_content else None,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {"name": tc["name"], "arguments": tc["args"]},
-                        }
-                        for tc in tool_calls.values()
-                    ],
+                    "tool_calls": tc_list,
                 }
             )
+            # Log the assistant turn that triggered tool calls
+            self.session.log_turn("assistant", content=full_content if full_content else None, tool_calls=tc_list)
 
             if not full_content.strip():
                 filler_tools = [tc["name"] for tc in tool_calls.values() if tc["name"] in TOOL_FILLER_PHRASES]
