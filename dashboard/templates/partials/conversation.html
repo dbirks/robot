@@ -11,9 +11,7 @@
          class="overflow-y-auto space-y-3 scroll-area"
          style="height: calc(100% - 3rem);"
          hx-ext="sse"
-         sse-connect="/sse/conversation"
-         sse-swap="new_turn"
-         hx-swap="beforeend scroll:bottom">
+         sse-connect="/sse/conversation">
 
         {% for turn in turns %}
         {% if turn.role == "user" %}
@@ -90,13 +88,14 @@
 </div>
 
 <script>
-// Handle SSE new turns — render them as HTML
-document.body.addEventListener('sse:new_turn', function(event) {
+// SSE connection for live conversation updates
+const evtSource = new EventSource('/sse/conversation');
+evtSource.addEventListener('new_turn', function(event) {
     const container = document.getElementById('conversation-scroll');
     if (!container) return;
 
     try {
-        const turn = JSON.parse(event.detail.data);
+        const turn = JSON.parse(event.data);
         let html = '';
         const time = new Date(turn.timestamp * 1000).toLocaleTimeString();
 
@@ -148,9 +147,6 @@ document.body.addEventListener('sse:new_turn', function(event) {
     } catch (e) {
         console.error('SSE parse error:', e);
     }
-
-    // Prevent HTMX from swapping (we handle it ourselves)
-    event.preventDefault();
 });
 
 // Auto-scroll on load

@@ -29,6 +29,32 @@
             },
         }
     </script>
+    <!-- Maple Mono from Fontsource CDN (jsDelivr) -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <style>
+        @font-face {
+            font-family: 'Maple Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('https://cdn.jsdelivr.net/fontsource/fonts/maple-mono@latest/latin-400-normal.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'Maple Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('https://cdn.jsdelivr.net/fontsource/fonts/maple-mono@latest/latin-500-normal.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'Maple Mono';
+            font-style: normal;
+            font-weight: 700;
+            font-display: swap;
+            src: url('https://cdn.jsdelivr.net/fontsource/fonts/maple-mono@latest/latin-700-normal.woff2') format('woff2');
+        }
+    </style>
+    <!-- IBM Plex Mono fallback from Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -68,7 +94,15 @@
             </div>
             <!-- Hamburger button (mobile) -->
             <button onclick="document.getElementById('nav-links').classList.toggle('hidden')"
-                    class="md:hidden border-2 border-black bg-cream px-2 py-1 text-lg font-bold">☰</button>
+                    class="md:hidden border-black bg-cream flex items-center justify-center"
+                    style="border: 3px solid #000; width: 44px; height: 44px;"
+                    aria-label="Menu">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square">
+                    <line x1="3" y1="5" x2="21" y2="5"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                    <line x1="3" y1="19" x2="21" y2="19"/>
+                </svg>
+            </button>
             <!-- Nav links -->
             <div id="nav-links" class="hidden md:flex items-center gap-0 absolute md:relative top-full left-0 right-0 md:top-auto bg-butter md:bg-transparent border-b-3 md:border-0 border-black"
                  style="border-bottom: 3px solid #000;">

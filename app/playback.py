@@ -1,5 +1,6 @@
 import logging
 import os
+import subprocess
 
 import numpy as np
 import sounddevice as sd
@@ -35,13 +36,53 @@ def _resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     return np.interp(indices, np.arange(len(audio)), audio.astype(np.float64)).astype(np.int16)
 
 
-VOLUME_BOOST = float(os.getenv("VOLUME_BOOST", "2.2"))
+def _set_pipewire_volume(level: float):
+    """Set the default sink volume via wpctl. Level is linear (1.0 = 100%)."""
+    try:
+        subprocess.run(
+            ["wpctl", "set-volume", "@DEFAULT_SINK@", f"{level:.2f}"],
+            capture_output=True,
+            timeout=5,
+        )
+        log.info("Pipewire sink volume set to %.0f%%", level * 100)
+    except Exception as e:
+        log.warning("Failed to set pipewire volume: %s", e)
+
+
+def _get_pipewire_volume() -> float | None:
+    """Read current default sink volume from wpctl. Returns linear value."""
+    try:
+        result = subprocess.run(
+            ["wpctl", "get-volume", "@DEFAULT_SINK@"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        # Output: "Volume: 1.50" or "Volume: 1.50 [MUTED]"
+        for part in result.stdout.strip().split():
+            try:
+                return float(part)
+            except ValueError:
+                continue
+    except Exception as e:
+        log.warning("Failed to get pipewire volume: %s", e)
+    return None
+
+
+# Apply VOLUME_BOOST from .env to pipewire on startup (replaces software gain)
+_INITIAL_VOLUME = float(os.getenv("VOLUME_BOOST", "2.2"))
+_set_pipewire_volume(_INITIAL_VOLUME)
+
+# Keep VOLUME_BOOST at 1.0 — volume is now controlled via pipewire
+VOLUME_BOOST = 1.0
 
 
 def set_volume_boost(boost: float):
+    """Set volume via pipewire sink. The boost value is used as pipewire linear volume."""
     global VOLUME_BOOST
-    VOLUME_BOOST = boost
-    log.info("Volume boost set to %.1f", boost)
+    _set_pipewire_volume(boost)
+    # Software boost stays at 1.0; pipewire handles the gain
+    log.info("Volume set to %.1f via pipewire", boost)
 
 
 def _apply_boost(audio: np.ndarray) -> np.ndarray:

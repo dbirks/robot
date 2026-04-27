@@ -87,11 +87,39 @@ def get_gpu_stats() -> dict | None:
         return None
 
 
+def get_pipewire_volume() -> str:
+    """Read current pipewire sink volume."""
+    try:
+        result = subprocess.run(
+            ["wpctl", "get-volume", "@DEFAULT_SINK@"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        for part in result.stdout.strip().split():
+            try:
+                return str(float(part))
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return "1.0"
+
+
+def set_pipewire_volume(level: float):
+    """Set pipewire default sink volume immediately."""
+    subprocess.run(
+        ["wpctl", "set-volume", "@DEFAULT_SINK@", f"{level:.2f}"],
+        capture_output=True,
+        timeout=5,
+    )
+
+
 def get_env_settings() -> dict:
     """Read settings from .env file."""
     vals = dotenv_values(ENV_PATH)
     return {
-        "VOLUME_BOOST": vals.get("VOLUME_BOOST", "2.2"),
+        "VOLUME_BOOST": get_pipewire_volume(),
         "TTS_ENGINE": vals.get("TTS_ENGINE", "kokoro"),
         "KOKORO_VOICE": vals.get("KOKORO_VOICE", "bm_daniel"),
         "WHISPER_MODEL": vals.get("WHISPER_MODEL", "small.en"),
@@ -295,6 +323,19 @@ async def partial_settings(request: Request):
     return render(request, "partials/settings.html", settings=get_env_settings())
 
 
+@app.post("/settings/volume", response_class=HTMLResponse)
+async def set_volume(request: Request, volume_boost: str = Form(...)):
+    """Set pipewire volume immediately without restarting anything."""
+    try:
+        level = float(volume_boost)
+        level = max(0.0, min(5.0, level))
+        set_pipewire_volume(level)
+        write_env_setting("VOLUME_BOOST", volume_boost)
+    except (ValueError, subprocess.SubprocessError) as e:
+        log.error("Failed to set volume: %s", e)
+    return HTMLResponse(volume_boost)
+
+
 @app.post("/settings/save", response_class=HTMLResponse)
 async def save_settings(
     request: Request,
@@ -303,6 +344,11 @@ async def save_settings(
     kokoro_voice: str = Form(...),
     whisper_model: str = Form(...),
 ):
+    # Apply volume to pipewire immediately
+    try:
+        set_pipewire_volume(float(volume_boost))
+    except (ValueError, subprocess.SubprocessError):
+        pass
     write_env_setting("VOLUME_BOOST", volume_boost)
     write_env_setting("TTS_ENGINE", tts_engine)
     write_env_setting("KOKORO_VOICE", kokoro_voice)
@@ -318,6 +364,11 @@ async def apply_restart(
     kokoro_voice: str = Form(...),
     whisper_model: str = Form(...),
 ):
+    # Apply volume to pipewire immediately
+    try:
+        set_pipewire_volume(float(volume_boost))
+    except (ValueError, subprocess.SubprocessError):
+        pass
     write_env_setting("VOLUME_BOOST", volume_boost)
     write_env_setting("TTS_ENGINE", tts_engine)
     write_env_setting("KOKORO_VOICE", kokoro_voice)
