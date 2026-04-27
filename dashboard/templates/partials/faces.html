@@ -12,19 +12,24 @@
 
     {% if faces %}
     <div class="space-y-2">
-        {% for name in faces %}
+        {% for face in faces %}
         <div class="flex items-center justify-between p-3 border-2 border-black bg-white">
             <div class="flex items-center gap-3">
-                <div class="w-8 h-8 bg-blush border-2 border-black flex items-center justify-center text-xs font-extrabold">
-                    {{ name[0] | upper }}
+                {% if face.has_thumbnail %}
+                <img src="/face_thumbnail/{{ face.name }}" alt="{{ face.name }}"
+                     class="w-12 h-12 border-2 border-black object-cover">
+                {% else %}
+                <div class="w-12 h-12 bg-blush border-2 border-black flex items-center justify-center text-sm font-extrabold">
+                    {{ face.name[0] | upper }}
                 </div>
-                <span class="text-sm font-bold">{{ name }}</span>
+                {% endif %}
+                <span class="text-sm font-bold">{{ face.name }}</span>
             </div>
             <button
-                hx-delete="/faces/{{ name }}"
+                hx-delete="/faces/{{ face.name }}"
                 hx-target="#faces-panel"
                 hx-swap="innerHTML"
-                hx-confirm="Delete face '{{ name }}'?"
+                hx-confirm="Delete face '{{ face.name }}'?"
                 class="px-3 py-1 text-xs font-bold uppercase border-2 border-black bg-red-200 hover:bg-red-300">
                 Delete
             </button>
@@ -36,4 +41,10 @@
         NO KNOWN FACES REGISTERED
     </div>
     {% endif %}
+
+    <div class="mt-4 px-3 py-2 border-2 border-black bg-butter-light text-xs">
+        <span class="font-bold">NOTE:</span> Photos are reference snapshots only. The robot actually matches faces
+        using a 512-dimensional mathematical embedding (a list of 512 numbers) that encodes facial structure.
+        The photo is not used for recognition — it's just so you can see who was registered.
+    </div>
 </div>

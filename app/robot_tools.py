@@ -459,7 +459,24 @@ def make_handlers(
             faces = face_tracker.detect(frame)
             if not faces:
                 return {"ok": False, "error": "No face detected in frame"}
-            face_tracker.register_face(name, faces[0]["embedding"])
+            face = faces[0]
+            face_tracker.register_face(name, face["embedding"])
+            # Save face thumbnail
+            try:
+                thumb_dir = Path("data/face_thumbnails")
+                thumb_dir.mkdir(parents=True, exist_ok=True)
+                bbox = face["bbox"]
+                h, w = frame.shape[:2]
+                pad = 30
+                y1 = max(0, bbox[1] - pad)
+                y2 = min(h, bbox[3] + pad)
+                x1 = max(0, bbox[0] - pad)
+                x2 = min(w, bbox[2] + pad)
+                crop = frame[int(y1):int(y2), int(x1):int(x2)]
+                cv2.imwrite(str(thumb_dir / f"{name}.jpg"), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                log.info("Saved face thumbnail for %s", name)
+            except Exception:
+                log.exception("Failed to save face thumbnail")
             return {"ok": True, "name": name, "known_faces": list(face_tracker.known_faces.keys())}
         except Exception as e:
             return {"ok": False, "error": str(e)}

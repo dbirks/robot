@@ -186,13 +186,20 @@ def get_recent_turns(limit: int = 100) -> tuple[list[dict], str | None]:
         return [], None
 
 
-def get_known_faces() -> list[str]:
-    """Get list of known face names."""
+THUMB_DIR = ROBOT_DIR / "data" / "face_thumbnails"
+
+
+def get_known_faces() -> list[dict]:
+    """Get list of known faces with thumbnail info."""
     if not FACES_PATH.exists():
         return []
     try:
         data = json.loads(FACES_PATH.read_text())
-        return sorted(data.keys())
+        faces = []
+        for name in sorted(data.keys()):
+            has_thumb = (THUMB_DIR / f"{name}.jpg").exists()
+            faces.append({"name": name, "has_thumbnail": has_thumb})
+        return faces
     except Exception:
         return []
 
@@ -292,6 +299,20 @@ async def faces_page(request: Request):
         faces=get_known_faces(),
         active_page="faces",
     )
+
+
+@app.get("/face_thumbnail/{name}")
+async def face_thumbnail(name: str):
+    """Serve a face thumbnail image."""
+    from fastapi.responses import FileResponse
+
+    path = THUMB_DIR / f"{name}.jpg"
+    if path.exists():
+        return FileResponse(path, media_type="image/jpeg")
+    # Return a 1x1 transparent pixel as fallback
+    from fastapi.responses import Response
+
+    return Response(content=b"", status_code=404)
 
 
 # ---------------------------------------------------------------------------
