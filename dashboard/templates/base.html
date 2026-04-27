@@ -66,29 +66,34 @@
             <div class="flex items-center gap-4">
                 <span class="text-lg font-extrabold tracking-widest uppercase">REACHY MINI</span>
             </div>
-            <div class="flex items-center gap-0">
+            <!-- Hamburger button (mobile) -->
+            <button onclick="document.getElementById('nav-links').classList.toggle('hidden')"
+                    class="md:hidden border-2 border-black bg-cream px-2 py-1 text-lg font-bold">☰</button>
+            <!-- Nav links -->
+            <div id="nav-links" class="hidden md:flex items-center gap-0 absolute md:relative top-full left-0 right-0 md:top-auto bg-butter md:bg-transparent border-b-3 md:border-0 border-black"
+                 style="border-bottom: 3px solid #000;">
                 <a href="/conversation"
-                   class="px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black
+                   class="block md:inline px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black md:border-2
                           {% if active_page == 'conversation' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-blush{% endif %}">
                     Conversation
                 </a>
                 <a href="/services"
-                   class="px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-l-0
+                   class="block md:inline px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-t-0 md:border-t-2 md:border-l-0
                           {% if active_page == 'services' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-mint{% endif %}">
                     Services
                 </a>
                 <a href="/settings"
-                   class="px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-l-0
+                   class="block md:inline px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-t-0 md:border-t-2 md:border-l-0
                           {% if active_page == 'settings' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-lavender{% endif %}">
                     Settings
                 </a>
                 <a href="/faces"
-                   class="px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-l-0
+                   class="block md:inline px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-t-0 md:border-t-2 md:border-l-0
                           {% if active_page == 'faces' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-butter{% endif %}">
                     Faces
                 </a>
             </div>
-            <div class="text-xs font-bold" id="clock"></div>
+            <div class="text-xs font-bold hidden md:block" id="clock"></div>
         </div>
     </nav>
 
