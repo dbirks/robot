@@ -219,8 +219,18 @@ def format_timestamp(ts: float) -> str:
     return datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
 
 
-# Register template filter
+def pretty_json(value: str) -> str:
+    """Pretty-print a JSON string, or return as-is if not valid JSON."""
+    try:
+        parsed = json.loads(value)
+        return json.dumps(parsed, indent=2)
+    except (json.JSONDecodeError, TypeError):
+        return value
+
+
+# Register template filters
 templates.env.filters["format_ts"] = format_timestamp
+templates.env.filters["pretty_json"] = pretty_json
 
 
 def render(request: Request, template: str, ctx: dict | None = None, **kwargs) -> HTMLResponse:

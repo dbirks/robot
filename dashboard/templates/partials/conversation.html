@@ -65,7 +65,7 @@
                     <span class="bg-black text-lavender inline-block px-2 py-0.5">TOOL RESULT</span>
                     <span class="ml-2">{{ turn.timestamp | format_ts }}</span>
                 </div>
-                <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">{{ turn.content or "" }}</pre>
+                <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">{{ (turn.content or "") | pretty_json }}</pre>
             </div>
         </div>
 
@@ -130,13 +130,15 @@ evtSource.addEventListener('new_turn', function(event) {
                     </div></div>`;
             }
         } else if (turn.role === 'tool') {
+            let content = turn.content || '';
+            try { content = JSON.stringify(JSON.parse(content), null, 2); } catch(e) {}
             html = `<div class="flex justify-start">
                 <div class="max-w-[85%] border-2 border-black bg-lavender-light px-4 py-3">
                     <div class="text-xs font-bold uppercase mb-1">
                         <span class="bg-black text-lavender inline-block px-2 py-0.5">TOOL RESULT</span>
                         <span class="ml-2">${time}</span>
                     </div>
-                    <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">${turn.content || ''}</pre>
+                    <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">${content}</pre>
                 </div></div>`;
         }
 

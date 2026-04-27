@@ -49,26 +49,6 @@ def _set_pipewire_volume(level: float):
         log.warning("Failed to set pipewire volume: %s", e)
 
 
-def _get_pipewire_volume() -> float | None:
-    """Read current default sink volume from wpctl. Returns linear value."""
-    try:
-        result = subprocess.run(
-            ["wpctl", "get-volume", "@DEFAULT_SINK@"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        # Output: "Volume: 1.50" or "Volume: 1.50 [MUTED]"
-        for part in result.stdout.strip().split():
-            try:
-                return float(part)
-            except ValueError:
-                continue
-    except Exception as e:
-        log.warning("Failed to get pipewire volume: %s", e)
-    return None
-
-
 # Volume is controlled via pipewire (wpctl) — wireplumber persists it across
 # reboots in ~/.local/state/wireplumber/default-routes, so we don't need to
 # set it on startup.  Software boost stays at 1.0 (no-op).
