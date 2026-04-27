@@ -69,11 +69,9 @@ def _get_pipewire_volume() -> float | None:
     return None
 
 
-# Apply VOLUME_BOOST from .env to pipewire on startup (replaces software gain)
-_INITIAL_VOLUME = float(os.getenv("VOLUME_BOOST", "2.2"))
-_set_pipewire_volume(_INITIAL_VOLUME)
-
-# Keep VOLUME_BOOST at 1.0 — volume is now controlled via pipewire
+# Volume is controlled via pipewire (wpctl) — wireplumber persists it across
+# reboots in ~/.local/state/wireplumber/default-routes, so we don't need to
+# set it on startup.  Software boost stays at 1.0 (no-op).
 VOLUME_BOOST = 1.0
 
 
