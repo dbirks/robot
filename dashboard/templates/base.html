@@ -127,7 +127,16 @@
                     Faces
                 </a>
             </div>
-            <div class="text-xs font-bold hidden md:block" id="clock"></div>
+            <!-- Mic + Agent controls -->
+            <div class="flex items-center gap-2">
+                <div id="mic-btn"
+                     hx-get="/partials/mic_button" hx-trigger="load, every 2s" hx-swap="innerHTML">
+                </div>
+                <div id="agent-btn"
+                     hx-get="/partials/agent_button" hx-trigger="load, every 3s" hx-swap="innerHTML">
+                </div>
+                <div class="text-xs font-bold hidden md:block ml-2" id="clock"></div>
+            </div>
         </div>
     </nav>
 

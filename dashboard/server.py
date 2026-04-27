@@ -143,7 +143,11 @@ def write_env_setting(key: str, value: str):
 
 
 def get_recent_turns(limit: int = 100) -> tuple[list[dict], str | None]:
-    """Get the most recent session's turns from SQLite (read-only)."""
+    """Get the most recent session's turns from SQLite (read-only).
+
+    Tool-result turns (role="tool") are merged into the preceding assistant
+    turn's tool_calls so the template can render call + result as one block.
+    """
     if not DB_PATH.exists():
         return [], None
     try:
@@ -160,7 +164,7 @@ def get_recent_turns(limit: int = 100) -> tuple[list[dict], str | None]:
             "FROM turns WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?",
             (session_id, limit),
         ).fetchall()
-        turns = []
+        raw_turns = []
         for r in rows:
             tc = None
             if r["tool_calls"]:
@@ -168,7 +172,7 @@ def get_recent_turns(limit: int = 100) -> tuple[list[dict], str | None]:
                     tc = json.loads(r["tool_calls"])
                 except json.JSONDecodeError:
                     tc = r["tool_calls"]
-            turns.append(
+            raw_turns.append(
                 {
                     "id": r["id"],
                     "session_id": r["session_id"],
@@ -180,10 +184,36 @@ def get_recent_turns(limit: int = 100) -> tuple[list[dict], str | None]:
                 }
             )
         conn.close()
+
+        # Merge tool-result turns into their parent assistant turn
+        turns = _merge_tool_results(raw_turns)
         return turns, session_id
     except Exception as e:
         log.error("Error reading sessions.db: %s", e)
         return [], None
+
+
+def _merge_tool_results(raw_turns: list[dict]) -> list[dict]:
+    """Attach tool-result content to the matching tool_call entry and drop standalone tool turns."""
+    # Build a map: tool_call_id -> result content
+    result_map: dict[str, str] = {}
+    for t in raw_turns:
+        if t["role"] == "tool" and t["tool_call_id"]:
+            result_map[t["tool_call_id"]] = t["content"] or ""
+
+    merged: list[dict] = []
+    for t in raw_turns:
+        if t["role"] == "tool":
+            # Skip — already merged into the assistant turn
+            continue
+        if t["role"] == "assistant" and t["tool_calls"] and isinstance(t["tool_calls"], list):
+            # Annotate each tool_call with its result
+            for tc in t["tool_calls"]:
+                if isinstance(tc, dict):
+                    tc_id = tc.get("id", "")
+                    tc["_result"] = result_map.get(tc_id, None)
+        merged.append(t)
+    return merged
 
 
 THUMB_DIR = ROBOT_DIR / "data" / "face_thumbnails"
@@ -426,6 +456,82 @@ async def partial_faces(request: Request):
 async def delete_face(request: Request, name: str):
     deleted = delete_known_face(name)
     return render(request, "partials/faces.html", faces=get_known_faces(), deleted=name if deleted else None)
+
+
+# ---------------------------------------------------------------------------
+# Routes — Mic mute control
+# ---------------------------------------------------------------------------
+
+
+def _get_mic_muted() -> bool:
+    """Check if the default source (mic) is muted via WirePlumber."""
+    try:
+        result = subprocess.run(
+            ["wpctl", "get-volume", "@DEFAULT_SOURCE@"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return "[MUTED]" in result.stdout
+    except Exception:
+        return False
+
+
+@app.get("/api/mic_status")
+async def mic_status():
+    return {"muted": _get_mic_muted()}
+
+
+@app.post("/api/mic_toggle")
+async def mic_toggle():
+    try:
+        subprocess.run(
+            ["wpctl", "set-mute", "@DEFAULT_SOURCE@", "toggle"],
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception as e:
+        log.error("Mic toggle failed: %s", e)
+    await asyncio.sleep(0.1)
+    return {"muted": _get_mic_muted()}
+
+
+@app.get("/partials/mic_button", response_class=HTMLResponse)
+async def partial_mic_button(request: Request):
+    return render(request, "partials/mic_button.html", mic_muted=_get_mic_muted())
+
+
+# ---------------------------------------------------------------------------
+# Routes — Agent sleep/wake control
+# ---------------------------------------------------------------------------
+
+
+def _get_agent_running() -> bool:
+    """Check if the reachy-agent service is active."""
+    status = get_service_status("reachy-agent")
+    return status["running"]
+
+
+@app.post("/api/agent_toggle")
+async def agent_toggle():
+    running = _get_agent_running()
+    action = "stop" if running else "start"
+    try:
+        subprocess.run(
+            ["systemctl", "--user", action, "reachy-agent"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as e:
+        log.error("Agent %s failed: %s", action, e)
+    await asyncio.sleep(0.5)
+    return {"running": _get_agent_running()}
+
+
+@app.get("/partials/agent_button", response_class=HTMLResponse)
+async def partial_agent_button(request: Request):
+    return render(request, "partials/agent_button.html", agent_running=_get_agent_running())
 
 
 # ---------------------------------------------------------------------------

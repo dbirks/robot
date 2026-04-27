@@ -1,0 +1,29 @@
+{% if agent_running %}
+<button hx-post="/api/agent_toggle" hx-target="#agent-btn" hx-swap="innerHTML"
+        hx-on::after-request="setTimeout(()=>htmx.ajax('GET','/partials/agent_button','#agent-btn'),200)"
+        class="flex items-center justify-center border-3 border-black"
+        style="border: 3px solid #000; width: 40px; height: 40px; background: #d5e8d4;"
+        title="Agent RUNNING — click to sleep">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2.5" stroke-linecap="square">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2"/>
+        <path d="M12 20v2"/>
+        <path d="M4.93 4.93l1.41 1.41"/>
+        <path d="M17.66 17.66l1.41 1.41"/>
+        <path d="M2 12h2"/>
+        <path d="M20 12h2"/>
+        <path d="M4.93 19.07l1.41-1.41"/>
+        <path d="M17.66 6.34l1.41-1.41"/>
+    </svg>
+</button>
+{% else %}
+<button hx-post="/api/agent_toggle" hx-target="#agent-btn" hx-swap="innerHTML"
+        hx-on::after-request="setTimeout(()=>htmx.ajax('GET','/partials/agent_button','#agent-btn'),200)"
+        class="flex items-center justify-center border-3 border-black"
+        style="border: 3px solid #000; width: 40px; height: 40px; background: #f4d4d4;"
+        title="Agent STOPPED — click to wake">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b91c1c" stroke-width="2.5" stroke-linecap="square">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+</button>
+{% endif %}

@@ -23,7 +23,7 @@
         </div>
 
         {% elif turn.role == "assistant" and turn.tool_calls %}
-        <!-- Assistant message WITH tool calls — show as lavender tool block -->
+        <!-- Assistant message WITH tool calls — combined call + result block -->
         <div class="flex justify-start">
             <div class="max-w-[85%] border-2 border-black bg-lavender px-4 py-3">
                 <div class="text-xs font-bold uppercase mb-1">REACHY // {{ turn.timestamp | format_ts }}</div>
@@ -37,7 +37,10 @@
                         <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">
                             TOOL: {{ tc.get("function", {}).get("name", "unknown") }}
                         </div>
-                        <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">{{ tc.get("function", {}).get("arguments", "{}") }}</pre>
+                        <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">Args: {{ tc.get("function", {}).get("arguments", "{}") }}</pre>
+                        {% if tc.get("_result") is not none %}
+                        <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">Result: {{ tc.get("_result", "") | pretty_json }}</pre>
+                        {% endif %}
                         {% else %}
                         <pre class="text-xs overflow-x-auto whitespace-pre-wrap">{{ tc }}</pre>
                         {% endif %}
@@ -55,17 +58,6 @@
                 {% if turn.content %}
                 <div class="text-sm">{{ turn.content }}</div>
                 {% endif %}
-            </div>
-        </div>
-
-        {% elif turn.role == "tool" %}
-        <div class="flex justify-start">
-            <div class="max-w-[85%] border-2 border-black bg-lavender-light px-4 py-3">
-                <div class="text-xs font-bold uppercase mb-1">
-                    <span class="bg-black text-lavender inline-block px-2 py-0.5">TOOL RESULT</span>
-                    <span class="ml-2">{{ turn.timestamp | format_ts }}</span>
-                </div>
-                <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">{{ (turn.content or "") | pretty_json }}</pre>
             </div>
         </div>
 
@@ -88,58 +80,118 @@
 </div>
 
 <script>
-// SSE connection for live conversation updates
+// SSE connection for live conversation updates.
+// Tool-call assistant turns are buffered so we can merge the following
+// tool-result turns into the same rendered block.
 const evtSource = new EventSource('/sse/conversation');
+
+// Pending assistant turn waiting for tool results
+let pendingAssistant = null;  // {turn, expectedIds: Set, results: Map}
+
+function prettyJson(s) {
+    try { return JSON.stringify(JSON.parse(s), null, 2); } catch(e) { return s; }
+}
+
+function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function renderToolBlock(turn) {
+    const time = new Date(turn.timestamp * 1000).toLocaleTimeString();
+    const results = turn._results || {};
+    const tcItems = turn.tool_calls.map(tc => {
+        const name = tc?.function?.name || 'unknown';
+        const args = tc?.function?.arguments || '{}';
+        const tcId = tc?.id || '';
+        const result = results[tcId];
+        const resultHtml = result !== undefined
+            ? `<pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">Result: ${escapeHtml(prettyJson(result))}</pre>`
+            : '';
+        return `<div class="border-2 border-black bg-lavender-light p-2">
+            <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">TOOL: ${escapeHtml(name)}</div>
+            <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">Args: ${escapeHtml(args)}</pre>
+            ${resultHtml}
+        </div>`;
+    }).join('');
+    return `<div class="flex justify-start">
+        <div class="max-w-[85%] border-2 border-black bg-lavender px-4 py-3">
+            <div class="text-xs font-bold uppercase mb-1">REACHY // ${time}</div>
+            ${turn.content ? `<div class="text-sm mb-2">${escapeHtml(turn.content)}</div>` : ''}
+            <div class="space-y-2">${tcItems}</div>
+        </div></div>`;
+}
+
+function flushPending() {
+    if (!pendingAssistant) return;
+    const container = document.getElementById('conversation-scroll');
+    if (!container) return;
+    const html = renderToolBlock(pendingAssistant.turn);
+    pendingAssistant = null;
+    container.insertAdjacentHTML('beforeend', html);
+    container.scrollTop = container.scrollHeight;
+}
+
 evtSource.addEventListener('new_turn', function(event) {
     const container = document.getElementById('conversation-scroll');
     if (!container) return;
 
     try {
         const turn = JSON.parse(event.data);
-        let html = '';
         const time = new Date(turn.timestamp * 1000).toLocaleTimeString();
+
+        // Handle tool result — try to merge into pending assistant
+        if (turn.role === 'tool') {
+            if (pendingAssistant && turn.tool_call_id && pendingAssistant.expectedIds.has(turn.tool_call_id)) {
+                pendingAssistant.turn._results[turn.tool_call_id] = turn.content || '';
+                pendingAssistant.expectedIds.delete(turn.tool_call_id);
+                if (pendingAssistant.expectedIds.size === 0) {
+                    flushPending();
+                }
+            }
+            // If no pending or no match, silently drop (already shown or orphaned)
+            return;
+        }
+
+        // If there's a pending assistant that hasn't been flushed, flush it now
+        if (pendingAssistant) {
+            flushPending();
+        }
+
+        let html = '';
 
         if (turn.role === 'user') {
             html = `<div class="flex justify-end">
                 <div class="max-w-[85%] border-2 border-black bg-blush px-4 py-3">
                     <div class="text-xs font-bold uppercase mb-1">YOU // ${time}</div>
-                    <div class="text-sm">${turn.content || ''}</div>
+                    <div class="text-sm">${escapeHtml(turn.content || '')}</div>
                 </div></div>`;
         } else if (turn.role === 'assistant') {
             const hasTools = turn.tool_calls && turn.tool_calls.length > 0;
             if (hasTools) {
-                const tcItems = turn.tool_calls.map(tc => {
-                    const name = tc?.function?.name || 'unknown';
-                    const args = tc?.function?.arguments || '{}';
-                    return `<div class="border-2 border-black bg-lavender-light p-2">
-                        <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">TOOL: ${name}</div>
-                        <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">${args}</pre>
-                    </div>`;
-                }).join('');
-                html = `<div class="flex justify-start">
-                    <div class="max-w-[85%] border-2 border-black bg-lavender px-4 py-3">
-                        <div class="text-xs font-bold uppercase mb-1">REACHY // ${time}</div>
-                        ${turn.content ? `<div class="text-sm mb-2">${turn.content}</div>` : ''}
-                        <div class="space-y-2">${tcItems}</div>
-                    </div></div>`;
+                // Buffer this turn — wait for tool results
+                const expectedIds = new Set(turn.tool_calls.map(tc => tc?.id).filter(Boolean));
+                turn._results = {};
+                pendingAssistant = { turn, expectedIds };
+                // Set a timeout to flush if results don't arrive within 5s
+                setTimeout(() => {
+                    if (pendingAssistant && pendingAssistant.turn === turn) {
+                        flushPending();
+                    }
+                }, 5000);
+                return;
             } else {
                 html = `<div class="flex justify-start">
                     <div class="max-w-[85%] border-2 border-black bg-mint px-4 py-3">
                         <div class="text-xs font-bold uppercase mb-1">REACHY // ${time}</div>
-                        ${turn.content ? `<div class="text-sm">${turn.content}</div>` : ''}
+                        ${turn.content ? `<div class="text-sm">${escapeHtml(turn.content)}</div>` : ''}
                     </div></div>`;
             }
-        } else if (turn.role === 'tool') {
-            let content = turn.content || '';
-            try { content = JSON.stringify(JSON.parse(content), null, 2); } catch(e) {}
-            html = `<div class="flex justify-start">
-                <div class="max-w-[85%] border-2 border-black bg-lavender-light px-4 py-3">
-                    <div class="text-xs font-bold uppercase mb-1">
-                        <span class="bg-black text-lavender inline-block px-2 py-0.5">TOOL RESULT</span>
-                        <span class="ml-2">${time}</span>
-                    </div>
-                    <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all bg-white border-2 border-black p-2">${content}</pre>
-                </div></div>`;
+        } else if (turn.role === 'system') {
+            html = `<div class="flex justify-center">
+                <div class="text-xs font-bold uppercase bg-butter border-2 border-black px-3 py-1">SYSTEM PROMPT SET</div>
+            </div>`;
         }
 
         if (html) {
