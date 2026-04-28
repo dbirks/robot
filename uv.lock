@@ -2435,6 +2435,26 @@ wheels = [
 ]
 
 [[package]]
+name = "onnx-asr"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/f6/b154881761a593312f509522f99542acffa2516f7a1df6ddf5660ad4a162/onnx_asr-0.11.0.tar.gz", hash = "sha256:57ad8d9571dc17db95f0daf9ba432b9472383de320c610735850e56b5375a37d", size = 43665, upload-time = "2026-03-23T02:30:57.349Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/82/04/bdffd682cc38b43144b6528186c80451f219a05e3fd0eb331a548f455b9a/onnx_asr-0.11.0-py3-none-any.whl", hash = "sha256:142d8b3ce7716684992826a269304f5ce9cf1c0fe704b751358e223f45d2a5cf", size = 138349, upload-time = "2026-03-23T02:30:58.566Z" },
+]
+
+[package.optional-dependencies]
+cpu = [
+    { name = "onnxruntime" },
+]
+hub = [
+    { name = "huggingface-hub" },
+]
+
+[[package]]
 name = "onnxruntime"
 version = "1.24.4"
 source = { registry = "https://pypi.org/simple" }
@@ -3156,6 +3176,7 @@ dependencies = [
     { name = "insightface" },
     { name = "kokoro" },
     { name = "numpy" },
+    { name = "onnx-asr", extra = ["cpu", "hub"] },
     { name = "onnxruntime" },
     { name = "openai" },
     { name = "opencv-contrib-python" },
@@ -3192,6 +3213,7 @@ requires-dist = [
     { name = "insightface", specifier = ">=0.7.3" },
     { name = "kokoro", specifier = ">=0.9.4" },
     { name = "numpy", specifier = ">=1.26.0" },
+    { name = "onnx-asr", extras = ["cpu", "hub"], specifier = ">=0.11.0" },
     { name = "onnxruntime", specifier = ">=1.24.4" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "opencv-contrib-python", specifier = ">=4.10.0" },
