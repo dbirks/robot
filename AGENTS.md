@@ -68,19 +68,33 @@ uv run ruff format app/
 
 ## Target hardware
 
-- Older i7 CPU
-- NVIDIA GTX 1070 (8 GB VRAM)
+- i7-6700K CPU (4C/8T, 4GHz Skylake)
+- NVIDIA GTX 1070 (8 GB VRAM, SM 6.1 Pascal)
 - Arch Linux
 - Reachy Mini (Lite or Wireless)
+
+**GTX 1070 limitations:** SM 6.1 means no bfloat16, no FlashAttention 2, no tensor cores. Latest PyTorch dropped support — use cu126 wheels or ONNX/llama.cpp (both work). CTranslate2 supports int8 and int8_float32 only (no float16).
 
 ## VRAM budget
 
 | Component | VRAM |
 |-----------|------|
-| faster-whisper small.en (float16) | ~1.5 GB |
-| Qwen 3.5 4B Q4_K_M | ~3 GB |
-| CUDA overhead | ~0.5 GB |
-| **Total** | **~5 GB / 8 GB** |
+| faster-whisper medium.en (int8) | ~1 GB |
+| Qwen 3.5 4B Q4_K_M (8K context) | ~4.4 GB |
+| CUDA overhead | ~0.3 GB |
+| **Total** | **~5.7 GB / 8 GB** |
+
+## Known hardware issues
+
+### XMOS XVF3800 microphone goes silent
+
+The Reachy Mini's XMOS XVF3800 mic array has a known firmware bug where the USB audio capture endpoint stops sending data (returns all zeros) while playback and DOA continue to work. This is documented in Pollen Robotics GitHub issues #845, #820, #389.
+
+**Prevention:** USB autosuspend is disabled via udev rule (`/etc/udev/rules.d/99-reachy-mini.rules`) with `ATTR{power/autosuspend}="-1"`.
+
+**Auto-recovery:** A watchdog thread (`app/mic_watchdog.py`) monitors mic RMS every 10 seconds. After 3 consecutive silent checks, it sends the XMOS `REBOOT` command via USB vendor control transfer, which restarts the chip's firmware. The mic recovers in ~8 seconds without physical USB replug.
+
+**Manual recovery:** If the watchdog fails, physically unplug and replug the Reachy Mini USB cable.
 
 ## Future work
 

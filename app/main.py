@@ -10,6 +10,7 @@ from .agent_client import AgentClient
 from .audio_io import AudioRecorder
 from .config import Config
 from .doa_tracker import DoATracker
+from .mic_watchdog import MicWatchdog
 from .face_tracker import FaceTracker
 from .head_wobbler import HeadWobbler
 from .interruptible_player import InterruptiblePlayer
@@ -60,6 +61,9 @@ def main():
         robot.connect()
     except Exception:
         log.warning("Could not connect to Reachy Mini — running without robot")
+
+    mic_watchdog = MicWatchdog(sample_rate=config.sample_rate)
+    mic_watchdog.start()
 
     movement = None
     wobbler = None
@@ -117,6 +121,7 @@ def main():
         )
     finally:
         log.info("Cleaning up...")
+        mic_watchdog.stop()
         stop_event.set()
         if doa:
             doa.stop()
