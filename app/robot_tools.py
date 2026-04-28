@@ -197,7 +197,7 @@ TOOLS: list[dict[str, Any]] = [
                 "properties": {
                     "level": {
                         "type": "string",
-                        "description": "Volume level: 'low', 'medium', 'high', or a number 1-10",
+                        "description": "Volume level: 'whisper', 'low', 'medium', 'high', 'max', or a percentage like '150%', or a number 0.0-3.0",
                     }
                 },
                 "required": ["level"],
@@ -523,16 +523,25 @@ def make_handlers(
             from .playback import set_volume_boost
 
             level_map = {
-                "whisper": 0.3, "low": 0.7, "quiet": 0.7,
-                "medium": 1.8, "normal": 1.8,
-                "high": 1.8, "loud": 1.8, "max": 2.5,
+                "mute": 0.0,
+                "whisper": 0.5,
+                "quiet": 1.0, "low": 1.0,
+                "medium": 1.5, "normal": 1.5,
+                "high": 2.0, "loud": 2.0,
+                "max": 2.5,
             }
             if level.lower() in level_map:
                 boost = level_map[level.lower()]
+            elif level.endswith("%"):
+                try:
+                    pct = float(level.rstrip("%"))
+                    boost = max(0.0, min(3.0, pct / 100.0))
+                except ValueError:
+                    return {"ok": False, "error": f"Unknown volume level: {level}"}
             else:
                 try:
                     num = float(level)
-                    boost = max(0.1, min(5.0, num / 2.0))
+                    boost = max(0.0, min(3.0, num))
                 except ValueError:
                     return {"ok": False, "error": f"Unknown volume level: {level}"}
             set_volume_boost(boost)
