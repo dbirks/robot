@@ -48,7 +48,9 @@ def run_loop(
             if not sleeping and doa_tracker:
                 doa_tracker.set_locked(True)
 
+            record_start = time.monotonic()
             audio = recorder.record_utterance()
+            record_end = time.monotonic()
 
             if not sleeping and movement:
                 movement.set_listening(False)
@@ -56,6 +58,13 @@ def run_loop(
                 doa_tracker.set_locked(False)
 
             if audio is None or len(audio) < 1600:
+                continue
+
+            # Discard stale audio — if recording took too long, the speech
+            # likely happened during a previous response and isn't directed at us
+            audio_duration = len(audio) / recorder.sample_rate
+            if audio_duration > 30:
+                log.info("Discarding stale audio (%.1fs — too long)", audio_duration)
                 continue
 
             loop_start = time.monotonic()

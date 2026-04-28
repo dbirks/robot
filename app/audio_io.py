@@ -47,6 +47,8 @@ class AudioRecorder:
 
         log.debug("Listening...")
 
+        max_chunks = int(20 * self.sample_rate / CHUNK_SAMPLES)  # 20 seconds max
+
         with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype="int16", blocksize=CHUNK_SAMPLES) as stream:
             while True:
                 data, _overflowed = stream.read(CHUNK_SAMPLES)
@@ -68,6 +70,10 @@ class AudioRecorder:
                     if silence_count >= self.silence_limit:
                         log.debug("Speech ended (%.1fs)", len(buffer) * CHUNK_SAMPLES / self.sample_rate)
                         break
+
+                if is_speaking and len(buffer) >= max_chunks:
+                    log.info("Max recording length reached (20s), stopping")
+                    break
 
         if not buffer:
             return None
