@@ -5,7 +5,7 @@ import time
 
 import numpy as np
 
-AMBIENT_FILTER_ENABLED = os.getenv("AMBIENT_FILTER", "0") == "1"
+AMBIENT_FILTER_ENABLED = os.getenv("AMBIENT_FILTER", "1") == "1"
 from reachy_mini.utils import create_head_pose
 
 from .agent_client import PROCESSING_SENTINEL, AgentClient

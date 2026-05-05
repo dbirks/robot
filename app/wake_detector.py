@@ -102,24 +102,66 @@ class WakeDetector:
     def classify_utterance(self, text: str) -> str:
         """Classify whether active-mode speech is directed at the robot.
 
+        Uses fast heuristics first, falls back to semantic similarity.
+        Total time: <25ms.
+
         Returns:
             'respond' — high confidence, respond normally
-            'check'   — uncertain, ask if they were talking to the robot
             'ignore'  — background speech, ignore silently
         """
-        from_front = self.is_from_front()
-        _, score = self.is_directed_at_robot(text)
+        lower = text.lower().strip()
+        words = lower.split()
+        word_count = len(words)
 
-        # DOA penalty: if speech is from side/behind, reduce confidence
+        # Instant signals — definitely directed at robot
+        robot_names = {"robot", "reachy", "reachi", "richy", "richi"}
+        if robot_names & set(words):
+            log.info("Robot name detected: %s", text)
+            return "respond"
+
+        # Second-person address — strong signal
+        you_patterns = {"you", "your", "you're", "can you", "do you", "are you",
+                        "would you", "could you", "will you", "tell me", "show me",
+                        "help me", "let me"}
+        if any(p in lower for p in you_patterns):
+            log.info("Second-person address: %s", text)
+            return "respond"
+
+        # Questions directed outward (likely to robot if short)
+        if lower.rstrip().endswith("?") and word_count < 15:
+            log.info("Short question: %s", text)
+            return "respond"
+
+        # Very short utterances (1-4 words) — likely directed at robot
+        if word_count <= 4:
+            log.info("Short utterance: %s", text)
+            return "respond"
+
+        # DOA check — if not from front, likely background
+        from_front = self.is_from_front()
+        if from_front is False and word_count > 8:
+            log.debug("Long speech from side/behind, ignoring: %s", text)
+            return "ignore"
+
+        # Long monologue (>25 words) with no robot cues — likely TV/podcast
+        if word_count > 25:
+            log.debug("Long monologue, ignoring: %s", text)
+            return "ignore"
+
+        # Medium length (5-25 words), no clear cues — use semantic classifier
+        _, score = self.is_directed_at_robot(text)
         if from_front is False:
             score *= 0.5
 
-        if score >= 0.55:
-            log.info("Directed at robot (score=%.3f): %s", score, text)
+        if score >= 0.40:
+            log.info("Semantic match (score=%.3f): %s", score, text)
             return "respond"
-        elif score >= 0.30:
-            log.info("Uncertain if directed at robot (score=%.3f): %s", score, text)
-            return "check"
-        else:
-            log.debug("Background speech (score=%.3f): %s", score, text)
-            return "ignore"
+
+        # Default: if it's moderate length and we're not sure, respond anyway
+        # Better to respond to background speech occasionally than miss real requests
+        if word_count <= 12:
+            log.info("Short-ish, responding by default: %s", text)
+            return "respond"
+
+        log.debug("No match, ignoring (score=%.3f, words=%d): %s", score, word_count, text)
+        return "ignore"
