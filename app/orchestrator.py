@@ -119,6 +119,22 @@ def run_loop(
                     play_audio(tts_audio, tts.sample_rate)
                 continue
 
+            # Filter ambient speech — only respond when spoken to directly
+            if wake_detector:
+                intent = wake_detector.classify_utterance(text)
+                if intent == "ignore":
+                    log.debug("Ignoring ambient speech: %s", text)
+                    continue
+                elif intent == "check":
+                    log.info("Uncertain speech, asking to clarify: %s", text)
+                    check_audio = tts.synthesize("Sorry, were you talking to me?")
+                    if wobbler:
+                        play_sentence_with_wobble(check_audio, tts.sample_rate, wobbler)
+                    else:
+                        from .playback import play_audio
+                        play_audio(check_audio, tts.sample_rate)
+                    continue
+
             log.info("User: %s", text)
 
             if movement:

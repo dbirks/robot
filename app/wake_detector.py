@@ -98,3 +98,28 @@ class WakeDetector:
         else:
             log.debug("Not directed at robot (score=%.3f): %s", score, text)
         return is_wake
+
+    def classify_utterance(self, text: str) -> str:
+        """Classify whether active-mode speech is directed at the robot.
+
+        Returns:
+            'respond' — high confidence, respond normally
+            'check'   — uncertain, ask if they were talking to the robot
+            'ignore'  — background speech, ignore silently
+        """
+        from_front = self.is_from_front()
+        _, score = self.is_directed_at_robot(text)
+
+        # DOA penalty: if speech is from side/behind, reduce confidence
+        if from_front is False:
+            score *= 0.5
+
+        if score >= 0.55:
+            log.info("Directed at robot (score=%.3f): %s", score, text)
+            return "respond"
+        elif score >= 0.30:
+            log.info("Uncertain if directed at robot (score=%.3f): %s", score, text)
+            return "check"
+        else:
+            log.debug("Background speech (score=%.3f): %s", score, text)
+            return "ignore"
