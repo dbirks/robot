@@ -571,39 +571,46 @@ def make_handlers(
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    _peekaboo_active = False
+
     def peekaboo(**_kwargs: Any) -> dict:
+        nonlocal _peekaboo_active
         if err := _require_robot():
             return err
         if movement is None:
             return {"ok": False, "error": "Movement manager not available"}
+        if _peekaboo_active:
+            return {"ok": False, "error": "Already playing peekaboo — wait for it to finish"}
         try:
+            _peekaboo_active = True
             hide_time = random.uniform(1.5, 4.0)
             movement.queue_animation(
                 [
-                    # Go to sleep pose
                     AnimationKeyframe(pose=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=1.0),
-                    # Hold hidden (same pose, just wait)
                     AnimationKeyframe(pose=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=hide_time),
-                    # Pop up!
                     AnimationKeyframe(
                         pose=create_head_pose(pitch=-10, degrees=True),
                         antennas=[0.5, 0.5],
                         duration=0.2,
                     ),
-                    # Return to center
                     AnimationKeyframe(pose=create_head_pose(), antennas=[-0.1745, 0.1745], duration=0.8),
                 ],
                 blend_in=0.1,
                 blend_out=0.2,
             )
-            # Play wake_up sound after the hide phase completes (non-blocking)
-            total_delay = 1.0 + hide_time + 0.2  # blend_in + hide + hold + pop duration
-            threading.Thread(
-                target=lambda: (time.sleep(total_delay), _play_sdk_sound("wake_up.wav")),
-                daemon=True,
-            ).start()
+            total_delay = 1.0 + hide_time + 0.2
+
+            def _peekaboo_sequence():
+                nonlocal _peekaboo_active
+                time.sleep(total_delay)
+                _play_sdk_sound("wake_up.wav")
+                time.sleep(1.0)
+                _peekaboo_active = False
+
+            threading.Thread(target=_peekaboo_sequence, daemon=True).start()
             return {"ok": True, "action": "peekaboo"}
         except Exception as e:
+            _peekaboo_active = False
             return {"ok": False, "error": str(e)}
 
     def play_emotion(emotion: str = "", **_kwargs: Any) -> dict:
