@@ -1,8 +1,11 @@
 import logging
+import os
 import threading
 import time
 
 import numpy as np
+
+AMBIENT_FILTER_ENABLED = os.getenv("AMBIENT_FILTER", "0") == "1"
 from reachy_mini.utils import create_head_pose
 
 from .agent_client import PROCESSING_SENTINEL, AgentClient
@@ -120,7 +123,7 @@ def run_loop(
                 continue
 
             # Filter ambient speech — only respond when spoken to directly
-            if wake_detector:
+            if AMBIENT_FILTER_ENABLED and wake_detector:
                 intent = wake_detector.classify_utterance(text)
                 if intent == "ignore":
                     log.debug("Ignoring ambient speech: %s", text)
