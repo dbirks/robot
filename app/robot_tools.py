@@ -583,29 +583,27 @@ def make_handlers(
             return {"ok": False, "error": "Already playing peekaboo — wait for it to finish"}
         try:
             _peekaboo_active = True
-            hide_time = random.uniform(1.5, 4.0)
-            movement.queue_animation(
-                [
-                    AnimationKeyframe(pose=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=1.0),
-                    AnimationKeyframe(pose=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=hide_time),
-                    AnimationKeyframe(
-                        pose=create_head_pose(pitch=-10, degrees=True),
-                        antennas=[0.5, 0.5],
-                        duration=0.2,
-                    ),
-                    AnimationKeyframe(pose=create_head_pose(), antennas=[-0.1745, 0.1745], duration=0.8),
-                ],
-                blend_in=0.1,
-                blend_out=0.2,
-            )
-            total_delay = 1.0 + hide_time + 0.2
+            hide_time = random.uniform(1.5, 3.0)
 
             def _peekaboo_sequence():
                 nonlocal _peekaboo_active
-                time.sleep(total_delay)
-                _play_sdk_sound("wake_up.wav")
-                time.sleep(1.0)
-                _peekaboo_active = False
+                try:
+                    # Hide — go to sleep pose
+                    robot.mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=1.0)
+                    time.sleep(1.0 + hide_time)
+                    # Pop up + sound together
+                    _play_sdk_sound("wake_up.wav")
+                    robot.mini.goto_target(
+                        head=create_head_pose(pitch=-10, degrees=True),
+                        antennas=[0.5, 0.5],
+                        duration=0.2,
+                    )
+                    time.sleep(0.8)
+                    # Return to center
+                    robot.mini.goto_target(head=create_head_pose(), antennas=[-0.1745, 0.1745], duration=0.8)
+                    time.sleep(1.0)
+                finally:
+                    _peekaboo_active = False
 
             threading.Thread(target=_peekaboo_sequence, daemon=True).start()
             return {"ok": True, "action": "peekaboo"}
