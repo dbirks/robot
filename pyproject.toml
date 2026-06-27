@@ -5,7 +5,7 @@ description = "Local voice-driven agent for Reachy Mini"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "reachy-mini>=1.6.0",
+    "reachy-mini>=1.8.0",
     "faster-whisper>=1.1.0",
     "piper-tts>=1.4.0",
     "openai>=1.0.0",
