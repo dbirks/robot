@@ -6,9 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "reachy-mini>=1.8.0",
-    # Declared explicitly (it would otherwise arrive transitively via kokoro /
-    # sentence-transformers) so the CPU-wheel pin in [tool.uv.sources] applies.
-    "torch>=2.4.0",
+    # Declared explicitly (they would otherwise arrive transitively via kokoro
+    # / sentence-transformers / silero-vad) so the cu126 pin in
+    # [tool.uv.sources] applies to both. They must be a MATCHED PAIR -- a
+    # mismatch makes torchaudio fail to load _torchaudio.abi3.so, which takes
+    # Silero VAD down with it. cu126 currently tops out at 2.11.0 for
+    # torchaudio, so both are held there.
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
     "piper-tts>=1.4.0",
     "openai>=1.0.0",
     "silero-vad>=5.1",
@@ -38,17 +43,19 @@ dev = [
     "ty>=0.0.1a25",
 ]
 
-# The GTX 1070 is Pascal (sm_61). PyTorch's CUDA wheels dropped sm_61 after the
-# cu126 line, so the default wheel ships GPU kernels this card cannot execute.
-# Nothing here wants torch on the GPU anyway — VAD, TTS and the wake detector
-# are all explicitly device="cpu", and the LLM runs in llama.cpp (C++/CUDA, no
-# torch). So pin the CPU build: same behaviour, several GB smaller.
+# The GTX 1070 is Pascal (sm_61). cu128 and later dropped sm_61 entirely, and
+# CUDA 13 dropped Pascal altogether — the default wheel ships kernels this card
+# physically cannot execute (it reports cuda available, then fails to launch).
+# cu126 is the last line that still contains sm_61, and we want it: Kokoro TTS
+# on the GPU is ~20x faster than on this 4-core CPU and hands the cores back to
+# STT and VAD. Verify torch.cuda.get_arch_list() contains sm_61 after any bump.
 [tool.uv.sources]
-torch = { index = "pytorch-cpu" }
+torch = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
 
 [[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.ruff]

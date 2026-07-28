@@ -25,8 +25,14 @@ class FaceTracker:
 
     def __init__(self, camera_index: int = 0, det_size: tuple[int, int] = (320, 320)):
         log.info("Loading InsightFace buffalo_sc...")
-        import os
-        os.environ.setdefault("OMP_NUM_THREADS", "2")
+        # NB: this used to do os.environ.setdefault("OMP_NUM_THREADS", "2")
+        # here. That was aimed at InsightFace but, being a process-global env
+        # var set during construction, it landed on every OpenMP consumer in
+        # the process -- and only sometimes, since main.py builds TTSService
+        # (which imports torch) one line earlier, so whether it took effect
+        # depended on import order. If InsightFace needs a thread cap, set it
+        # via onnxruntime SessionOptions.intra_op_num_threads, not the
+        # environment.
         self.app = FaceAnalysis(name="buffalo_sc", providers=["CPUExecutionProvider"])
         self.app.prepare(ctx_id=-1, det_size=det_size)
         self.camera_index = camera_index

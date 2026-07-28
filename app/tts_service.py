@@ -16,6 +16,37 @@ TTS_SERVER_URL = os.getenv("TTS_SERVER_URL", "http://127.0.0.1:5100")
 TTS_SPEAKER = os.getenv("TTS_SPEAKER", "Ryan")
 KOKORO_VOICE = os.getenv("KOKORO_VOICE", "bm_daniel")
 KOKORO_LANG = os.getenv("KOKORO_LANG", "b")
+# "auto" uses the GPU when one is usable. Measured on the GTX 1070: 0.105s for
+# 31 chars vs 0.79s on an *idle* 4-core CPU, and ~2.1s in production once
+# llama.cpp is competing for cores. Costs ~900MB VRAM. Set KOKORO_DEVICE=cpu to
+# force the old behaviour if VRAM gets tight.
+KOKORO_DEVICE = os.getenv("KOKORO_DEVICE", "auto")
+
+
+def _resolve_kokoro_device() -> str:
+    """Pick the Kokoro device, refusing the GPU unless it can really run a kernel.
+
+    torch.cuda.is_available() is not sufficient on this hardware: the cu130
+    wheel reported True on a GTX 1070 and then failed to launch anything,
+    because its kernels start at sm_75. Conversely arch_list has no 'sm_61'
+    even on cu126 -- the sm_60 cubin runs on sm_61 by CUDA's forward
+    compatibility across minor revisions. So neither flag is trustworthy;
+    launch a real kernel and see.
+    """
+    if KOKORO_DEVICE != "auto":
+        return KOKORO_DEVICE
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return "cpu"
+        a = torch.zeros(8, 8, device="cuda")
+        if not bool(torch.isfinite(a @ a).all()):
+            return "cpu"
+        return "cuda"
+    except Exception as e:
+        log.warning("GPU unusable for Kokoro (%s), using CPU", type(e).__name__)
+        return "cpu"
 
 
 class TTSService:
@@ -35,8 +66,15 @@ class TTSService:
     def _init_kokoro(self):
         from kokoro import KPipeline
 
-        log.info("Loading Kokoro TTS (voice=%s, lang=%s)", KOKORO_VOICE, KOKORO_LANG)
-        self._pipeline = KPipeline(lang_code=KOKORO_LANG, device="cpu")
+        device = _resolve_kokoro_device()
+        log.info("Loading Kokoro TTS (voice=%s, lang=%s, device=%s)", KOKORO_VOICE, KOKORO_LANG, device)
+        try:
+            self._pipeline = KPipeline(lang_code=KOKORO_LANG, device=device)
+        except Exception:
+            if device == "cpu":
+                raise
+            log.exception("Kokoro failed on %s, falling back to CPU", device)
+            self._pipeline = KPipeline(lang_code=KOKORO_LANG, device="cpu")
         self._voice = KOKORO_VOICE
         self._engine = "kokoro"
         self.sample_rate = 24000

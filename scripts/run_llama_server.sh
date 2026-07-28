@@ -44,6 +44,13 @@ PARALLEL="${LLAMA_PARALLEL:-2}"
 
 GPU_LAYERS="${LLAMA_GPU_LAYERS:-99}"
 
+# llama.cpp defaults --threads to nproc, which is 8 on this 4-core/8-thread
+# i7-6700K. It then spin-waits on all 8, starving Kokoro and Parakeet, which
+# share the same cores. Measured effect on Kokoro for one 31-char utterance:
+# 1 thread 2.33s, 2 threads 1.31s, 4 threads 0.93s -- and under 8 busy cores it
+# degraded to 11.3s. Cap at the physical core count.
+THREADS="${LLAMA_THREADS:-4}"
+
 # Flash attention on Pascal is genuinely ambiguous — no MMA instructions, so it
 # falls back to the vec kernel. Measured as a large win on some models and a
 # ~50% regression on others (issue #19020). Left on because quantized KV
@@ -69,6 +76,7 @@ exec llama-server \
     --ctx-size "$CTX" \
     --parallel "$PARALLEL" \
     --n-gpu-layers "$GPU_LAYERS" \
+    --threads "$THREADS" \
     --flash-attn "$FLASH_ATTN" \
     --cache-type-k "$CACHE_TYPE_K" \
     --cache-type-v "$CACHE_TYPE_V" \
