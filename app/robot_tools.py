@@ -268,9 +268,10 @@ def make_handlers(
             return {"ok": False, "error": "Robot not connected"}
         return None
 
-    def _play_sdk_sound(name: str):
+    def _play_sdk_sound(name: str, block: bool = True):
         import importlib.resources
 
+        t0 = time.perf_counter()
         sound_path = Path(importlib.resources.files("reachy_mini") / "assets" / name)
         if not sound_path.exists():
             log.warning("Sound not found: %s", name)
@@ -286,8 +287,13 @@ def make_handlers(
         if _device_sr and sr != _device_sr:
             audio = _resample(audio, sr, _device_sr)
             sr = _device_sr
+        dur = len(audio) / sr
+        load_ms = (time.perf_counter() - t0) * 1000
         sd.play(audio, samplerate=sr, device=_output_device)
-        sd.wait()
+        log.info("sound '%s' play started (load %.0fms, dur %.2fs)", name, load_ms, dur)
+        if block:
+            sd.wait()
+            log.info("sound '%s' finished (%.0fms wall)", name, (time.perf_counter() - t0) * 1000)
 
     def _grab_camera_frame():
         if face_tracker is not None:
@@ -472,7 +478,7 @@ def make_handlers(
                 y2 = min(h, bbox[3] + pad)
                 x1 = max(0, bbox[0] - pad)
                 x2 = min(w, bbox[2] + pad)
-                crop = frame[int(y1):int(y2), int(x1):int(x2)]
+                crop = frame[int(y1) : int(y2), int(x1) : int(x2)]
                 cv2.imwrite(str(thumb_dir / f"{name}.jpg"), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 log.info("Saved face thumbnail for %s", name)
             except Exception:
@@ -525,9 +531,12 @@ def make_handlers(
             level_map = {
                 "mute": 0.0,
                 "whisper": 0.5,
-                "quiet": 1.0, "low": 1.0,
-                "medium": 1.5, "normal": 1.5,
-                "high": 2.0, "loud": 2.0,
+                "quiet": 1.0,
+                "low": 1.0,
+                "medium": 1.5,
+                "normal": 1.5,
+                "high": 2.0,
+                "loud": 2.0,
                 "max": 2.5,
             }
             if level.lower() in level_map:
@@ -583,25 +592,46 @@ def make_handlers(
             return {"ok": False, "error": "Already playing peekaboo — wait for it to finish"}
         try:
             _peekaboo_active = True
-            hide_time = random.uniform(1.5, 3.0)
+            # Random beat the head stays hidden before popping up (the
+            # suspense). goto_target blocks for the descent, so this sleep is
+            # the pure hidden-hold the user perceives.
+            hide_time = random.uniform(1.0, 4.0)
 
             def _peekaboo_sequence():
                 nonlocal _peekaboo_active
+                seq_t0 = time.perf_counter()
+
+                def el() -> float:
+                    return time.perf_counter() - seq_t0
+
                 try:
                     # Hide — go to sleep pose
+                    log.info("peekaboo: hide start (t=0.00s, hide_time=%.2fs)", hide_time)
                     robot.mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=1.0)
-                    time.sleep(1.0 + hide_time)
-                    # Pop up + sound together
-                    _play_sdk_sound("wake_up.wav")
+                    log.info("peekaboo: hide goto returned (t=%.2fs)", el())
+                    time.sleep(hide_time)
+
+                    # Pop up + sound together. _play_sdk_sound blocks (sd.wait),
+                    # so run it in its own thread and fire it the instant the
+                    # pop-up goto starts, so the doop-doop lands ON the upward
+                    # motion rather than before it.
+                    log.info("peekaboo: pop-up + sound start (t=%.2fs)", el())
+                    snd = threading.Thread(target=_play_sdk_sound, args=("wake_up.wav",), daemon=True)
+                    snd.start()
                     robot.mini.goto_target(
                         head=create_head_pose(pitch=-10, degrees=True),
                         antennas=[0.5, 0.5],
                         duration=0.2,
                     )
+                    log.info("peekaboo: pop-up goto returned (t=%.2fs)", el())
+                    snd.join(timeout=1.0)
+                    log.info("peekaboo: sound joined (t=%.2fs)", el())
                     time.sleep(0.8)
                     # Return to center
+                    log.info("peekaboo: return to center (t=%.2fs)", el())
                     robot.mini.goto_target(head=create_head_pose(), antennas=[-0.1745, 0.1745], duration=0.8)
                     time.sleep(1.0)
+                    log.info("peekaboo: sequence complete (t=%.2fs)", el())
                 finally:
                     _peekaboo_active = False
 
