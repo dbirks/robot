@@ -437,7 +437,6 @@ async def save_settings(
     volume_boost: str = Form(...),
     tts_engine: str = Form(...),
     kokoro_voice: str = Form(...),
-    whisper_model: str = Form(...),
 ):
     # Apply volume to pipewire immediately
     try:
@@ -447,7 +446,6 @@ async def save_settings(
     write_env_setting("VOLUME_BOOST", volume_boost)
     write_env_setting("TTS_ENGINE", tts_engine)
     write_env_setting("KOKORO_VOICE", kokoro_voice)
-    write_env_setting("WHISPER_MODEL", whisper_model)
     return render(request, "partials/settings.html", settings=get_env_settings(), saved=True)
 
 
@@ -457,7 +455,6 @@ async def apply_restart(
     volume_boost: str = Form(...),
     tts_engine: str = Form(...),
     kokoro_voice: str = Form(...),
-    whisper_model: str = Form(...),
 ):
     # Apply volume to pipewire immediately
     try:
@@ -467,7 +464,6 @@ async def apply_restart(
     write_env_setting("VOLUME_BOOST", volume_boost)
     write_env_setting("TTS_ENGINE", tts_engine)
     write_env_setting("KOKORO_VOICE", kokoro_voice)
-    write_env_setting("WHISPER_MODEL", whisper_model)
     try:
         subprocess.run(
             ["systemctl", "--user", "restart", "reachy-agent"],

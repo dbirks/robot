@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "reachy-mini>=1.8.0",
-    "faster-whisper>=1.1.0",
+    # Declared explicitly (it would otherwise arrive transitively via kokoro /
+    # sentence-transformers) so the CPU-wheel pin in [tool.uv.sources] applies.
+    "torch>=2.4.0",
     "piper-tts>=1.4.0",
     "openai>=1.0.0",
     "silero-vad>=5.1",
@@ -35,6 +37,19 @@ dev = [
     "ruff>=0.14.0",
     "ty>=0.0.1a25",
 ]
+
+# The GTX 1070 is Pascal (sm_61). PyTorch's CUDA wheels dropped sm_61 after the
+# cu126 line, so the default wheel ships GPU kernels this card cannot execute.
+# Nothing here wants torch on the GPU anyway — VAD, TTS and the wake detector
+# are all explicitly device="cpu", and the LLM runs in llama.cpp (C++/CUDA, no
+# torch). So pin the CPU build: same behaviour, several GB smaller.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 120

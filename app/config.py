@@ -15,11 +15,6 @@ class Config:
     llm_api_key: str = field(default_factory=lambda: os.getenv("LLM_API_KEY", "not-needed"))
     llm_max_tokens: int = field(default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "256")))
 
-    # STT
-    whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "small.en"))
-    whisper_device: str = field(default_factory=lambda: os.getenv("WHISPER_DEVICE", "cuda"))
-    whisper_compute_type: str = field(default_factory=lambda: os.getenv("WHISPER_COMPUTE_TYPE", "float16"))
-
     # TTS
     piper_voice_path: str = field(
         default_factory=lambda: os.getenv("PIPER_VOICE_PATH", "models/piper/en_GB-northern_english_male-medium.onnx")

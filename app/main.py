@@ -10,10 +10,10 @@ from .agent_client import AgentClient
 from .audio_io import AudioRecorder
 from .config import Config
 from .doa_tracker import DoATracker
-from .mic_watchdog import MicWatchdog
 from .face_tracker import FaceTracker
 from .head_wobbler import HeadWobbler
 from .interruptible_player import InterruptiblePlayer
+from .mic_watchdog import MicWatchdog
 from .movement_manager import MovementManager
 from .orchestrator import run_loop
 from .robot_state import RobotConnection
@@ -45,7 +45,7 @@ def main():
     recorder = AudioRecorder(config)
     tracker = FaceTracker()
     wake_detector = WakeDetector()
-    from .playback import _output_device, _device_sr
+    from .playback import _device_sr, _output_device
 
     player = InterruptiblePlayer(
         vad_model=recorder._vad_model,
