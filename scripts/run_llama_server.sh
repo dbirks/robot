@@ -4,14 +4,17 @@ set -euo pipefail
 # Defaults — override with env vars or edit below.
 # Long flags throughout: this file is read far more often than it is typed.
 
-MODEL_PATH="${LLAMA_MODEL_PATH:-models/gguf/qwen3.5-4b-q4_k_m.gguf}"
+# UD-Q4_K_XL rather than plain Q4_K_M: better KL-divergence (0.410 vs 0.548)
+# for +0.68GB. From unsloth/Qwen3.5-4B-MTP-GGUF, which bakes the MTP drafter
+# heads into the GGUF itself — see the --spec-type note below for why we don't
+# currently use them.
+MODEL_PATH="${LLAMA_MODEL_PATH:-models/gguf/mtp/Qwen3.5-4B-UD-Q4_K_XL.gguf}"
 
 # Vision projector for the LLM's image input (describe_scene / take_snapshot).
-# NOTE: the shipped mmproj-BF16.gguf is BF16, which the GTX 1070 (Pascal) does
-# not support in hardware — it costs ~675MB of VRAM in a dtype the card has to
-# emulate. Set LLAMA_MMPROJ_PATH to an F16 projector, or leave the file absent
-# to run text-only. Tracked in robot-yqu.
-MMPROJ_PATH="${LLAMA_MMPROJ_PATH:-models/gguf/mmproj-BF16.gguf}"
+# F16, not the BF16 file we used to ship: the GTX 1070 (Pascal) has no BF16 in
+# hardware and had to emulate it. F16 is native. Leave the file absent to run
+# text-only.
+MMPROJ_PATH="${LLAMA_MMPROJ_PATH:-models/gguf/mtp/mmproj-F16.gguf}"
 
 PORT="${LLAMA_PORT:-8080}"
 
@@ -26,8 +29,17 @@ HOST="${LLAMA_HOST:-127.0.0.1}"
 CTX="${LLAMA_CTX:-32768}"
 
 # Two slots so an interruption isn't queued behind the in-flight request.
-# NOTE: MTP speculative decoding requires --parallel 1. Choosing MTP means
-# reworking barge-in as request-cancellation instead. See robot-gsg.
+#
+# MTP speculative decoding requires --parallel 1, and we measured it as NOT
+# worth that trade on this card. Benchmarked 2026-07-28 on the 1070, same
+# model/binary, 3 runs each:
+#     baseline          43.0 / 43.0 / 42.6 tok/s   (mean 42.9)
+#     --spec-type mtp   47.1 / 49.1 / 43.9 tok/s   (mean 46.7)
+# ~+9%, at 0.48-0.58 draft acceptance. The 1.5-1.9x figures in llama.cpp
+# PR #22673 are Ampere-and-newer; Pascal has no tensor cores, so verifying the
+# draft costs nearly as much as generating. Giving up the barge-in slot for 9%
+# is a bad trade. (It does at least RUN — issue #25713's pre-Ampere MTP crash
+# did not reproduce here.) Re-evaluate if the GPU ever changes.
 PARALLEL="${LLAMA_PARALLEL:-2}"
 
 GPU_LAYERS="${LLAMA_GPU_LAYERS:-99}"
