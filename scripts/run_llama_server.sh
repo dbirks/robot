@@ -10,7 +10,7 @@ MODEL_PATH="${LLAMA_MODEL_PATH:-models/gguf/qwen3.5-4b-q4_k_m.gguf}"
 # NOTE: the shipped mmproj-BF16.gguf is BF16, which the GTX 1070 (Pascal) does
 # not support in hardware — it costs ~675MB of VRAM in a dtype the card has to
 # emulate. Set LLAMA_MMPROJ_PATH to an F16 projector, or leave the file absent
-# to run text-only. Tracked in robot-4rt.
+# to run text-only. Tracked in robot-yqu.
 MMPROJ_PATH="${LLAMA_MMPROJ_PATH:-models/gguf/mmproj-BF16.gguf}"
 
 PORT="${LLAMA_PORT:-8080}"
@@ -27,7 +27,7 @@ CTX="${LLAMA_CTX:-32768}"
 
 # Two slots so an interruption isn't queued behind the in-flight request.
 # NOTE: MTP speculative decoding requires --parallel 1. Choosing MTP means
-# reworking barge-in as request-cancellation instead. See robot-p9w.
+# reworking barge-in as request-cancellation instead. See robot-gsg.
 PARALLEL="${LLAMA_PARALLEL:-2}"
 
 GPU_LAYERS="${LLAMA_GPU_LAYERS:-99}"
