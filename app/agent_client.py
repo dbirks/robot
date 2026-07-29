@@ -28,6 +28,12 @@ questions about the environment (what's on the table, what color is the wall, et
 
 MEMORY_PATH = Path("data/memory.md")
 
+# Context trimming water marks. Only trim once we exceed HIGH_WATER, then cut
+# all the way down to TARGET, so the prefix-cache-destroying re-prefill happens
+# roughly once every (HIGH_WATER - TARGET) turns instead of every turn.
+TRIM_HIGH_WATER = 40
+TRIM_TARGET = 20
+
 MAX_TOOL_ROUNDS = 5
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s")
@@ -68,12 +74,39 @@ class AgentClient:
         self.tool_handlers.update(handlers)
 
     def _trim_context(self):
-        """Keep conversation under context limit by dropping oldest turns."""
-        max_messages = 20
-        if len(self.messages) > max_messages:
-            system = self.messages[0]
-            self.messages = [system] + self.messages[-(max_messages - 1) :]
-            log.info("Trimmed conversation to %d messages", len(self.messages))
+        """Keep the conversation bounded, but trim rarely and in big steps.
+
+        Trimming shifts every token after the system prompt, which throws away
+        llama.cpp's prefix cache. Measured on this setup (1570-token system
+        prompt + 19 tool schemas): a cached turn prefills in ~120ms, but the
+        turn right after a trim costs ~3.8s even with --cache-reuse 256.
+
+        The old code trimmed to exactly 20 messages whenever it exceeded 20, so
+        once a conversation got that long EVERY subsequent turn re-trimmed and
+        paid that penalty. Hysteresis makes it roughly one turn in
+        (HIGH_WATER - TARGET) instead of every turn.
+        """
+        if len(self.messages) <= TRIM_HIGH_WATER:
+            return
+
+        system = self.messages[0]
+        kept = self.messages[-(TRIM_TARGET - 1) :]
+
+        # Never start the kept window with a tool result: it would be orphaned
+        # from the assistant message carrying its tool_calls, which is an
+        # invalid conversation and confuses the model about what it just did.
+        dropped_orphans = 0
+        while kept and kept[0].get("role") == "tool":
+            kept.pop(0)
+            dropped_orphans += 1
+
+        self.messages = [system] + kept
+        log.info(
+            "Trimmed conversation to %d messages (dropped %d orphaned tool results); "
+            "next turn pays a full re-prefill",
+            len(self.messages),
+            dropped_orphans,
+        )
 
     def send(self, text: str) -> str:
         self._trim_context()

@@ -64,6 +64,22 @@ FLASH_ATTN="${LLAMA_FLASH_ATTN:-on}"
 CACHE_TYPE_K="${LLAMA_CACHE_TYPE_K:-q8_0}"
 CACHE_TYPE_V="${LLAMA_CACHE_TYPE_V:-q4_0}"
 
+# Prompt-prefix caching is ON by default (--cache-ram defaults to 8192 MiB) and
+# it matters enormously here: the system prompt plus 19 tool schemas is ~1570
+# tokens, which costs ~6s to prefill cold and ~250ms once cached.
+#
+# --cache-reuse additionally recovers part of the cache when the prompt diverges
+# mid-way rather than only at the end -- which is what happens every time the
+# agent trims conversation history. Measured on the trim case:
+#     cache-reuse 0    cached 1069   prefill 5663ms
+#     cache-reuse 256  cached 1444   prefill 3779ms   <-- chosen
+#     cache-reuse 64   cached 1444   prefill 3972ms
+#     cache-reuse 16   cached 1444   prefill 4209ms
+# Smaller chunks recover no more and cost overhead, so 256 it is. Note this only
+# softens the trim penalty; the real fix was hysteresis in agent_client.py so
+# trims are rare.
+CACHE_REUSE="${LLAMA_CACHE_REUSE:-256}"
+
 MMPROJ_ARGS=()
 if [ -f "$MMPROJ_PATH" ]; then
     MMPROJ_ARGS=(--mmproj "$MMPROJ_PATH")
@@ -80,5 +96,6 @@ exec llama-server \
     --flash-attn "$FLASH_ATTN" \
     --cache-type-k "$CACHE_TYPE_K" \
     --cache-type-v "$CACHE_TYPE_V" \
+    --cache-reuse "$CACHE_REUSE" \
     --host "$HOST" \
     --port "$PORT"
