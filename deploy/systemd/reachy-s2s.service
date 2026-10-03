@@ -1,0 +1,16 @@
+[Unit]
+Description=Reachy Mini realtime voice pipeline (pinned huggingface/speech-to-speech)
+Documentation=file://%h/dev/robot/docs/adr/0001-upstream-realtime-service.md
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/dev/robot
+EnvironmentFile=-%h/dev/robot/.env
+ExecStart=%h/dev/robot/scripts/run_s2s.sh
+Restart=on-failure
+RestartSec=3
+# Fully local; give the service no reason to reach the internet beyond model
+# downloads that already happened at install time (run with HF_HUB_OFFLINE=1).
+
+[Install]
+WantedBy=default.target
