@@ -1,0 +1,43 @@
+# Pinned upstream services, models, and builds.
+# Rule: nothing runs on this machine without an entry here with a revision/hash
+# and measured cost. Update MEASURED alongside, never above. See ADR 0004/0006.
+version: 1
+
+services:
+  speech-to-speech:
+    repo: https://github.com/huggingface/speech-to-speech
+    ref: v1.0.0            # re-verify protocol quirks (ADR 0001) on every bump
+    install: separate venv via scripts/install_s2s.sh   # never vendored, never forked
+    transport: ws://127.0.0.1:8765/v1/realtime
+    measured: pending robot-machine run
+  llama-cpp:
+    repo: https://github.com/ggml-org/llama.cpp
+    # Pascal-correct local build: -DCMAKE_CUDA_ARCHITECTURES=61 -DGGML_CUDA_F16=OFF
+    # build pinned in scripts/build_llama.sh; source rev recorded at build time
+    revision: TBD-record-at-build
+    measured: Qwen3.5-4B low-40s tok/s (commit 9f6e673)
+
+models:
+  llm:
+    id: unsloth/Qwen3.5-4B-MTP-GGUF
+    quant: UD-Q4_K_XL
+    mmproj: F16 only, never BF16 (ADR 0004)
+    context: 8-16k, quantized KV
+    measured_vram: ~4.4 GB @ 8K (Q4_K_M baseline)
+  stt:
+    id: nemo-parakeet-tdt-0.6b-v2   # v2 beats v3 on EN WER 6.05 vs 6.32 (ADR 0006)
+    runtime: onnx, fp32 (NEVER int8 on this CPU)
+    measured: pending
+  tts_production:
+    id: kokoro                 # until the Phase 4 bakeoff says otherwise
+    runtime: torch cu126 GPU (kokoro-onnx CUDA EP broken on sm_61)
+    measured_vram: ~904 MiB + 250 MB ctx
+    measured_rtf: 0.038-0.044
+  kws:
+    id: TBD sherpa-onnx open-vocabulary model
+    measured: pending Phase 3
+
+runtime:
+  python: ">=3.12"
+  torch: "2.11.0+cu126 (matched torchaudio pair; sm_61 check on every bump)"
+  reachy_mini_sdk: "1.8.x targeted only (>=1.9 breaks daemon/BLE API + CORS)"
