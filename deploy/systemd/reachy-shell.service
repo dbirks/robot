@@ -1,0 +1,17 @@
+[Unit]
+Description=Reachy Mini realtime shell (audio owners, attention, tools)
+Documentation=file://%h/dev/robot/docs/epic-realtime-rebuild.md
+After=reachy-mini-daemon.service reachy-s2s.service
+BindsTo=reachy-mini-daemon.service
+
+[Service]
+WorkingDirectory=%h/dev/robot
+EnvironmentFile=-%h/dev/robot/.env
+ExecStart=%h/dev/robot/.venv/bin/python -m shell
+Restart=on-failure
+RestartSec=3
+# Thread discipline per ADR 0006: this process owns audio and attention
+# only; model compute belongs to llama-server and reachy-s2s.
+
+[Install]
+WantedBy=default.target

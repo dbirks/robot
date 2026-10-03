@@ -1,5 +1,13 @@
 # Reachy Local Agent
 
+> **Under rebuild.** This repo is mid-way through the realtime rebuild:
+> the canonical spec is [`docs/epic-realtime-rebuild.md`](docs/epic-realtime-rebuild.md),
+> durable decisions live in [`docs/adr/`](docs/adr/), and the new stack is the
+> [`shell/`](shell/) package (`python -m shell`) described in
+> [`deploy/README.md`](deploy/README.md). The description below documents the
+> legacy turn-based loop (`app/`), which stays functional until the Phase 2
+> cutover (issue #22) once the new path passes its hardware gate.
+
 Local voice-driven agent for [Reachy Mini](https://www.reachy-mini.org/). Runs entirely on-device — no cloud APIs. Uses faster-whisper for STT, llama.cpp for the LLM, and Piper for TTS.
 
 ## Architecture
