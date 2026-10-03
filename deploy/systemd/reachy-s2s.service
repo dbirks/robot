@@ -1,16 +1,19 @@
 [Unit]
 Description=Reachy Mini realtime voice pipeline (pinned huggingface/speech-to-speech)
 Documentation=file://%h/dev/robot/docs/adr/0001-upstream-realtime-service.md
-After=network-online.target
+After=network-online.target llama-server.service
+Wants=llama-server.service
 
 [Service]
 WorkingDirectory=%h/dev/robot
 EnvironmentFile=-%h/dev/robot/.env
+Environment=HF_HUB_OFFLINE=1
 ExecStart=%h/dev/robot/scripts/run_s2s.sh
 Restart=on-failure
 RestartSec=3
 # Fully local; give the service no reason to reach the internet beyond model
-# downloads that already happened at install time (run with HF_HUB_OFFLINE=1).
+# downloads that already happened at install time. First run on a fresh box:
+# HF_HUB_OFFLINE=0 scripts/run_s2s.sh once to fetch Parakeet/Kokoro/smart-turn.
 
 [Install]
 WantedBy=default.target

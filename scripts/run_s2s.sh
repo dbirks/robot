@@ -18,12 +18,31 @@ export HF_HOME="${HF_HOME:-$DIR/hf-cache}"
 # Model bakeoffs (issues #24/#25) are flag swaps here - override, don't fork:
 #   S2S_TTS=qwen3_tts scripts/run_s2s.sh   # candidate production voice (watch VRAM!)
 #   S2S_STT=nemo_asr  scripts/run_s2s.sh   # streaming STT candidate
-exec "$DIR/repo/.venv/bin/python" -m speech_to_speech.s2s_service \
-  --mode realtime \
+# Entry point at v1.0.0 is the `speech-to-speech serve` console script
+# (`--mode realtime` is deprecated; there is no s2s_service module).
+# --responses_api_base_url is REQUIRED: upstream otherwise defaults to a hosted
+# OpenAI model. Upstream's default reasoning effort "none" is honored by
+# llama.cpp's /v1/responses and keeps Qwen3.5 from thinking (verified).
+# Parakeet: v3 (upstream nano-parakeet hardcodes the v3 vocab; v2 fails to
+# load with a decoder.embed size mismatch), fp32 on CPU - fp16 runs at 1/64 rate on GP104
+# and fp32-on-GPU does not fit beside llama.cpp + Kokoro (ADR 0004).
+exec "$DIR/repo/.venv/bin/speech-to-speech" serve \
+  --host 127.0.0.1 \
+  --port "${S2S_PORT:-8765}" \
   --stt "${S2S_STT:-parakeet-tdt}" \
+  --parakeet_tdt_model_name "${S2S_PARAKEET_MODEL:-nvidia/parakeet-tdt-0.6b-v3}" \
+  --parakeet_tdt_device "${S2S_PARAKEET_DEVICE:-cpu}" \
+  --parakeet_tdt_compute_type float32 \
+  --enable_live_transcription "${S2S_LIVE_TRANSCRIPTION:-False}" \
   --tts "${S2S_TTS:-kokoro}" \
+  --kokoro_device "${S2S_KOKORO_DEVICE:-cuda}" \
+  --kokoro_voice "${KOKORO_VOICE:-bm_daniel}" \
   --llm_backend responses-api \
-  --listenport "${S2S_PORT:-8765}"
-# Phase 1 gate TODO (experiments/2026-07-28-realtime-spike): measure CPU with
-# --enable_realtime_transcription on the 4-core box before enabling it; add
-# --smart_turn only if the upstream speculative-turn behavior proves weak.
+  --responses_api_base_url "$OPENAI_BASE_URL" \
+  --responses_api_api_key "$OPENAI_API_KEY" \
+  --responses_api_stream \
+  --model_name "${LLM_MODEL:-qwen3.5-4b}"
+# Phase 1 gate TODO (experiments/2026-07-28-realtime-spike): measure CPU of
+# --enable_live_transcription on the 4-core box before turning it on (it
+# re-transcribes the growing window every 500 ms); add --smart_turn only if
+# the upstream speculative-turn behavior proves weak.

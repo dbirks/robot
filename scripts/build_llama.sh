@@ -59,9 +59,9 @@ echo "==> speculative decoding types available:"
 cat <<'NOTE'
 
 ==> Reminders
-    * run_llama_server.sh expects this build on PATH, e.g.
-          PATH="$BUILD_DIR/bin:$PATH" ./scripts/run_llama_server.sh
-      /usr/local/bin/llama-server is a separate, root-owned install (issue #33).
+    * run_llama_server.sh runs $BUILD_DIR/bin/llama-server directly
+      (override with LLAMA_SERVER_BIN). Do not use /usr/local/bin/llama-server:
+      a stale copy there links these libs and aborts (issue #33).
     * MTP (--spec-type draft-mtp) works on this card but measured only ~+9%
       (43.0 -> 46.7 tok/s) and requires --parallel 1, which costs the barge-in
       slot. Not enabled. See docs/adr/0004-pascal-build-constraints.md.

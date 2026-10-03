@@ -80,12 +80,18 @@ CACHE_TYPE_V="${LLAMA_CACHE_TYPE_V:-q4_0}"
 # trims are rare.
 CACHE_REUSE="${LLAMA_CACHE_REUSE:-256}"
 
+# Run the binary from the pinned build (scripts/build_llama.sh), never a bare
+# PATH lookup: /usr/local/bin/llama-server was a stale April install that
+# resolved the July build's shared libs and aborted on startup
+# (GGML_ASSERT(params.n_gpu_layers < 0)) from 2026-09-01 until this fix.
+LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-${LLAMA_DIR:-$HOME/dev/llama.cpp}/build-cuda/bin/llama-server}"
+
 MMPROJ_ARGS=()
 if [ -f "$MMPROJ_PATH" ]; then
     MMPROJ_ARGS=(--mmproj "$MMPROJ_PATH")
 fi
 
-exec llama-server \
+exec "$LLAMA_SERVER_BIN" \
     --jinja \
     --model "$MODEL_PATH" \
     "${MMPROJ_ARGS[@]}" \

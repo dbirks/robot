@@ -25,8 +25,11 @@ models:
     context: 8-16k, quantized KV
     measured_vram: ~4.4 GB @ 8K (Q4_K_M baseline)
   stt:
-    id: nemo-parakeet-tdt-0.6b-v2   # v2 beats v3 on EN WER 6.05 vs 6.32 (ADR 0006)
-    runtime: onnx, fp32 (NEVER int8 on this CPU)
+    id: nvidia/parakeet-tdt-0.6b-v3
+    # v2 beats v3 on EN WER (6.05 vs 6.32, ADR 0006) but s2s v1.0.0 loads
+    # Parakeet via nano-parakeet, which hardcodes the v3 vocab (8193) - v2 dies
+    # with a decoder.embed size mismatch. Revisit when upstream supports v2.
+    runtime: s2s nano-parakeet (torch), CPU fp32 (NEVER int8 / fp16 on this box)
     measured: pending
   tts_production:
     id: kokoro                 # until the Phase 4 bakeoff says otherwise
