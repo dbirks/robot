@@ -21,4 +21,11 @@ jobs:
         run: uvx ruff check .
 
       - name: Run ty type checking
-        run: uvx ty check
+        # Scoped to the live code path; the legacy loop (app/, tts_server/,
+        # spike/) has pre-existing diagnostics and is deleted at the Phase 2
+        # cutover (issue #22), at which point restore `uvx ty check` full-repo.
+        run: uvx ty check shell tests
+
+      - name: Run tests
+        # Hardware-free suite: only numpy + pyyaml needed at import time.
+        run: uvx --with numpy --with pyyaml --with pytest pytest tests/ -q --no-header

@@ -135,6 +135,7 @@ def run_loop(
                         play_sentence_with_wobble(check_audio, tts.sample_rate, wobbler)
                     else:
                         from .playback import play_audio
+
                         play_audio(check_audio, tts.sample_rate)
                     continue
 
@@ -217,6 +218,7 @@ def run_loop(
                         play_sentence_with_wobble(tts_audio, tts.sample_rate, wobbler)
                     else:
                         from .playback import play_audio
+
                         play_audio(tts_audio, tts.sample_rate)
                 if first_sentence and movement:
                     movement.set_processing(False)

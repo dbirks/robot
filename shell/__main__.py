@@ -41,12 +41,14 @@ def load_robot_tools(journal):
     except Exception as e:  # missing robot SDK, etc.
         log.warning("robot tools unavailable: %r", e)
         return [], {}, None
+
+    class _DisconnectedRobot(RobotConnection):  # redefines __init__; no config needed
+        def __init__(self) -> None:
+            self.mini = None  # property 'connected' derives from this
+
+    robot = _DisconnectedRobot()
     handlers = {}
-    robot = None
     try:
-        robot = RobotConnection.__new__(RobotConnection)
-        robot.connected = False
-        robot.mini = None
         handlers = dict(make_handlers(robot))
     except Exception as e:
         log.warning("robot tool construction failed: %r", e)
@@ -73,6 +75,12 @@ async def amain() -> None:
         confidence_threshold=profile.tool_confidence,
     )
 
+    reaction = WakeReaction(speaker, journal, loop=asyncio.get_event_loop())
+
+    def on_speech_started() -> None:
+        lease.renew(None, "speech-start")
+        reaction.cancel()
+
     client = RealtimeClient(
         cfg.s2s_url,
         instructions=cfg.instructions,
@@ -80,18 +88,16 @@ async def amain() -> None:
         tool_router=router,
         speaker=speaker,
         journal=journal,
-        on_speech_started=lambda: (lease.renew(None, "speech-start"), reaction.cancel()),
+        on_speech_started=on_speech_started,
         on_transcript=lambda _text: lease.note_interaction(),
     )
-
-    reaction = WakeReaction(speaker, journal, loop=asyncio.get_event_loop())
 
     kws = None
     try:
         from .attention.kws import KeywordSpotter
 
         kws = KeywordSpotter(
-            str(cfg.models_dir_kws if hasattr(cfg, "models_dir_kws") else "models/kws"),
+            cfg.kws_model_dir,
             thresholds=profile.kws_thresholds,
             default_threshold=profile.kws_default_threshold,
         )

@@ -102,8 +102,7 @@ class AgentClient:
 
         self.messages = [system] + kept
         log.info(
-            "Trimmed conversation to %d messages (dropped %d orphaned tool results); "
-            "next turn pays a full re-prefill",
+            "Trimmed conversation to %d messages (dropped %d orphaned tool results); next turn pays a full re-prefill",
             len(self.messages),
             dropped_orphans,
         )

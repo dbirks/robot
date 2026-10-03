@@ -17,6 +17,9 @@ from __future__ import annotations
 import threading
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
+
+from ..journal import JournalLike
 
 PRIORITY = {"tts": 0, "ack": 1, "sound": 2}
 
@@ -34,8 +37,8 @@ class SpeakerOwner:
     rate: int = 16000
     block: int = 512
     device: str | int | None = None
-    journal: object | None = None
-    _stream: object = field(default=None, repr=False)
+    journal: JournalLike | None = None
+    _stream: Any = field(default=None, repr=False)
     _q: deque = field(default_factory=deque, repr=False)
     _cancelled: set = field(default_factory=set, repr=False)
     _generation: int = 0

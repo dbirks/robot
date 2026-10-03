@@ -4,110 +4,52 @@ This file provides context for AI coding agents (Claude Code, Copilot, Cursor, e
 
 ## What this project is
 
-A fully local voice-driven agent for the [Reachy Mini](https://www.reachy-mini.org/) desk robot. No cloud APIs — all inference runs on a single machine with an NVIDIA GPU.
+A fully local, realtime, voice-driven social agent for the [Reachy Mini](https://www.reachy-mini.org/) desk robot. No cloud inference — everything runs on a single machine with an NVIDIA GPU. The canonical spec for where this is heading is [`docs/epic-realtime-rebuild.md`](docs/epic-realtime-rebuild.md).
 
-## Stack
+## Two stacks coexist right now
+
+**New stack (`shell/`, the future — Phases 1+3 of the EPIC are on main):**
 
 | Layer | Component | Runs on |
 |-------|-----------|---------|
-| VAD | silero-vad | CPU |
-| STT | faster-whisper (small.en) | GPU preferred |
-| LLM | Qwen 3.5 4B GGUF via llama.cpp | GPU |
-| TTS | Piper (en_GB-northern_english_male) | CPU |
-| Agent | OpenAI-compatible client (designed to swap in [Hermes](https://github.com/NousResearch/hermes-agent)) | CPU |
-| Robot | Reachy Mini SDK v1.6+ | USB/network to robot |
+| VAD / turn detection / STT / TTS / cancellation | pinned `huggingface/speech-to-speech` realtime service (ADR 0001) | CPU + GPU (Parakeet + Kokoro) |
+| LLM | Qwen 3.5 4B GGUF via llama.cpp, reached by the service over responses-api | GPU |
+| Audio device ownership + attention + tools + journal | `python -m shell` | CPU |
+| Robot | Reachy Mini SDK 1.8.x via `reachy-mini-daemon` | USB/network |
+| Observability | FastAPI dashboard (port 3001) + SQLite event journal (ADR 0007) | CPU |
 
-## Architecture
+**Legacy loop (`app/`, being deleted at the Phase 2 cutover, issue #22):** synchronous turn-based cascade (`python -m app`): silero-vad → Parakeet STT → chat-completions LLM → Kokoro/Piper TTS. Do not add features there; port what survives into `shell/`.
 
-The system runs as separate processes:
+## Key architecture rules (read the ADRs)
 
-1. **`reachy-mini-daemon`** — robot hardware interface (or `--sim` for simulator)
-2. **`llama-server`** — LLM inference with OpenAI-compatible API (`--jinja` flag required for tool calling)
-3. **`python -m app`** — voice agent (STT + VAD + agent + TTS + audio I/O)
-
-The voice agent runs a synchronous conversation loop: listen → transcribe → agent reasoning + tool calls → TTS → play audio.
-
-## Key design decisions
-
-- **Tool calling uses OpenAI function-calling format.** Tool schemas are in `app/robot_tools.py` as a `TOOLS` list. Handlers are plain Python functions that return dicts. This format is compatible with both the direct OpenAI client and Hermes.
-- **llama.cpp must run with `--jinja`** or tool calling silently fails.
-- **The agent layer is intentionally thin.** `app/agent_client.py` is ~80 lines. It's designed to be replaced by Hermes once that integration is ready.
-- **Robot tools never raise exceptions.** They catch errors and return `{"ok": False, "error": "..."}`.
-- **No async in the main loop.** The conversation is inherently sequential (listen, think, speak). Threading is used only for audio capture.
+- One persistent mic owner and one speaker owner; everything else subscribes (ADR 0002). Never open an audio stream outside `shell/audio/`.
+- Ambient room speech must never enter LLM history; state-changing tools require attention confidence (ADR 0003, `shell/attention/`).
+- Cancellation = flush queued audio + refuse the cancelled generation; "finish the sentence anyway" is banned.
+- `llama.cpp` must run with `--jinja` or tool calling silently fails.
+- Robot tools never raise; handlers return JSON-serializable dicts (`shell/tools.py` wraps them, dedupes repeats, gates state changes).
+- Every service/model needs a revision + measured cost in `docs/pins.yaml` before it runs on the robot box (ADRs 0004-0006 record the measured Pascal/XVF3800/CPU traps — read them before tuning or bumping anything).
 
 ## Workflow
 
-- **Commit often.** Don't let large amounts of work accumulate uncommitted. Commit and push at natural breakpoints — after implementing a feature, fixing a bug, or completing a research-and-implement cycle.
+- **Commit often.** Commit and push at natural breakpoints.
+- **uv only.** `uv sync` to install, but note: sync pulls the cu126 torch pair — never bump those (ADR 0004).
+- Tests are hardware-free: `uv run pytest tests/`.
+- Lint/format/type gates live in `.github/workflows/lint.yml`; the `ty` check is scoped to `shell/ tests/` until the legacy loop is deleted at cutover.
 
-## Working with this codebase
+## Adding a new robot tool (new stack)
 
-### Package management
+1. Schema in `TOOLS` + handler via the legacy bridge for now (`app/robot_tools.py`); Phase 2 moves them natively into `shell/`
+2. Handler must return a JSON-serializable dict and never raise
+3. If it changes state, add it to `STATE_CHANGING` in `shell/tools.py` — it will require an attention lease
 
-Uses **uv** exclusively. Run `uv sync` to install deps, `uv run` to execute.
+## Running without a robot
 
-### Adding a new robot tool
-
-1. Add the OpenAI function schema to `TOOLS` in `app/robot_tools.py`
-2. Add a handler function inside `make_handlers()`
-3. The handler must return a JSON-serializable dict and never raise
-
-### Changing the LLM
-
-Edit `.env` to point `LLM_BASE_URL` and `LLM_MODEL` at a different OpenAI-compatible server. The agent client doesn't care what's behind the endpoint.
-
-### Running without a robot
-
-The agent starts even if the Reachy Mini isn't connected — robot tools will return `{"ok": False, "error": "Robot not connected"}`. You can test the voice loop and LLM independently.
-
-### Linting
-
-```bash
-uv run ruff check app/
-uv run ruff format app/
-```
+Both stacks start with no robot attached; tools return `{"ok": False, "error": "Robot not connected"}` and the audio owners fall back to system default devices.
 
 ## Target hardware
 
-- i7-6700K CPU (4C/8T, 4GHz Skylake)
-- NVIDIA GTX 1070 (8 GB VRAM, SM 6.1 Pascal)
-- Arch Linux
-- Reachy Mini (Lite or Wireless)
-
-**GTX 1070 limitations:** SM 6.1 means no bfloat16, no FlashAttention 2, no tensor cores. Latest PyTorch dropped support — use cu126 wheels or ONNX/llama.cpp (both work). CTranslate2 supports int8 and int8_float32 only (no float16).
-
-## VRAM budget
-
-| Component | VRAM |
-|-----------|------|
-| faster-whisper medium.en (int8) | ~1 GB |
-| Qwen 3.5 4B Q4_K_M (8K context) | ~4.4 GB |
-| CUDA overhead | ~0.3 GB |
-| **Total** | **~5.7 GB / 8 GB** |
-
-## Known hardware issues
-
-### XMOS XVF3800 microphone goes silent
-
-The Reachy Mini's XMOS XVF3800 mic array has a known firmware bug where the USB audio capture endpoint stops sending data (returns all zeros) while playback and DOA continue to work. This is documented in Pollen Robotics GitHub issues #845, #820, #389.
-
-**Prevention:** USB autosuspend is disabled via udev rule (`/etc/udev/rules.d/99-reachy-mini.rules`) with `ATTR{power/autosuspend}="-1"`.
-
-**Auto-recovery:** A watchdog thread (`app/mic_watchdog.py`) monitors mic RMS every 10 seconds. After 3 consecutive silent checks, it sends the XMOS `REBOOT` command via USB vendor control transfer, which restarts the chip's firmware. The mic recovers in ~8 seconds without physical USB replug.
-
-**Manual recovery:** If the watchdog fails, physically unplug and replug the Reachy Mini USB cable.
-
-## Future work
-
-- **Hermes integration** — replace `agent_client.py` with Hermes for persistent memory, session management, and self-improvement
-- **Attention model** — wake word or LLM-based filtering so the robot knows when it's being spoken to
-- **Vision pipeline** — camera snapshots routed to a vision model for scene description
-- **Face tracking** — follow people with head movement, local face embeddings for recognition
-- **Emotion library** — re-integrate `reachy-mini-dances-library` for expressive gestures
+i7-6700K (4C/8T Skylake), GTX 1070 8 GB (sm_61 Pascal — no bf16, no FA2, no tensor cores, cu126 is the last torch line), Arch Linux, Reachy Mini with XMOS XVF3800 linear 4-mic array. The machine has hard, measured constraints — see ADRs 0004 (builds), 0005 (mic/watchdog), 0006 (CPU/latency budgets) before adding any model or thread.
 
 ## Issue tracking
 
-GitHub Issues is the issue tracker. The canonical work spec is
-[`docs/epic-realtime-rebuild.md`](docs/epic-realtime-rebuild.md); durable decisions
-live in [`docs/adr/`](docs/adr/) and experiment results in [`experiments/`](experiments/).
-Hardware traps (Pascal sm_61, XVF3800, CPU budgets) are recorded in ADRs 0004-0006 -
-read them before tuning anything.
+GitHub Issues is the issue tracker. The canonical work spec is [`docs/epic-realtime-rebuild.md`](docs/epic-realtime-rebuild.md) (EPIC issue #20, phases #21-#28; #24-#28 are gated on maintainer sign-off). Durable decisions live in [`docs/adr/`](docs/adr/), experiment results in [`experiments/`](experiments/).

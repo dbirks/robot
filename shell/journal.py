@@ -13,6 +13,14 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+from typing import Protocol
+
+
+class JournalLike(Protocol):
+    """Anything that can accept typed events (Journal, test fakes)."""
+
+    def write(self, type_: str, **payload: object) -> None: ...
+
 
 # Event type vocabulary (superset grows, never renames - ADR 0007).
 AUDIO_SPEECH_STARTED = "audio.speech_started"

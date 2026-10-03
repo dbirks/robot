@@ -36,7 +36,11 @@ class MicWatchdog:
         self._stop.clear()
         self._thread = threading.Thread(target=self._watch_loop, name="mic-watchdog", daemon=True)
         self._thread.start()
-        log.info("MicWatchdog started (check every %.0fs, recover after %d silent checks)", CHECK_INTERVAL, CONSECUTIVE_FAILURES)
+        log.info(
+            "MicWatchdog started (check every %.0fs, recover after %d silent checks)",
+            CHECK_INTERVAL,
+            CONSECUTIVE_FAILURES,
+        )
 
     def stop(self):
         self._stop.set()

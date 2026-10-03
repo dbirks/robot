@@ -1,13 +1,16 @@
 .env
 .venv
 __pycache__
+.pytest_cache/
+.ruff_cache/
 models/
 logs/
 data/
+test-results/
 *.wav
 *.mp3
 
-# Beads / Dolt files (added by bd init)
-.dolt/
+# local caches / leftovers
 *.db
+.dolt/
 .beads-credential-key

@@ -9,6 +9,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+load_dotenv()
+
 DEFAULT_INSTRUCTIONS = (
     "You are Reachy, a small desk robot. Reply in one or two short spoken "
     "sentences. Never use markdown or lists. Be concise, warm, understated, "
@@ -35,6 +37,7 @@ class ShellConfig:
 
     # Paths
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "data")))
+    kws_model_dir: str = field(default_factory=lambda: os.getenv("KWS_MODEL_DIR", "models/kws"))
 
     @property
     def journal_path(self) -> Path:

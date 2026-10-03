@@ -1,7 +1,8 @@
 """Minimal OpenAI-Realtime WebSocket client for huggingface/speech-to-speech.
 
-Spike for robot-dz9. Proves the realtime path end-to-end before we commit to
-rewriting the voice loop.
+Spike for the realtime transport (beads-era id robot-dz9; record:
+experiments/2026-07-28-realtime-spike/). Proves the realtime path
+end-to-end before we commit to rewriting the voice loop.
 
 The architectural point of this file: ONE persistent input stream and ONE
 persistent output stream, opened at startup and never reopened. The current
@@ -34,8 +35,8 @@ import sounddevice as sd
 import websockets
 
 WS_URL = "ws://127.0.0.1:8765/v1/realtime"
-RATE = 16000          # s2s PIPELINE_SAMPLE_RATE, both directions
-BLOCK = 512           # 32ms at 16k
+RATE = 16000  # s2s PIPELINE_SAMPLE_RATE, both directions
+BLOCK = 512  # 32ms at 16k
 CHANNELS = 1
 
 T0 = time.monotonic()
@@ -71,11 +72,7 @@ class Metrics:
 
     def report(self):
         def deltas(a, b):
-            return [
-                (t[b] - t[a]) * 1000
-                for t in self.turns
-                if a in t and b in t and t[b] >= t[a]
-            ]
+            return [(t[b] - t[a]) * 1000 for t in self.turns if a in t and b in t and t[b] >= t[a]]
 
         print(f"\n{'=' * 62}\nMETRICS over {len(self.turns)} turns")
         print(f"barge-ins: {self.barge_ins}   cancelled responses: {self.cancelled}")
@@ -89,8 +86,7 @@ class Metrics:
             ds = deltas(a, b)
             if ds:
                 print(
-                    f"  {label:36s} n={len(ds):3d}  "
-                    f"p50={self._pct(ds, 0.5):7.0f}ms  p95={self._pct(ds, 0.95):7.0f}ms"
+                    f"  {label:36s} n={len(ds):3d}  p50={self._pct(ds, 0.5):7.0f}ms  p95={self._pct(ds, 0.95):7.0f}ms"
                 )
             else:
                 print(f"  {label:36s} (no samples)")
@@ -103,7 +99,7 @@ class Audio:
     def __init__(self, metrics: Metrics):
         self.metrics = metrics
         self.mic_q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
-        self.play_buf = deque()      # of np.int16 arrays
+        self.play_buf = deque()  # of np.int16 arrays
         self.playing = False
         self._loop = asyncio.get_event_loop()
         self.n_cb = 0
@@ -112,12 +108,18 @@ class Audio:
         self._lock = __import__("threading").Lock()
 
         self.in_stream = sd.InputStream(
-            samplerate=RATE, channels=CHANNELS, dtype="int16",
-            blocksize=BLOCK, callback=self._on_mic,
+            samplerate=RATE,
+            channels=CHANNELS,
+            dtype="int16",
+            blocksize=BLOCK,
+            callback=self._on_mic,
         )
         self.out_stream = sd.OutputStream(
-            samplerate=RATE, channels=CHANNELS, dtype="int16",
-            blocksize=BLOCK, callback=self._on_speaker,
+            samplerate=RATE,
+            channels=CHANNELS,
+            dtype="int16",
+            blocksize=BLOCK,
+            callback=self._on_speaker,
         )
 
     def start(self):
@@ -140,9 +142,7 @@ class Audio:
         self.rms_recent = r
         self.rms_peak = max(getattr(self, "rms_peak", 0.0), r)
         try:
-            self._loop.call_soon_threadsafe(
-                self.mic_q.put_nowait, bytes(indata[:, 0].tobytes())
-            )
+            self._loop.call_soon_threadsafe(self.mic_q.put_nowait, bytes(indata[:, 0].tobytes()))
             self.n_sched += 1
         except Exception as e:
             self.cb_err = repr(e)
@@ -155,7 +155,7 @@ class Audio:
             while need > 0 and self.play_buf:
                 chunk = self.play_buf[0]
                 take = min(need, len(chunk))
-                outdata[pos:pos + take, 0] = chunk[:take]
+                outdata[pos : pos + take, 0] = chunk[:take]
                 if take == len(chunk):
                     self.play_buf.popleft()
                 else:
@@ -183,10 +183,14 @@ async def sender(ws, audio: Audio):
     while True:
         pcm = await audio.mic_q.get()
         audio.n_sent += 1
-        await ws.send(json.dumps({
-            "type": "input_audio_buffer.append",
-            "audio": base64.b64encode(pcm).decode("ascii"),
-        }))
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(pcm).decode("ascii"),
+                }
+            )
+        )
 
 
 async def receiver(ws, audio: Audio, m: Metrics):
@@ -258,16 +262,20 @@ async def main():
         # RealtimeSessionCreateRequest model, and a malformed sub-object is
         # rejected wholesale as "Unknown or invalid event". We omit the audio
         # config entirely because the server default already matches RATE.
-        await ws.send(json.dumps({
-            "type": "session.update",
-            "session": {
-                "type": "realtime",
-                "instructions": (
-                    "You are Reachy, a small desk robot. Reply in one or two short "
-                    "spoken sentences. Never use markdown or lists."
-                ),
-            },
-        }))
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "session.update",
+                    "session": {
+                        "type": "realtime",
+                        "instructions": (
+                            "You are Reachy, a small desk robot. Reply in one or two short "
+                            "spoken sentences. Never use markdown or lists."
+                        ),
+                    },
+                }
+            )
+        )
         # NOTE: s2s never echoes session.updated -- do not await confirmation.
 
         m = Metrics()
@@ -283,9 +291,11 @@ async def main():
                 bar = "#" * min(40, int(r * 600))
                 print(f"{ts()}  mic |{bar:<40}| rms={r:.4f} peak={pk:.4f}")
 
-        tasks = [asyncio.create_task(sender(ws, audio), name="sender"),
-                 asyncio.create_task(receiver(ws, audio, m), name="receiver"),
-                 asyncio.create_task(meter(), name="meter")]
+        tasks = [
+            asyncio.create_task(sender(ws, audio), name="sender"),
+            asyncio.create_task(receiver(ws, audio, m), name="receiver"),
+            asyncio.create_task(meter(), name="meter"),
+        ]
         try:
             if args.seconds:
                 done, _ = await asyncio.wait(tasks, timeout=args.seconds)
@@ -303,9 +313,11 @@ async def main():
             for t in tasks:
                 t.cancel()
             audio.stop()
-            print(f"DEBUG mic_cb={audio.n_cb} sched={audio.n_sched} "
-                  f"sent={getattr(audio,'n_sent',0)} qsize={audio.mic_q.qsize()} "
-                  f"cb_err={audio.cb_err}")
+            print(
+                f"DEBUG mic_cb={audio.n_cb} sched={audio.n_sched} "
+                f"sent={getattr(audio, 'n_sent', 0)} qsize={audio.mic_q.qsize()} "
+                f"cb_err={audio.cb_err}"
+            )
             m.report()
 
 

@@ -61,8 +61,8 @@ cat <<'NOTE'
 ==> Reminders
     * run_llama_server.sh expects this build on PATH, e.g.
           PATH="$BUILD_DIR/bin:$PATH" ./scripts/run_llama_server.sh
-      /usr/local/bin/llama-server is a separate, root-owned install (robot-wh0).
+      /usr/local/bin/llama-server is a separate, root-owned install (issue #33).
     * MTP (--spec-type draft-mtp) works on this card but measured only ~+9%
       (43.0 -> 46.7 tok/s) and requires --parallel 1, which costs the barge-in
-      slot. Not enabled. See robot-gsg.
+      slot. Not enabled. See docs/adr/0004-pascal-build-constraints.md.
 NOTE

@@ -21,5 +21,36 @@
 
   timezone: "America/New_York",
 
+  // Hardware-verified pins. Merging these blindly bricks the GTX 1070 path or
+  // the robot integration - see docs/adr/0004 before touching any of them.
+  packageRules: [
+    {
+      matchPackageNames: ["torch", "torchaudio"],
+      enabled: false,
+      // sm_61 Pascal: cu126 is the last wheel line containing sm_61, frozen
+      // at 2.11.0 with a matched torchaudio pair. cu128/CUDA13 dropped the
+      // arch while still claiming cuda-available. ADR 0004.
+    },
+    {
+      matchPackageNames: ["reachy-mini"],
+      allowedVersions: "<1.9",
+      // 1.9+ changes daemon/BLE API and tightens CORS; revisit deliberately
+      // after the Phase 2 cutover (issue #22), never via an auto-merge.
+    },
+    {
+      matchPackageNames: [
+        "numpy",
+        "opencv-contrib-python",
+        "insightface",
+        "sentence-transformers",
+        "huggingface-hub",
+        "onnxruntime",
+        "onnx-asr",
+        "kokoro",
+      ],
+      description: "Model-stack packages: ABI/behavior coupled to each other and to the face/kokoro/STT models. Any bump must be verified on the robot machine (issue #21 box) before merge.",
+    },
+  ],
+
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
 }

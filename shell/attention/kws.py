@@ -30,7 +30,7 @@ class KeywordSpotter:
         default_threshold: float = 0.30,
         sample_rate: int = 16000,
     ) -> None:
-        import sherpa_onnx  # lazy: optional extra
+        import sherpa_onnx  # noqa: F401 # ty: ignore[unresolved-import] lazy: optional extra
 
         self.default_threshold = default_threshold
         self.thresholds = thresholds or {}

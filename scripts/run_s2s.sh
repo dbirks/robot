@@ -15,10 +15,13 @@ export OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://localhost:8080/v1}"
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
 export HF_HOME="${HF_HOME:-$DIR/hf-cache}"
 
+# Model bakeoffs (issues #24/#25) are flag swaps here - override, don't fork:
+#   S2S_TTS=qwen3_tts scripts/run_s2s.sh   # candidate production voice (watch VRAM!)
+#   S2S_STT=nemo_asr  scripts/run_s2s.sh   # streaming STT candidate
 exec "$DIR/repo/.venv/bin/python" -m speech_to_speech.s2s_service \
   --mode realtime \
-  --stt parakeet-tdt \
-  --tts kokoro \
+  --stt "${S2S_STT:-parakeet-tdt}" \
+  --tts "${S2S_TTS:-kokoro}" \
   --llm_backend responses-api \
   --listenport "${S2S_PORT:-8765}"
 # Phase 1 gate TODO (experiments/2026-07-28-realtime-spike): measure CPU with

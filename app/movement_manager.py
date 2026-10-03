@@ -499,11 +499,16 @@ class MovementManager:
                     self._gaze_avert_active = True
                     self._gaze_avert_end = now + random.uniform(GAZE_AWAY_MIN, GAZE_AWAY_MAX)
                     direction = random.choice([-1.0, 1.0])
-                    self._gaze_avert_offset = np.array([
-                        0, 0, 0, 0,
-                        GAZE_AWAY_PITCH * random.uniform(0.5, 1.0),
-                        GAZE_AWAY_YAW * direction * random.uniform(0.6, 1.0),
-                    ])
+                    self._gaze_avert_offset = np.array(
+                        [
+                            0,
+                            0,
+                            0,
+                            0,
+                            GAZE_AWAY_PITCH * random.uniform(0.5, 1.0),
+                            GAZE_AWAY_YAW * direction * random.uniform(0.6, 1.0),
+                        ]
+                    )
                 elif self._gaze_avert_active and now >= self._gaze_avert_end:
                     self._gaze_avert_active = False
                     self._gaze_next_avert = now + random.uniform(GAZE_HOLD_MIN, GAZE_HOLD_MAX)
@@ -519,13 +524,9 @@ class MovementManager:
 
             # Thinking gaze aversion (deliberate look-away + subtle micro-drift)
             if processing:
-                self._thinking_avert_progress = min(
-                    1.0, self._thinking_avert_progress + dt / THINKING_AVERT_DURATION
-                )
+                self._thinking_avert_progress = min(1.0, self._thinking_avert_progress + dt / THINKING_AVERT_DURATION)
             elif self._thinking_avert_progress > 0:
-                self._thinking_avert_progress = max(
-                    0.0, self._thinking_avert_progress - dt / THINKING_RETURN_DURATION
-                )
+                self._thinking_avert_progress = max(0.0, self._thinking_avert_progress - dt / THINKING_RETURN_DURATION)
 
             if self._thinking_avert_progress > 0:
                 avert_t = _minimum_jerk(self._thinking_avert_progress)
@@ -537,7 +538,9 @@ class MovementManager:
 
                 micro_blend = max(0.0, (avert_t - 0.7) / 0.3)
                 micro_yaw = micro_blend * THINKING_MICRO_YAW_AMP * math.sin(2 * math.pi * THINKING_MICRO_YAW_FREQ * t)
-                micro_pitch = micro_blend * THINKING_MICRO_PITCH_AMP * math.sin(2 * math.pi * THINKING_MICRO_PITCH_FREQ * t)
+                micro_pitch = (
+                    micro_blend * THINKING_MICRO_PITCH_AMP * math.sin(2 * math.pi * THINKING_MICRO_PITCH_FREQ * t)
+                )
 
                 total_offsets[4] += avert_pitch + micro_pitch
                 total_offsets[5] += avert_yaw + micro_yaw
@@ -630,7 +633,7 @@ class MovementManager:
             # --- Issue command ---
             # Body yaw from animation (if any)
             target_body_yaw = 0.0
-            if anim_weight > 0.0 and hasattr(self, '_animation_body_yaw') and self._animation_body_yaw is not None:
+            if anim_weight > 0.0 and hasattr(self, "_animation_body_yaw") and self._animation_body_yaw is not None:
                 target_body_yaw = anim_weight * self._animation_body_yaw
             body_alpha = 0.1
             current_body_yaw = body_alpha * target_body_yaw + (1 - body_alpha) * current_body_yaw

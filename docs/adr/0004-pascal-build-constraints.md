@@ -24,9 +24,10 @@ build flags, and measured fit (see docs/pins.yaml).
 - **llama.cpp**: build with `-DCMAKE_CUDA_ARCHITECTURES=61` and
   `-DGGML_CUDA_F16=OFF` — GP104 runs fp16 at 1/64 of fp32 rate, so F16 math must stay
   off. FA and Q4 kernels work on sm_61, just without tensor cores. No bfloat16, no
-  FlashAttention 2. MTP speculative decoding (~1.7x, draft-mtp) landed upstream
-  2026-05-16 (PR #22673) but requires n_parallel=1 and a Pascal BF16 fallback patch
-  of uncertain merge status — verify before relying on it.
+  FlashAttention 2. MTP speculative decoding was measured HERE, not upstream
+  marketing: draft-mtp works on this card but is only +9% (43.0 -> 46.7 tok/s)
+  and requires --parallel 1, which costs the barge-in slot. Not enabled;
+  scripts/build_llama.sh records the run.
 - **mmproj dtype**: never load a BF16 vision projector on this card — Pascal lacks
   BF16, it costs ~675 MB of VRAM to emulate, and llama.cpp reports unimplemented CUDA
   ops for it. Use F16.

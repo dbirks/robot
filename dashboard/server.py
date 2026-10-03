@@ -290,7 +290,7 @@ def format_tool_result(value: str) -> str:
                     v_str = json.dumps(v, indent=2)
                     v_html = f'<pre class="text-xs whitespace-pre-wrap break-all">{_html_escape(v_str)}</pre>'
                 else:
-                    v_html = f'<span>{_html_escape(str(v))}</span>'
+                    v_html = f"<span>{_html_escape(str(v))}</span>"
                 rows.append(f'<div class="flex gap-2">{key_html}{v_html}</div>')
             return "\n".join(rows)
     except (json.JSONDecodeError, TypeError):
