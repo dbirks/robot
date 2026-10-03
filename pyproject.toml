@@ -31,16 +31,20 @@ dependencies = [
     "huggingface-hub>=1.3.0",
     "ddgs>=9.14.1",
     "onnx-asr[cpu,hub]>=0.11.0",
+    "websockets>=12.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 sim = ["reachy-mini[mujoco]"]
 dances = ["reachy-mini-dances-library>=0.2.0"]
+kws = ["sherpa-onnx>=1.10.0"]
 
 [dependency-groups]
 dev = [
     "ruff>=0.14.0",
     "ty>=0.0.1a25",
+    "pytest>=8.0",
 ]
 
 # The GTX 1070 is Pascal (sm_61). cu128 and later dropped sm_61 entirely, and
@@ -63,3 +67,7 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
