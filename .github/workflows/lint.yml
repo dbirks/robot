@@ -24,7 +24,12 @@ jobs:
         # Scoped to the live code path; the legacy loop (app/, tts_server/,
         # spike/) has pre-existing diagnostics and is deleted at the Phase 2
         # cutover (issue #22), at which point restore `uvx ty check` full-repo.
-        run: uvx ty check shell tests
+        # A minimal env gives ty something to resolve imports against
+        # without syncing the multi-GB torch stack.
+        run: |
+          uv venv .venv-typedeps
+          VIRTUAL_ENV=.venv-typedeps uv pip install numpy pyyaml websockets python-dotenv sounddevice soundfile pytest
+          uvx ty check --python .venv-typedeps/bin/python shell tests
 
       - name: Run tests
         # Hardware-free suite: only numpy + pyyaml needed at import time.
