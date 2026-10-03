@@ -111,7 +111,10 @@ class SpeakerOwner:
 
     # ---- internal ----
 
-    def _next_chunk_locked(self):
+    def _pop_next_locked(self) -> _Chunk | None:
+        """Remove and return the highest-priority chunk (FIFO within a
+        priority). A partially played chunk sits at the front of the queue,
+        so it is resumed before anything else of its priority."""
         best_i, best_prio = None, -1
         for i, c in enumerate(self._q):
             p = PRIORITY.get(c.channel, 0)
@@ -119,7 +122,9 @@ class SpeakerOwner:
                 best_i, best_prio = i, p
         if best_i is None:
             return None
-        return self._q[best_i] if self._q[best_i].pos == 0 else self._q[best_i]
+        chunk = self._q[best_i]
+        del self._q[best_i]
+        return chunk
 
     def _callback(self, outdata, frames, time_info, status) -> None:
         import numpy as np
@@ -127,21 +132,23 @@ class SpeakerOwner:
         outdata[:] = 0
         written = 0
         with self._lock:
+            # Every chunk is popped before use and only an unfinished one is
+            # pushed back, so the queue never holds duplicates or exhausted
+            # chunks. (It used to: a resumed chunk stayed queued AND was
+            # re-added, then an exhausted copy made this loop spin forever
+            # holding the lock, freezing the event loop on the next enqueue.)
             while written < frames:
-                chunk = self._next_chunk_locked()
+                chunk = self._pop_next_locked()
                 if chunk is None:
                     break
-                if chunk.pos == 0:
-                    # pop it out of the queue; we own it now
-                    self._q.remove(chunk)
                 arr = chunk.samples[0]
                 take = min(frames - written, len(arr) - chunk.pos)
-                outdata[written : written + take, 0] = arr[chunk.pos : chunk.pos + take]
-                written += take
-                chunk.pos += take
+                if take > 0:
+                    outdata[written : written + take, 0] = arr[chunk.pos : chunk.pos + take]
+                    written += take
+                    chunk.pos += take
                 if chunk.pos < len(arr):
-                    # put the remainder back at the front position
-                    self._q.appendleft(chunk)
+                    self._q.appendleft(chunk)  # resume here next callback
                     break
             self.playing = bool(self._q) or written > 0
         if written:

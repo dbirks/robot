@@ -50,7 +50,7 @@ class RealtimeClient:
     ) -> None:
         self.url = url
         self.instructions = instructions
-        self.tools = tools
+        self.tools = [_realtime_tool(t) for t in tools]
         self.router = tool_router
         self.speaker = speaker
         self.journal = journal
@@ -64,6 +64,7 @@ class RealtimeClient:
         self._resp_gen: dict[str, int] = {}  # response_id -> speaker generation
         self.connected = False
         self._cur: dict[str, float] = {}  # per-turn latency marks
+        self._first_audio: set[str] = set()  # response ids already marked
 
     # ---- ingestion (thread-safe: called from the mic callback) ----
 
@@ -199,15 +200,16 @@ class RealtimeClient:
         elif t == "response.created":
             rid = (ev.get("response") or {}).get("id", "")
             self._resp_gen[rid] = self.speaker.begin_generation()
+            self._first_audio.clear()  # one response in flight at a time
             self.journal.write(J.RESPONSE_CREATED, response_id=rid)
 
         elif t == "response.output_audio.delta":
             rid = ev.get("response_id", "")
             gen = self._resp_gen.get(rid, self.speaker.generation)
             pcm = np.frombuffer(base64.b64decode(ev["delta"]), dtype=np.int16)
-            if self.speaker.enqueue(gen, "tts", pcm):
+            if self.speaker.enqueue(gen, "tts", pcm) and rid not in self._first_audio:
+                self._first_audio.add(rid)  # only mark the FIRST delta
                 self.journal.write(J.RESPONSE_FIRST_AUDIO, response_id=rid)
-                self._resp_gen.pop(rid, None)  # only mark the FIRST delta
 
         elif t == "response.function_call_arguments.done":
             await self._handle_function_call(ev)
@@ -253,3 +255,14 @@ class RealtimeClient:
         )
         if follow_up:
             await self._ws.send(json.dumps({"type": "response.create"}))
+
+
+def _realtime_tool(tool: dict) -> dict:
+    """Realtime sessions take FLAT function tools ({type, name, description,
+    parameters}); our TOOLS are Chat-Completions shaped ({type, function:
+    {...}}). Sent nested, s2s wraps them again and llama.cpp 500s with
+    "Failed to parse tools: key 'name' not found" on every turn."""
+    fn = tool.get("function")
+    if tool.get("type") == "function" and isinstance(fn, dict):
+        return {"type": "function", **fn}
+    return tool

@@ -79,3 +79,28 @@ def test_bad_subscriber_does_not_kill_capture(mic):
     assert len(good) == 2
     assert mic.blocks_dropped == 2
     assert "audio.subscriber_error" in mic.journal.types()
+
+
+def test_chunk_longer_than_block_plays_once_and_never_spins(speaker):
+    # Regression: a multi-block chunk used to be duplicated on resume, and an
+    # exhausted duplicate made the callback loop forever holding the lock.
+    gen = speaker.begin_generation()
+    speech = np.arange(speaker.block * 3 + 100, dtype=np.int16)
+    speaker.enqueue(gen, "tts", speech)
+    out = pump_speaker(speaker, n=6)
+    assert speaker.pending() == 0
+    assert out is not None
+    assert speaker.enqueue(gen, "tts", speech)  # lock is free, queue usable
+
+
+def test_resumed_chunk_audio_is_contiguous(speaker):
+    gen = speaker.begin_generation()
+    speech = np.arange(speaker.block * 2 + 7, dtype=np.int16)
+    speaker.enqueue(gen, "tts", speech)
+    played = []
+    for _ in range(4):
+        buf = np.zeros((speaker.block, 1), dtype=np.int16)
+        speaker._callback(buf, speaker.block, None, None)
+        played.append(buf[:, 0].copy())
+    got = np.concatenate(played)[: len(speech)]
+    assert np.array_equal(got, speech)

@@ -130,3 +130,28 @@ def test_cancelled_response_journaled_with_reason(journal, speaker):
     )
     ev = journal.find("response.cancelled")[0]
     assert ev["reason"] == "turn_detected"
+
+
+def test_tools_sent_flat_for_realtime():
+    from shell.realtime.client import _realtime_tool
+
+    nested = {"type": "function", "function": {"name": "look_left", "description": "d", "parameters": {}}}
+    assert _realtime_tool(nested) == {"type": "function", "name": "look_left", "description": "d", "parameters": {}}
+    flat = {"type": "function", "name": "x", "parameters": {}}
+    assert _realtime_tool(flat) == flat
+
+
+def test_first_audio_journaled_once_per_response(journal, speaker):
+    import asyncio
+    import base64
+
+    c = make_client(journal, speaker)
+    delta = base64.b64encode(np.zeros(160, dtype=np.int16).tobytes()).decode()
+
+    async def go():
+        await c.handle_event({"type": "response.created", "response": {"id": "r1"}})
+        for _ in range(5):
+            await c.handle_event({"type": "response.output_audio.delta", "response_id": "r1", "delta": delta})
+
+    asyncio.run(go())
+    assert journal.types().count("response.first_audio") == 1
