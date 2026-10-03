@@ -36,3 +36,14 @@ def test_retention_bounds_rows(tmp_path: Path):
     assert len(rows) <= 50 + 512  # prune is amortized over 512 writes
     assert rows[-1]["payload"]["i"] == 699
     j.closed()
+
+
+def test_writes_visible_to_other_connections_immediately(tmp_path):
+    import sqlite3
+
+    from shell.journal import Journal
+
+    j = Journal(tmp_path / "events.db")
+    j.write("audio.health", rms=1.0)
+    other = sqlite3.connect(str(tmp_path / "events.db"))
+    assert other.execute("SELECT type FROM events").fetchall() == [("audio.health",)]

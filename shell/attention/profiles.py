@@ -20,7 +20,11 @@ class AttentionProfile:
     # Keyword spotting: per-keyword score threshold (higher = requires more
     # confidence before firing). Per-keyword boosts override the default.
     kws_default_threshold: float = 0.30
-    kws_thresholds: dict = field(default_factory=dict)
+    # "Reachy" is out-of-vocabulary for the BPE KWS model and scores lower
+    # than real words: measured on synthesized "Hey Reachy" it fires at <=0.25
+    # and misses at 0.30, with no false hits on a negative sentence. Re-measure
+    # on real room audio before raising (and per profile for noisy rooms).
+    kws_thresholds: dict = field(default_factory=lambda: {"Reachy": 0.25, "hey Reachy": 0.25})
 
     # Attention lease, seconds. Renewed on evidence; a single hard timer is
     # explicitly NOT how this works (ADR 0003) - these are its bounds.

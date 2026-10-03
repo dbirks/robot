@@ -37,11 +37,11 @@ models:
     measured_vram: ~904 MiB + 250 MB ctx
     measured_rtf: 0.038-0.044
   kws:
-    # Open-vocabulary KWS needs a transducer whose token set fits English
-    # ("Reachy"/"robot" via phonemes). Candidate model selection is an
-    # experiment, tracked in issue #23 - do not guess a URL here.
-    id: TBD sherpa-onnx open-vocabulary model (see issue #23)
-    measured: pending Phase 3 setup Phase 3
+    id: sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01
+    sha256: f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a   # tar.bz2
+    install: scripts/get_kws_model.sh -> models/kws (fp32 onnx, 1 thread)
+    runtime: sherpa-onnx 1.13.8 + sherpa-onnx-core 1.13.8 (lockstep)
+    measured: "Reachy" fires at threshold <=0.25 (synth speech); real-room tuning pending (issue #23)
 
 runtime:
   python: ">=3.12"

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Protocol
@@ -88,25 +89,35 @@ class Journal:
         self._db.commit()
         self._t0 = time.monotonic()
         self._n_since_prune = 0
+        # Written from the asyncio loop AND audio callback threads; one
+        # connection, so serialize. Each write commits on its own: readers
+        # (dashboard, sqlite3 CLI) must see events live, and an uncommitted
+        # batch is lost on restart. WAL + synchronous=NORMAL keeps this cheap.
+        self._lock = threading.Lock()
 
     def write(self, type_: str, **payload) -> None:
         try:
-            self._db.execute(
-                "INSERT INTO events(mono, wall, type, payload) VALUES(?,?,?,?)",
-                (
-                    time.monotonic() - self._t0,
-                    time.time(),
-                    type_,
-                    json.dumps(payload, default=str),
-                ),
-            )
-            self._n_since_prune += 1
-            if self._n_since_prune >= 512:
-                self._n_since_prune = 0
-                self._prune()
+            with self._lock:
+                self._write(type_, payload)
         except Exception as e:  # telemetry must never break conversation
             self.dropped += 1
             print(f"journal: dropped {type_}: {e}", file=sys.stderr)
+
+    def _write(self, type_: str, payload: dict) -> None:
+        self._db.execute(
+            "INSERT INTO events(mono, wall, type, payload) VALUES(?,?,?,?)",
+            (
+                time.monotonic() - self._t0,
+                time.time(),
+                type_,
+                json.dumps(payload, default=str),
+            ),
+        )
+        self._db.commit()
+        self._n_since_prune += 1
+        if self._n_since_prune >= 512:
+            self._n_since_prune = 0
+            self._prune()
 
     def _prune(self) -> None:
         try:
@@ -126,7 +137,8 @@ class Journal:
             q += " WHERE type=?"
             args = (type_,)
         q += " ORDER BY id DESC LIMIT ?"
-        rows = self._db.execute(q, args + (limit,)).fetchall()
+        with self._lock:
+            rows = self._db.execute(q, args + (limit,)).fetchall()
         return [{"mono": m, "type": t, "payload": json.loads(p)} for m, t, p in reversed(rows)]
 
     def closed(self) -> None:

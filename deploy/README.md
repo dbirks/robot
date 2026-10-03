@@ -26,5 +26,7 @@ away and teach the dashboard about these names.
 
 ```bash
 scripts/install_s2s.sh        # clones + pins the service in ~/.local/share/reachy
-uv sync --extra kws           # KWS model download is tracked in issue #23 (not yet pinned)
+uv sync --extra kws
+scripts/get_kws_model.sh      # wake-word model + tokenized keywords into models/kws
+HF_HUB_OFFLINE=0 scripts/run_s2s.sh   # once, to download Parakeet/Kokoro; Ctrl-C when "Uvicorn running"
 ```

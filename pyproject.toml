@@ -38,7 +38,9 @@ dependencies = [
 [project.optional-dependencies]
 sim = ["reachy-mini[mujoco]"]
 dances = ["reachy-mini-dances-library>=0.2.0"]
-kws = ["sherpa-onnx>=1.10.0"]
+# sherpa-onnx declares its -core dep dynamically, so uv lock misses it and
+# the import dies on libonnxruntime.so. Pin both, in lockstep.
+kws = ["sherpa-onnx==1.13.8", "sherpa-onnx-core==1.13.8"]
 
 [dependency-groups]
 dev = [
