@@ -28,5 +28,6 @@ away and teach the dashboard about these names.
 scripts/install_s2s.sh        # clones + pins the service in ~/.local/share/reachy
 uv sync --extra kws
 scripts/get_kws_model.sh      # wake-word model + tokenized keywords into models/kws
+scripts/build_qwentts.sh      # only for S2S_TTS=qwen3: Pascal build of the Qwen3-TTS engine
 HF_HUB_OFFLINE=0 scripts/run_s2s.sh   # once, to download Parakeet/Kokoro; Ctrl-C when "Uvicorn running"
 ```

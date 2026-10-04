@@ -29,6 +29,25 @@ export HF_HOME="${HF_HOME:-$DIR/hf-cache}"
 # Parakeet: v3 (upstream nano-parakeet hardcodes the v3 vocab; v2 fails to
 # load with a decoder.embed size mismatch), fp32 on CPU - fp16 runs at 1/64 rate on GP104
 # and fp32-on-GPU does not fit beside llama.cpp + Kokoro (ADR 0004).
+TTS="${S2S_TTS:-kokoro}"
+case "$TTS" in
+  kokoro)
+    VOICE="${KOKORO_VOICE:-bm_daniel}"
+    # Kokoro voices are <lang><gender>_<name>; lang 'a' American, 'b' British.
+    TTS_ARGS=(--kokoro_device "${S2S_KOKORO_DEVICE:-cuda}" --kokoro_voice "$VOICE"
+              --kokoro_lang_code "${VOICE:0:1}") ;;
+  qwen3)
+    # Pascal: the PyPI qwentts wheel has no sm_61 kernels; use our pinned
+    # build (scripts/build_qwentts.sh). Q8_0, never the BF16 default (no BF16
+    # on Pascal). torch backend in fp32 does not fit beside llama.cpp.
+    export QWENTTS_CPP_LIBRARY="${QWENTTS_CPP_LIBRARY:-$HOME/dev/qwentts.cpp/build-cuda61/libqwen.so}"
+    [ -f "$QWENTTS_CPP_LIBRARY" ] || { echo "run scripts/build_qwentts.sh first" >&2; exit 1; }
+    TTS_ARGS=(--qwen3_tts_backend ggml --qwen3_tts_ggml_quantization "${S2S_QWEN3_QUANT:-Q8_0}"
+              --qwen3_tts_model_name "${S2S_QWEN3_MODEL:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"
+              --qwen3_tts_speaker "${S2S_QWEN3_SPEAKER:-Ryan}" --qwen3_tts_language English) ;;
+  *) TTS_ARGS=() ;;
+esac
+
 exec "$DIR/repo/.venv/bin/speech-to-speech" serve \
   --host 127.0.0.1 \
   --port "${S2S_PORT:-8765}" \
@@ -38,9 +57,7 @@ exec "$DIR/repo/.venv/bin/speech-to-speech" serve \
   --parakeet_tdt_compute_type float32 \
   --enable_live_transcription "${S2S_LIVE_TRANSCRIPTION:-False}" \
   --max_speech_ms "${S2S_MAX_SPEECH_MS:-20000}" \
-  --tts "${S2S_TTS:-kokoro}" \
-  --kokoro_device "${S2S_KOKORO_DEVICE:-cuda}" \
-  --kokoro_voice "${KOKORO_VOICE:-bm_daniel}" \
+  --tts "$TTS" "${TTS_ARGS[@]}" \
   --llm_backend responses-api \
   --responses_api_base_url "$OPENAI_BASE_URL" \
   --responses_api_api_key "$OPENAI_API_KEY" \
