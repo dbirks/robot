@@ -23,6 +23,9 @@ export HF_HOME="${HF_HOME:-$DIR/hf-cache}"
 # --responses_api_base_url is REQUIRED: upstream otherwise defaults to a hosted
 # OpenAI model. Upstream's default reasoning effort "none" is honored by
 # llama.cpp's /v1/responses and keeps Qwen3.5 from thinking (verified).
+# --max_speech_ms: upstream default is infinite. With a TV talking, Smart Turn
+# never sees a complete turn, so one turn grew to 74 s and never got answered
+# (2026-10-03). 20 s forces a split; a real request is far shorter.
 # Parakeet: v3 (upstream nano-parakeet hardcodes the v3 vocab; v2 fails to
 # load with a decoder.embed size mismatch), fp32 on CPU - fp16 runs at 1/64 rate on GP104
 # and fp32-on-GPU does not fit beside llama.cpp + Kokoro (ADR 0004).
@@ -34,6 +37,7 @@ exec "$DIR/repo/.venv/bin/speech-to-speech" serve \
   --parakeet_tdt_device "${S2S_PARAKEET_DEVICE:-cpu}" \
   --parakeet_tdt_compute_type float32 \
   --enable_live_transcription "${S2S_LIVE_TRANSCRIPTION:-False}" \
+  --max_speech_ms "${S2S_MAX_SPEECH_MS:-20000}" \
   --tts "${S2S_TTS:-kokoro}" \
   --kokoro_device "${S2S_KOKORO_DEVICE:-cuda}" \
   --kokoro_voice "${KOKORO_VOICE:-bm_daniel}" \
