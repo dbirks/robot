@@ -191,13 +191,20 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "set_volume",
-            "description": "Adjust the robot's speaking volume. Use when asked to be louder, quieter, or set a specific volume level.",
+            "description": (
+                "Adjust the robot's speaking volume. For 'louder', 'speak up', 'turn it up' use 'louder' "
+                "(or 'much louder'); for 'quieter', 'turn it down' use 'quieter' (or 'much quieter'). "
+                "Use a named level or percentage only when the user asks for a specific volume."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "level": {
                         "type": "string",
-                        "description": "Volume level: 'whisper', 'low', 'medium', 'high', 'max', or a percentage like '150%', or a number 0.0-3.0",
+                        "description": (
+                            "'louder', 'much louder', 'quieter', 'much quieter', or a level: "
+                            "'whisper', 'quiet', 'medium', 'loud', 'max', or a percentage like '150%'"
+                        ),
                     }
                 },
                 "required": ["level"],
@@ -253,6 +260,18 @@ MOTION_DURATION = 0.8
 NOD_DURATION = 0.3
 NOD_ANGLE = 15
 LOOK_ANGLE = 30
+
+
+def _get_sink_volume() -> float | None:
+    """Current PipeWire default-sink volume (1.0 = 100%), or None."""
+    import subprocess
+
+    try:
+        out = subprocess.run(["wpctl", "get-volume", "@DEFAULT_SINK@"], capture_output=True, text=True, timeout=2)
+        line = next((ln for ln in out.stdout.splitlines() if ln.startswith("Volume:")), "")
+        return float(line.split()[1]) if line else None
+    except Exception:
+        return None
 
 
 def make_handlers(
@@ -524,38 +543,56 @@ def make_handlers(
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    def set_volume(level: str = "medium", **_kwargs: Any) -> dict:
+    def set_volume(level: str = "louder", **_kwargs: Any) -> dict:
+        # The Reachy's hardware gain is already at max; this is the PipeWire
+        # sink gain, where 1.0 (100%) measured as only "medium-quiet" in the
+        # room. Named levels sit above that; relative steps read the current
+        # level so "louder" always does something. Capped at 2.0 (distortion).
         try:
             from .playback import set_volume_boost
 
-            level_map = {
+            levels = {
                 "mute": 0.0,
-                "whisper": 0.5,
+                "whisper": 0.6,
                 "quiet": 1.0,
                 "low": 1.0,
-                "medium": 1.5,
-                "normal": 1.5,
-                "high": 2.0,
-                "loud": 2.0,
-                "max": 2.5,
+                "medium": 1.3,
+                "normal": 1.3,
+                "loud": 1.6,
+                "high": 1.6,
+                "max": 2.0,
             }
-            if level.lower() in level_map:
-                boost = level_map[level.lower()]
-            elif level.endswith("%"):
-                try:
-                    pct = float(level.rstrip("%"))
-                    boost = max(0.0, min(3.0, pct / 100.0))
-                except ValueError:
-                    return {"ok": False, "error": f"Unknown volume level: {level}"}
+            steps = {
+                "louder": 0.2,
+                "up": 0.2,
+                "much louder": 0.4,
+                "quieter": -0.2,
+                "down": -0.2,
+                "softer": -0.2,
+                "much quieter": -0.4,
+            }
+            current = _get_sink_volume()
+            key = level.strip().lower()
+            if key in steps:
+                if current is None:
+                    return {"ok": False, "error": "Could not read the current volume"}
+                target = current + steps[key]
+            elif key in levels:
+                target = levels[key]
             else:
                 try:
-                    num = float(level)
-                    boost = max(0.0, min(3.0, num))
+                    target = float(key.rstrip("%")) / (100.0 if key.endswith("%") else 1.0)
                 except ValueError:
                     return {"ok": False, "error": f"Unknown volume level: {level}"}
-            set_volume_boost(boost)
-            log.info("Volume set to %.1f (level=%s)", boost, level)
-            return {"ok": True, "volume": boost, "level": level}
+            target = round(max(0.0, min(2.0, target)), 2)
+            set_volume_boost(target)
+            log.info("Volume %s -> %.2f (level=%s)", current, target, level)
+            return {
+                "ok": True,
+                "volume_percent": round(target * 100),
+                "previous_percent": None if current is None else round(current * 100),
+                "at_max": target >= 2.0,
+            }
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

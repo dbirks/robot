@@ -101,8 +101,15 @@ class WakeReaction:
             if data.ndim > 1:
                 data = data[:, 0]
             if sr != self.rate:
-                idx = (np.arange(len(data)) * self.rate / sr).astype(int)
-                idx = idx[idx < len(data)]
-                data = data[idx]
+                # Polyphase resample with an anti-alias filter. Plain sample
+                # dropping (what this used to do) aliases into a metallic,
+                # robotic edge. scripts/make_acks.py writes 16 kHz anyway.
+                from math import gcd
+
+                from scipy.signal import resample_poly
+
+                g = gcd(sr, self.rate)
+                y = resample_poly(data.astype(np.float32), self.rate // g, sr // g)
+                data = np.clip(y, -32768, 32767).astype(np.int16)
             self._cache[path] = np.ascontiguousarray(data)
         return self._cache[path]
