@@ -10,7 +10,9 @@ DIR="${S2S_DIR:-$HOME/.local/share/reachy/speech-to-speech}"
 
 # Fully-local still requires an API key string for the OpenAI client paths.
 export OPENAI_API_KEY="${OPENAI_API_KEY:-not-needed}"
-export OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://localhost:8080/v1}"
+# Via shell/llm_proxy.py (reachy-llm-proxy.service), which fixes Parakeet's
+# spellings of "Reachy" in user text before llama.cpp (:8080) sees them.
+export OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://127.0.0.1:8081/v1}"
 # After assets are installed, run offline (EPIC locality requirement):
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
 export HF_HOME="${HF_HOME:-$DIR/hf-cache}"

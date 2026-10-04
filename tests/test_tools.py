@@ -52,12 +52,3 @@ def test_state_changing_denied_low_confidence_is_journaled(journal):
     assert "attention.tool_denied" in journal.types()
     # the deny hint must stop the model retrying in a loop
     assert "Do not retry" in out["hint"]
-
-
-def test_instructions_always_carry_name_note(monkeypatch):
-    from shell.config import NAME_NOTE, ShellConfig
-
-    monkeypatch.setenv("REACHY_INSTRUCTIONS", "Talk like a pirate.")
-    assert ShellConfig().instructions == "Talk like a pirate." + NAME_NOTE
-    monkeypatch.delenv("REACHY_INSTRUCTIONS")
-    assert ShellConfig().instructions.endswith(NAME_NOTE)

@@ -1,8 +1,8 @@
 [Unit]
 Description=Reachy Mini realtime voice pipeline (pinned huggingface/speech-to-speech)
 Documentation=file://%h/dev/robot/docs/adr/0001-upstream-realtime-service.md
-After=network-online.target llama-server.service
-Wants=llama-server.service
+After=network-online.target llama-server.service reachy-llm-proxy.service
+Wants=llama-server.service reachy-llm-proxy.service
 
 [Service]
 WorkingDirectory=%h/dev/robot

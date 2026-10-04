@@ -1,0 +1,14 @@
+[Unit]
+Description=Reachy Mini LLM proxy (fixes Parakeet's mis-hearings of the name 'Reachy')
+Documentation=file://%h/dev/robot/shell/llm_proxy.py
+After=llama-server.service
+Wants=llama-server.service
+
+[Service]
+WorkingDirectory=%h/dev/robot
+ExecStart=%h/dev/robot/.venv/bin/python -m shell.llm_proxy
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
