@@ -42,6 +42,7 @@ class MicOwner:
         self.rms_recent = 0.0
         self.rms_peak = 0.0
         self._last_active_wall = time.monotonic()
+        self._last_sound = time.monotonic()  # last block with any nonzero sample
         self._np = __import__("numpy")  # lazy-ish; cheap module
 
     # ---- subscription API (the ONLY way to get mic audio) ----
@@ -100,17 +101,23 @@ class MicOwner:
             "blocks_total": self.blocks_total,
             "blocks_dropped": self.blocks_dropped,
             "seconds_since_last_block": round(time.monotonic() - self._last_active_wall, 2),
+            # A live room is never exactly digital zero; sustained exact zero
+            # while blocks still flow is the XVF3800 firmware stall (ADR 0005).
+            "seconds_since_sound": round(time.monotonic() - self._last_sound, 2),
         }
         # Distinguish an explicit mute from dead firmware (ADR 0005). Best-effort:
         # if we cannot ask PipeWire, report unknown rather than guessing.
         try:
+            # There is no `wpctl get-mute`; get-volume prints "Volume: 1.00"
+            # plus " [MUTED]" when muted. No "Volume:" line => unknown.
             out = subprocess.run(
-                ["wpctl", "get-mute", "@DEFAULT_SOURCE@"],
+                ["wpctl", "get-volume", "@DEFAULT_SOURCE@"],
                 capture_output=True,
                 text=True,
                 timeout=1.0,
             )
-            h["pipewire_mute"] = "Mute: 1" in out.stdout
+            line = next((ln for ln in out.stdout.splitlines() if ln.startswith("Volume:")), None)
+            h["pipewire_mute"] = None if line is None else "[MUTED]" in line
         except Exception:
             h["pipewire_mute"] = None
         return h
@@ -129,6 +136,8 @@ class MicOwner:
         pcm = bytes(mono.tobytes())
         rms = float(self._np.sqrt(self._np.mean((mono.astype(self._np.float32) / 32768.0) ** 2)))
         self.rms_recent = rms
+        if rms > 0.0:
+            self._last_sound = self._last_active_wall
         self.rms_peak = max(self.rms_peak, rms)
         if not self.muted:
             with self._lock:

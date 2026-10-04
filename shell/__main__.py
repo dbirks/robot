@@ -24,6 +24,7 @@ from .attention import (
     load_profile,
 )
 from .audio import MicOwner, SpeakerOwner
+from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .config import ShellConfig
 from .journal import Journal
 from .reactions import WakeReaction
@@ -124,11 +125,15 @@ async def amain() -> None:
 
     rt = asyncio.create_task(client.run(), name="realtime")
 
+    xmos = XmosWatchdog(journal, reboot_xmos)
+
     async def watchdog_sample():
         while True:
             await asyncio.sleep(10.0)
             lease.expire_if_due()
-            journal.write("audio.health", **mic.health())
+            health = await asyncio.to_thread(mic.health)  # runs wpctl
+            journal.write("audio.health", **health)
+            await asyncio.to_thread(xmos.check, health)
 
     wd = asyncio.create_task(watchdog_sample(), name="health")
     try:
