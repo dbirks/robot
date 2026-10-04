@@ -44,7 +44,14 @@ case "$TTS" in
     [ -f "$QWENTTS_CPP_LIBRARY" ] || { echo "run scripts/build_qwentts.sh first" >&2; exit 1; }
     TTS_ARGS=(--qwen3_tts_backend ggml --qwen3_tts_ggml_quantization "${S2S_QWEN3_QUANT:-Q8_0}"
               --qwen3_tts_model_name "${S2S_QWEN3_MODEL:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"
-              --qwen3_tts_speaker "${S2S_QWEN3_SPEAKER:-Ryan}" --qwen3_tts_language English) ;;
+              --qwen3_tts_speaker "${S2S_QWEN3_SPEAKER:-Ryan}" --qwen3_tts_language English)
+    # Local fine-tunes converted with qwentts.cpp convert.py + quantize (e.g.
+    # the Obama 1.7B voice, speaker "laxmikant"): set both GGUF paths and
+    # point S2S_QWEN3_MODEL at the matching upstream id (1.7B-CustomVoice).
+    if [ -n "${S2S_QWEN3_TALKER_GGUF:-}" ]; then
+      CODEC="${S2S_QWEN3_CODEC_GGUF:-$(ls "$HF_HOME"/hub/models--Serveurperso--Qwen3-TTS-GGUF/snapshots/*/qwen-tokenizer-12hz-Q8_0.gguf | head -1)}"
+      TTS_ARGS+=(--qwen3_tts_gguf_talker_path "$S2S_QWEN3_TALKER_GGUF" --qwen3_tts_gguf_codec_path "$CODEC")
+    fi ;;
   *) TTS_ARGS=() ;;
 esac
 
