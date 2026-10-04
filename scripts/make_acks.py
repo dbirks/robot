@@ -32,7 +32,6 @@ ACKS = [
     ("think", "okay", "Okay, so here is the thing."),
     ("think", "well", "Well, let me see what I can do."),
     ("think", "right", "Right, okay, give me a moment."),
-    ("think", "so", "So, let me think about this."),
     ("wake", "yes", "Yes? What can I do for you?"),
     ("wake", "hmm", "Hmm? Did somebody call me?"),
     ("wake", "yeah", "Yeah? I'm listening."),
