@@ -17,12 +17,22 @@ DEFAULT_INSTRUCTIONS = (
     "and slightly charming."
 )
 
+# Appended to every persona. Parakeet has never heard the name "Reachy" and
+# transcribes it as Richie/Ricci/Ritchie/Reechy; the LLM only sees the text.
+NAME_NOTE = (
+    " Your name is Reachy. Speech recognition often mishears it, so treat "
+    "'Richie', 'Ricci', 'Ritchie', 'Reechy' or 'Reach' in what the user says "
+    "as your name, Reachy. Never call yourself or the user by those spellings."
+)
+
 
 @dataclass
 class ShellConfig:
     # Realtime service (pinned huggingface/speech-to-speech, ADR 0001)
     s2s_url: str = field(default_factory=lambda: os.getenv("S2S_URL", "ws://127.0.0.1:8765/v1/realtime"))
-    instructions: str = field(default_factory=lambda: os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS))
+    instructions: str = field(
+        default_factory=lambda: os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS).rstrip() + NAME_NOTE
+    )
 
     # Attention
     attention_profile: str = field(default_factory=lambda: os.getenv("REACHY_PROFILE", "quiet"))
