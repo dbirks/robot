@@ -1,6 +1,6 @@
 """Open-vocabulary keyword spotting via sherpa-onnx (ADR 0003 fast path).
 
-"Reachy", "hey Reachy", "robot", "hey robot" - no LLM, no STT, sub-100ms
+"Reachy" / "hey Reachy" (not "robot": TV false-wakes) - no LLM, no STT, sub-100ms
 reaction class. Model/runtime pinned in docs/pins.yaml; install via
 scripts/get_kws_model.sh. sherpa-onnx is an optional extra: this module
 imports it lazily so the shell runs (without wake words) on a machine that

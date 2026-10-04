@@ -11,7 +11,9 @@ DIR="${KWS_MODEL_DIR:-models/kws}"
 # One phrase per line; "@Label" after the phrase sets what the shell sees.
 # "Reachy" is not an English word, so the BPE model needs two spellings to
 # catch it (REACHY + REACHIE, measured on synthesized speech).
-KEYWORDS=("REACHY @Reachy" "REACHIE @Reachy" "HEY REACHY @hey Reachy" "HEY REACHIE @hey Reachy" "ROBOT @robot" "HEY ROBOT @hey robot")
+# No bare "robot"/"hey robot": TV says "robot" constantly and it woke Reachy
+# on a TV segment about robots (2026-10-03 22:26). Names only.
+KEYWORDS=("REACHY @Reachy" "REACHIE @Reachy" "HEY REACHY @hey Reachy" "HEY REACHIE @hey Reachy")
 
 if [ ! -f "$DIR/tokens.txt" ]; then
   tmp="$(mktemp -d)"
