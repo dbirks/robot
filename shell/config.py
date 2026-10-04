@@ -47,6 +47,9 @@ class ShellConfig:
 
     # Paths
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "data")))
+    # Prerendered acknowledgements: <ack_dir>/wake/*.wav and <ack_dir>/think/*.wav,
+    # recorded in the active voice (e.g. sounds/acks/obama).
+    ack_dir: Path = field(default_factory=lambda: Path(os.getenv("REACHY_ACK_DIR", "sounds/acks")))
     kws_model_dir: str = field(default_factory=lambda: os.getenv("KWS_MODEL_DIR", "models/kws"))
 
     @property

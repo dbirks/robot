@@ -7,11 +7,17 @@ clever spoken acknowledgement. On a wake phrase:
      after 250-400ms and bypasses TTS entirely
   3. if the person continues speaking before it fires, it is cancelled
   4. no repeated grunts while already attending to the same participant
+
+The same class drives the "thinking" filler: a short "hmm" played the moment
+a user turn is transcribed, covering the LLM+TTS gap. It never plays over
+queued speech and is rate-limited, because s2s can finalize several
+speculative revisions of one turn.
 """
 
 from __future__ import annotations
 
 import random
+import time
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +35,8 @@ class WakeReaction:
         on_wake=None,  # callable(doa_deg: float|None) - immediate head-turn
         rng: random.Random | None = None,
         loop=None,
+        min_interval_s: float = 0.0,
+        clock=time.monotonic,
     ) -> None:
         self.speaker = speaker
         self.journal = journal
@@ -41,6 +49,9 @@ class WakeReaction:
         self._pool = sorted(Path(sound_dir).glob("*.wav"))
         self._last_pick: Path | None = None
         self._cache: dict[Path, np.ndarray] = {}
+        self.min_interval_s = min_interval_s
+        self._clock = clock
+        self._last_fired: float | None = None
 
     def wake(self, doa_deg: float | None = None, attending_same: bool = False) -> None:
         if self.on_wake:
@@ -65,6 +76,12 @@ class WakeReaction:
 
     def _fire(self) -> None:
         self._timer = None
+        now = self._clock()
+        if self._last_fired is not None and now - self._last_fired < self.min_interval_s:
+            return
+        if self.speaker.pending():
+            return  # real speech already queued: a grunt would only delay it
+        self._last_fired = now
         pick = self._pick()
         samples = self._load(pick)
         gen = self.speaker.generation
@@ -84,8 +101,6 @@ class WakeReaction:
             if data.ndim > 1:
                 data = data[:, 0]
             if sr != self.rate:
-                import numpy as np
-
                 idx = (np.arange(len(data)) * self.rate / sr).astype(int)
                 idx = idx[idx < len(data)]
                 data = data[idx]

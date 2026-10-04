@@ -76,11 +76,21 @@ async def amain() -> None:
         confidence_threshold=profile.tool_confidence,
     )
 
-    reaction = WakeReaction(speaker, journal, loop=asyncio.get_event_loop())
+    loop = asyncio.get_event_loop()
+    reaction = WakeReaction(speaker, journal, sound_dir=cfg.ack_dir / "wake", loop=loop)
+    filler = WakeReaction(
+        speaker, journal, sound_dir=cfg.ack_dir / "think", delay_range_s=(0.0, 0.05), min_interval_s=4.0, loop=loop
+    )
 
     def on_speech_started() -> None:
         lease.renew(None, "speech-start")
         reaction.cancel()
+        filler.cancel()
+
+    def on_transcript(text: str) -> None:
+        lease.note_interaction()
+        if text:
+            filler.wake()  # "hmm" now, while the LLM and TTS work
 
     client = RealtimeClient(
         cfg.s2s_url,
@@ -90,7 +100,7 @@ async def amain() -> None:
         speaker=speaker,
         journal=journal,
         on_speech_started=on_speech_started,
-        on_transcript=lambda _text: lease.note_interaction(),
+        on_transcript=on_transcript,
     )
 
     kws = None
