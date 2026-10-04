@@ -74,9 +74,14 @@ class SpeakerOwner:
     # ---- enqueue / playback ----
 
     def enqueue(self, generation: int, channel: str, samples) -> bool:
-        """Returns False if the generation was cancelled (late chunk refused)."""
+        """Returns False if the generation was cancelled (late chunk refused).
+
+        Only TTS is generation-tagged speech that can go stale. Prerendered
+        acks/sounds are enqueued right AFTER a barge-in cancelled the current
+        generation (the "hmm" at end of turn), so refusing them made every
+        acknowledgement silent."""
         with self._lock:
-            if generation in self._cancelled:
+            if channel == "tts" and generation in self._cancelled:
                 return False
             self._q.append(_Chunk(generation=generation, channel=channel, samples=[samples]))
         return True

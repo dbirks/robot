@@ -104,3 +104,12 @@ def test_resumed_chunk_audio_is_contiguous(speaker):
         played.append(buf[:, 0].copy())
     got = np.concatenate(played)[: len(speech)]
     assert np.array_equal(got, speech)
+
+
+def test_ack_after_barge_in_is_not_refused(speaker):
+    # Regression: the end-of-turn "hmm" is enqueued after speech-start
+    # cancelled the current generation; it must still play.
+    gen = speaker.begin_generation()
+    speaker.cancel_current()
+    assert speaker.enqueue(gen, "tts", np.zeros(10, dtype=np.int16)) is False
+    assert speaker.enqueue(gen, "ack", np.zeros(10, dtype=np.int16)) is True
