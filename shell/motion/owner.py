@@ -81,6 +81,9 @@ THINKING_ANTENNA_AMP = math.radians(15)
 THINKING_ANTENNA_FREQ = 0.35
 THINKING_ANTENNA_PHASE = 1.2
 
+LISTENING_MAX_S = 30.0
+THINKING_MAX_S = 20.0
+
 # Antennas / body
 ANTENNA_TAU = 0.2  # ~= legacy alpha 0.15 at 30 Hz
 ANTENNA_UNFREEZE_S = 0.4
@@ -150,6 +153,7 @@ class MotionOwner:
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
         is_speaking: Callable[[], bool] | None = None,
+        sway=None,  # SpeechSway-like: .step(now) -> 6-vector offsets
     ) -> None:
         self.robot = robot
         self.journal = journal
@@ -157,6 +161,7 @@ class MotionOwner:
         self.clock = clock
         self._rng = rng or random.Random()
         self._is_speaking = is_speaking or (lambda: False)
+        self.sway = sway
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -181,6 +186,7 @@ class MotionOwner:
 
         self._speech = np.zeros(6)
         self._listening = False
+        self._listening_t0 = now
         self._thinking = False
         self._thinking_t0 = now
         self._think_progress = 0.0
@@ -271,6 +277,8 @@ class MotionOwner:
 
     def set_listening(self, listening: bool) -> None:
         with self._lock:
+            if listening and not self._listening:
+                self._listening_t0 = self.clock()
             self._listening = bool(listening)
             self._last_activity = self.clock()
 
@@ -421,6 +429,14 @@ class MotionOwner:
                 return None
             dt = 1.0 / self.hz if self._last_tick is None else max(0.0, min(0.1, now - self._last_tick))
             self._last_tick = now
+            # A lost speech_stopped / response.done must not freeze the
+            # antennas or pin the gaze forever.
+            if self._listening and now - self._listening_t0 > LISTENING_MAX_S:
+                self._listening = False
+            if self._thinking and now - self._thinking_t0 > THINKING_MAX_S:
+                self._thinking = False
+            if self.sway is not None:
+                self._speech = self.sway.step(now)
             speaking = bool(self._is_speaking())
             engaged = self._listening or self._thinking or speaking
             animating = self._anim is not None or bool(self._anims)

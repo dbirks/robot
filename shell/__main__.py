@@ -30,7 +30,7 @@ from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
 from .config import ShellConfig
 from .journal import Journal
-from .motion import DoaTracker, MotionOwner, make_doa_source
+from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
 from .robot import RobotLink
@@ -54,7 +54,9 @@ async def amain() -> None:
     robot = RobotLink(journal)
     await asyncio.to_thread(robot.connect)  # robot absent -> tools say so, shell runs
     camera = CameraGrabber(robot.daemon_url)
-    motion = MotionOwner(robot, journal, hz=cfg.motion_hz, is_speaking=lambda: speaker.playing)
+    sway = SpeechSway(cfg.sample_rate)
+    speaker.tap = sway.feed  # head sways with the samples actually played
+    motion = MotionOwner(robot, journal, hz=cfg.motion_hz, is_speaking=lambda: speaker.playing, sway=sway)
     sounds: dict[str, object] = {}
 
     def play_sound(name: str) -> None:  # tool earcons go through the one speaker owner
@@ -99,11 +101,18 @@ async def amain() -> None:
         lease.renew(None, "speech-start")
         reaction.cancel()
         filler.cancel()
+        motion.set_thinking(False)  # barge-in: he is listening again
+        motion.set_listening(True)  # antennas hold still while the user talks
+
+    def on_speech_stopped() -> None:
+        motion.set_listening(False)
 
     filled_for: list[str | None] = [None]  # lease holder that already got its "hmm"
 
     def on_transcript(text: str) -> None:
         lease.note_interaction()
+        if text and (lease.active() or speaker.playing):
+            motion.set_thinking(True)  # look away until his first audio
         # "hmm" only on the first turn after a wake word; mid-conversation it
         # is just noise before every answer.
         if text and lease.active() and filled_for[0] != lease.holder:
@@ -111,6 +120,7 @@ async def amain() -> None:
             filler.wake()
 
     def on_response_done(status: str) -> None:
+        motion.set_thinking(False)
         if status == "completed":
             lease.exchange()  # Reachy answered: the user gets a fresh window
 
@@ -124,6 +134,8 @@ async def amain() -> None:
         on_speech_started=on_speech_started,
         on_transcript=on_transcript,
         on_response_done=on_response_done,
+        on_speech_stopped=on_speech_stopped,
+        on_first_audio=lambda: motion.set_thinking(False),
     )
 
     kws = None

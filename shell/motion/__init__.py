@@ -2,6 +2,7 @@
 
 from .doa import DoaTracker, make_doa_source
 from .owner import Animation, Command, Keyframe, MotionOwner, nod_animation, shake_animation
+from .sway import SpeechSway
 
 __all__ = [
     "Animation",
@@ -9,6 +10,7 @@ __all__ = [
     "DoaTracker",
     "Keyframe",
     "MotionOwner",
+    "SpeechSway",
     "make_doa_source",
     "nod_animation",
     "shake_animation",

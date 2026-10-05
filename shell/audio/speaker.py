@@ -45,6 +45,9 @@ class SpeakerOwner:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     playing: bool = False
     level: float = 0.0
+    # Called from the audio callback with exactly the samples written to the
+    # device (motion speech sway). Must only copy+enqueue: real-time thread.
+    tap: Any = field(default=None, repr=False)
 
     # ---- generation control (owned by the realtime client) ----
 
@@ -158,3 +161,8 @@ class SpeakerOwner:
             self.playing = bool(self._q) or written > 0
         if written:
             self.level = float(np.sqrt(np.mean((outdata[:written, 0].astype(np.float32) / 32768.0) ** 2)))
+            if self.tap is not None:
+                try:
+                    self.tap(outdata[:written, 0])
+                except Exception:
+                    pass  # a motion bug must never glitch audio
