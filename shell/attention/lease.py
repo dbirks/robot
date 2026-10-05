@@ -72,8 +72,9 @@ class AttentionLease:
         lease_max_s cap mid-flow - that cap exists to stop ambient speech
         (TV) from holding attention via speech-start renewals, not to cut off
         someone Reachy is actually talking with. Gives the user a full
-        renewal window to answer from the END of Reachy's reply."""
-        if not self.active():
+        renewal window to answer from the END of Reachy's reply. Re-arms a
+        lease that lapsed while he was talking (holder kept until expiry)."""
+        if self.holder is None:
             return False
         now = self.clock()
         self._started = now

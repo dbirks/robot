@@ -220,3 +220,20 @@ def test_keyword_mid_conversation_renews_without_new_wake(journal):
     again = mgr.on_keyword(None, "Reachy")
     assert first.acquired and not again.acquired
     assert lease.holder == holder
+
+
+def test_exchange_rearms_lease_that_lapsed_during_reply(journal):
+    from shell.attention.lease import AttentionLease
+    from shell.attention.profiles import PROFILES
+
+    clock = [0.0]
+    lease = AttentionLease(PROFILES["quiet"], journal, clock=lambda: clock[0])
+    lease.acquire("p", "kws:Reachy")
+    clock[0] += 40.0  # long reply played past the window; not yet expired
+    assert not lease.active()
+    assert lease.exchange("reply-played")
+    assert lease.active()
+    lease.expire_if_due()
+    clock[0] += 60.0
+    lease.expire_if_due()
+    assert not lease.exchange()  # truly expired: needs a wake word again

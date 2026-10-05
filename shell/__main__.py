@@ -127,8 +127,18 @@ async def amain() -> None:
 
     silence: dict[int, bytes] = {}
 
+    was_speaking = [False]
+
     def on_pcm(pcm: bytes) -> None:
-        if lease.active():
+        # While Reachy is talking he is always engaged: the user must be able
+        # to interrupt (barge-in), and replies routinely outlast a lease timed
+        # from the user's last words (2026-10-04: 13 expiries 0.5-18 s into a
+        # reply, zero barge-ins in 356 speech starts).
+        speaking = speaker.playing
+        if was_speaking[0] and not speaking:
+            lease.exchange("reply-played")  # answer window starts when he stops
+        was_speaking[0] = speaking
+        if lease.active() or speaking:
             client.feed(pcm)  # engaged: s2s owns VAD/turn/STT
             return
         # Not engaged: send silence, not nothing. If the stream just stops,
@@ -156,7 +166,8 @@ async def amain() -> None:
     async def watchdog_sample():
         while True:
             await asyncio.sleep(10.0)
-            lease.expire_if_due()
+            if not speaker.playing:  # never drop attention mid-reply
+                lease.expire_if_due()
             health = await asyncio.to_thread(mic.health)  # runs wpctl
             journal.write("audio.health", **health)
             await asyncio.to_thread(xmos.check, health)
