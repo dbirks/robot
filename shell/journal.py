@@ -58,6 +58,14 @@ TOOL_DENIED = "tool.denied"
 TTS_CHUNK_QUEUED = "tts.chunk_queued"
 TTS_FLUSHED = "tts.flushed"
 
+ROBOT_CONNECTION = "robot.connection"
+
+MOTION_STARTED = "motion.started"
+MOTION_EXCLUSIVE = "motion.exclusive"  # scripted SDK move ran with the loop paused
+MOTION_ERROR = "motion.error"  # set_target failures, rate-limited
+MOTION_WAKE_TURN = "motion.wake_turn"  # KWS -> head target set; latency_ms from detection
+MOTION_DOA_AIM = "motion.doa_aim"  # in-conversation re-aim toward the talker
+
 MODEL_LOADED = "model.loaded"
 SYSTEM_RESOURCE_SAMPLE = "system.resource_sample"
 

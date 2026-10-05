@@ -47,6 +47,8 @@ class RealtimeClient:
         on_transcript: Callable[[str], None] | None = None,
         on_response_done: Callable[[str], None] | None = None,
         on_assistant_text: Callable[[str], None] | None = None,
+        on_speech_stopped: Callable[[], None] | None = None,
+        on_first_audio: Callable[[], None] | None = None,
         reconnect_s: float = 2.0,
         connect=None,
     ) -> None:
@@ -63,6 +65,8 @@ class RealtimeClient:
         self._extra_instructions = ""  # e.g. summary of an earlier conversation
         self._reset: asyncio.Event | None = None
         self._carry: bytes | None = None
+        self.on_speech_stopped = on_speech_stopped
+        self.on_first_audio = on_first_audio
         self.reconnect_s = reconnect_s
         self._connect = connect  # injectable for tests; defaults to websockets
         self._in: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
@@ -234,6 +238,8 @@ class RealtimeClient:
 
         elif t == "input_audio_buffer.speech_stopped":
             self.journal.write(J.AUDIO_SPEECH_STOPPED)
+            if self.on_speech_stopped:
+                self.on_speech_stopped()
 
         elif t == "conversation.item.input_audio_transcription.completed":
             text = (ev.get("transcript") or "").strip()
@@ -254,6 +260,8 @@ class RealtimeClient:
             if self.speaker.enqueue(gen, "tts", pcm) and rid not in self._first_audio:
                 self._first_audio.add(rid)  # only mark the FIRST delta
                 self.journal.write(J.RESPONSE_FIRST_AUDIO, response_id=rid)
+                if self.on_first_audio:
+                    self.on_first_audio()
 
         elif t == "response.output_audio_transcript.done":
             if self.on_assistant_text:

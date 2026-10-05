@@ -5,8 +5,9 @@ callback bridges PCM into the loop. Engaged vs ambient is decided by the
 attention lease - the single gate for "does room audio reach the s2s
 service?" (ADR 0003: ignored ambient speech never enters the LLM).
 
-Robot tools are bridged from the legacy package during the migration
-window; Phase 2 moves them natively. Everything degrades gracefully with
+Robot tools: one real daemon connection (shell/robot.py); schemas and most
+handlers are bridged from the legacy package during the migration window,
+vision tools are shell-native (shell/robot_tools.py). Everything degrades gracefully with
 no robot connected (EPIC "run without a robot").
 """
 
@@ -16,6 +17,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 
 from .attention import (
     AttentionLease,
@@ -25,36 +27,18 @@ from .attention import (
 )
 from .audio import MicOwner, SpeakerOwner
 from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
+from .camera import CameraGrabber
 from .config import ShellConfig
 from .conversation import ConversationMemory, llm_summarize
 from .journal import Journal
+from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
+from .robot import RobotLink
+from .robot_tools import build_handlers, load_sdk_sound
 from .tools import ToolRouter
 
 log = logging.getLogger("shell")
-
-
-def load_robot_tools(journal):
-    """Best-effort bridge to the legacy handlers; empty shell still runs."""
-    try:
-        from app.robot_state import RobotConnection
-        from app.robot_tools import TOOLS, make_handlers
-    except Exception as e:  # missing robot SDK, etc.
-        log.warning("robot tools unavailable: %r", e)
-        return [], {}, None
-
-    class _DisconnectedRobot(RobotConnection):  # redefines __init__; no config needed
-        def __init__(self) -> None:
-            self.mini = None  # property 'connected' derives from this
-
-    robot = _DisconnectedRobot()
-    handlers = {}
-    try:
-        handlers = dict(make_handlers(robot))
-    except Exception as e:
-        log.warning("robot tool construction failed: %r", e)
-    return TOOLS, handlers, robot
 
 
 async def amain() -> None:
@@ -68,7 +52,21 @@ async def amain() -> None:
     mic = MicOwner(cfg.mic_device, cfg.sample_rate, cfg.block_size, cfg.preroll_seconds, journal)
     speaker = SpeakerOwner(rate=cfg.sample_rate, block=cfg.block_size, device=cfg.speaker_device, journal=journal)
 
-    tools, handlers, _robot = load_robot_tools(journal)
+    robot = RobotLink(journal)
+    await asyncio.to_thread(robot.connect)  # robot absent -> tools say so, shell runs
+    camera = CameraGrabber(robot.daemon_url)
+    sway = SpeechSway(cfg.sample_rate)
+    speaker.tap = sway.feed  # head sways with the samples actually played
+    motion = MotionOwner(robot, journal, hz=cfg.motion_hz, is_speaking=lambda: speaker.playing, sway=sway)
+    sounds: dict[str, object] = {}
+
+    def play_sound(name: str) -> None:  # tool earcons go through the one speaker owner
+        if name not in sounds:
+            sounds[name] = load_sdk_sound(name, cfg.sample_rate)
+        if sounds[name] is not None:
+            speaker.enqueue(speaker.generation, "sound", sounds[name])
+
+    tools, handlers = build_handlers(robot, camera, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound)
     router = ToolRouter(
         tools,
         handlers,
@@ -77,8 +75,25 @@ async def amain() -> None:
         confidence_threshold=profile.tool_confidence,
     )
 
+    # One DOA reader feeding a 2 s ring buffer; the wake turn reads it on the
+    # KWS hit (mic thread) - the physical reaction never waits for the LLM.
+    doa = DoaTracker(
+        make_doa_source(daemon_url=robot.daemon_url),
+        motion,
+        journal,
+        is_speaking=lambda: speaker.playing,
+        lease_active=lease.active,
+    )
+    kws_hit_t = [0.0]
+
     loop = asyncio.get_event_loop()
-    reaction = WakeReaction(speaker, journal, sound_dir=cfg.ack_dir / "wake", loop=loop)
+    reaction = WakeReaction(
+        speaker,
+        journal,
+        sound_dir=cfg.ack_dir / "wake",
+        loop=loop,
+        on_wake=lambda _deg: doa.wake_turn(kws_hit_t[0]),
+    )
     filler = WakeReaction(
         speaker, journal, sound_dir=cfg.ack_dir / "think", delay_range_s=(0.0, 0.05), min_interval_s=4.0, loop=loop
     )
@@ -87,6 +102,11 @@ async def amain() -> None:
         lease.renew(None, "speech-start")
         reaction.cancel()
         filler.cancel()
+        motion.set_thinking(False)  # barge-in: he is listening again
+        motion.set_listening(True)  # antennas hold still while the user talks
+
+    def on_speech_stopped() -> None:
+        motion.set_listening(False)
 
     filled_for: list[str | None] = [None]  # lease holder that already got its "hmm"
     memory = ConversationMemory(
@@ -99,6 +119,8 @@ async def amain() -> None:
     def on_transcript(text: str) -> None:
         lease.note_interaction()
         memory.add("user", text)
+        if text and (lease.active() or speaker.playing):
+            motion.set_thinking(True)  # look away until his first audio
         # "hmm" only on the first turn after a wake word; mid-conversation it
         # is just noise before every answer.
         if text and lease.active() and filled_for[0] != lease.holder:
@@ -106,6 +128,7 @@ async def amain() -> None:
             filler.wake()
 
     def on_response_done(status: str) -> None:
+        motion.set_thinking(False)
         if status == "completed":
             lease.exchange()  # Reachy answered: the user gets a fresh window
 
@@ -120,6 +143,8 @@ async def amain() -> None:
         on_transcript=on_transcript,
         on_response_done=on_response_done,
         on_assistant_text=lambda text: memory.add("assistant", text),
+        on_speech_stopped=on_speech_stopped,
+        on_first_audio=lambda: motion.set_thinking(False),
     )
 
     kws = None
@@ -164,17 +189,20 @@ async def amain() -> None:
         if kws is None:
             return
         for hit in kws.process(pcm):
+            kws_hit_t[0] = time.monotonic()
             decision = manager.on_keyword(None, hit.keyword)
+            reaction.wake(doa_deg=None, attending_same=not decision.acquired)  # head turn first
             journal.write("kws.detected", keyword=hit.keyword, score=hit.score)
             if decision.acquired:
                 loop.call_soon_threadsafe(start_conversation)
             client.feed(mic.preroll())  # preserve "Reachy, ..." as one utterance
-            reaction.wake(doa_deg=None, attending_same=not decision.acquired)
 
     mic.subscribe(on_pcm)
 
     mic.open()
     speaker.open()
+    if motion.start():  # no-op without a robot
+        doa.start()
     log.info("shell up: profile=%s tools=%d lease=%s", profile.name, len(tools), lease.holder)
 
     rt = asyncio.create_task(client.run(), name="realtime")
@@ -197,6 +225,9 @@ async def amain() -> None:
     finally:
         mic.close()
         speaker.close()
+        await asyncio.to_thread(doa.stop)
+        await asyncio.to_thread(motion.stop)
+        await asyncio.to_thread(robot.disconnect)
         journal.closed()
 
 
