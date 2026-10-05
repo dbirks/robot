@@ -17,6 +17,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 
 from .attention import (
     AttentionLease,
@@ -29,7 +30,7 @@ from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
 from .config import ShellConfig
 from .journal import Journal
-from .motion import MotionOwner
+from .motion import DoaTracker, MotionOwner, make_doa_source
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
 from .robot import RobotLink
@@ -71,8 +72,25 @@ async def amain() -> None:
         confidence_threshold=profile.tool_confidence,
     )
 
+    # One DOA reader feeding a 2 s ring buffer; the wake turn reads it on the
+    # KWS hit (mic thread) - the physical reaction never waits for the LLM.
+    doa = DoaTracker(
+        make_doa_source(daemon_url=robot.daemon_url),
+        motion,
+        journal,
+        is_speaking=lambda: speaker.playing,
+        lease_active=lease.active,
+    )
+    kws_hit_t = [0.0]
+
     loop = asyncio.get_event_loop()
-    reaction = WakeReaction(speaker, journal, sound_dir=cfg.ack_dir / "wake", loop=loop)
+    reaction = WakeReaction(
+        speaker,
+        journal,
+        sound_dir=cfg.ack_dir / "wake",
+        loop=loop,
+        on_wake=lambda _deg: doa.wake_turn(kws_hit_t[0]),
+    )
     filler = WakeReaction(
         speaker, journal, sound_dir=cfg.ack_dir / "think", delay_range_s=(0.0, 0.05), min_interval_s=4.0, loop=loop
     )
@@ -143,16 +161,18 @@ async def amain() -> None:
         if kws is None:
             return
         for hit in kws.process(pcm):
+            kws_hit_t[0] = time.monotonic()
             decision = manager.on_keyword(None, hit.keyword)
+            reaction.wake(doa_deg=None, attending_same=not decision.acquired)  # head turn first
             journal.write("kws.detected", keyword=hit.keyword, score=hit.score)
             client.feed(mic.preroll())  # preserve "Reachy, ..." as one utterance
-            reaction.wake(doa_deg=None, attending_same=not decision.acquired)
 
     mic.subscribe(on_pcm)
 
     mic.open()
     speaker.open()
-    motion.start()  # no-op without a robot
+    if motion.start():  # no-op without a robot
+        doa.start()
     log.info("shell up: profile=%s tools=%d lease=%s", profile.name, len(tools), lease.holder)
 
     rt = asyncio.create_task(client.run(), name="realtime")
@@ -174,6 +194,7 @@ async def amain() -> None:
     finally:
         mic.close()
         speaker.close()
+        await asyncio.to_thread(doa.stop)
         await asyncio.to_thread(motion.stop)
         await asyncio.to_thread(robot.disconnect)
         journal.closed()
