@@ -45,6 +45,7 @@ class RealtimeClient:
         journal,
         on_speech_started: Callable[[], None] | None = None,
         on_transcript: Callable[[str], None] | None = None,
+        on_response_done: Callable[[str], None] | None = None,
         reconnect_s: float = 2.0,
         connect=None,
     ) -> None:
@@ -56,6 +57,7 @@ class RealtimeClient:
         self.journal = journal
         self.on_speech_started = on_speech_started
         self.on_transcript = on_transcript
+        self.on_response_done = on_response_done
         self.reconnect_s = reconnect_s
         self._connect = connect  # injectable for tests; defaults to websockets
         self._in: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
@@ -225,6 +227,8 @@ class RealtimeClient:
                 )
             else:
                 self.journal.write(J.RESPONSE_COMPLETED, response_id=resp.get("id", ""), status=status)
+            if self.on_response_done:
+                self.on_response_done(status)
 
         elif t == "error":
             log.error("realtime server error: %s", ev.get("error"))

@@ -87,6 +87,13 @@ class AttentionManager:
     # ---- decisions ----
 
     def on_keyword(self, participant_id: str | None, keyword: str) -> Decision:
+        if participant_id is None and self.lease.active():
+            # "Reachy, ..." mid-conversation: same conversation, not a new
+            # participant. Renew; no transfer, no fresh wake acknowledgement.
+            self.lease.renew(None, evidence=f"kws:{keyword}")
+            d = Decision(Action.ENGAGE, confidence=1.0, evidence={"keyword": keyword}, acquired=False)
+            self._log(d, "keyword-renew")
+            return d
         holder = participant_id or f"doa-{self._rng.randrange(1_000_000)}"
         was_holder = self.lease.holder
         self.lease.acquire(holder, evidence=f"kws:{keyword}")

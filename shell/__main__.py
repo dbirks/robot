@@ -87,10 +87,19 @@ async def amain() -> None:
         reaction.cancel()
         filler.cancel()
 
+    filled_for: list[str | None] = [None]  # lease holder that already got its "hmm"
+
     def on_transcript(text: str) -> None:
         lease.note_interaction()
-        if text:
-            filler.wake()  # "hmm" now, while the LLM and TTS work
+        # "hmm" only on the first turn after a wake word; mid-conversation it
+        # is just noise before every answer.
+        if text and lease.active() and filled_for[0] != lease.holder:
+            filled_for[0] = lease.holder
+            filler.wake()
+
+    def on_response_done(status: str) -> None:
+        if status == "completed":
+            lease.exchange()  # Reachy answered: the user gets a fresh window
 
     client = RealtimeClient(
         cfg.s2s_url,
@@ -101,6 +110,7 @@ async def amain() -> None:
         journal=journal,
         on_speech_started=on_speech_started,
         on_transcript=on_transcript,
+        on_response_done=on_response_done,
     )
 
     kws = None
@@ -115,10 +125,16 @@ async def amain() -> None:
     except Exception as e:
         log.warning("KWS unavailable (%r); wake fast path disabled until Phase 3 setup", e)
 
+    silence: dict[int, bytes] = {}
+
     def on_pcm(pcm: bytes) -> None:
         if lease.active():
             client.feed(pcm)  # engaged: s2s owns VAD/turn/STT
             return
+        # Not engaged: send silence, not nothing. If the stream just stops,
+        # s2s never sees a turn end and keeps it open until the NEXT wake -
+        # then answers a conversation from minutes ago (2026-10-04: 13 min).
+        client.feed(silence.setdefault(len(pcm), bytes(len(pcm))))
         if kws is None:
             return
         for hit in kws.process(pcm):

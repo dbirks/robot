@@ -179,3 +179,44 @@ def test_profiles_roundtrip():
 def test_unknown_profile_rejected():
     with pytest.raises(KeyError):
         load_profile("make-it-up")
+
+
+def test_exchange_slides_max_window_for_real_conversation(journal):
+    from shell.attention.lease import AttentionLease
+    from shell.attention.profiles import PROFILES
+
+    clock = [0.0]
+    lease = AttentionLease(PROFILES["quiet"], journal, clock=lambda: clock[0])
+    lease.acquire("p", "kws:Reachy")
+    for _ in range(20):  # a 4-minute back-and-forth, well past lease_max_s
+        clock[0] += 12.0
+        assert lease.exchange()
+    assert lease.active()
+
+
+def test_speech_start_alone_still_capped(journal):
+    from shell.attention.lease import AttentionLease
+    from shell.attention.profiles import PROFILES
+
+    clock = [0.0]
+    prof = PROFILES["quiet"]
+    lease = AttentionLease(prof, journal, clock=lambda: clock[0])
+    lease.acquire("p", "kws:Reachy")
+    while lease.renew(None, "speech-start"):  # TV talking non-stop
+        clock[0] += 5.0
+    assert clock[0] <= prof.lease_max_s + prof.lease_renew_s
+
+
+def test_keyword_mid_conversation_renews_without_new_wake(journal):
+    from shell.attention.lease import AttentionLease
+    from shell.attention.manager import AttentionManager
+    from shell.attention.profiles import PROFILES
+
+    prof = PROFILES["quiet"]
+    lease = AttentionLease(prof, journal)
+    mgr = AttentionManager(prof, lease, journal)
+    first = mgr.on_keyword(None, "Reachy")
+    holder = lease.holder
+    again = mgr.on_keyword(None, "Reachy")
+    assert first.acquired and not again.acquired
+    assert lease.holder == holder

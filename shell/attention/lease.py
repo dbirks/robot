@@ -65,6 +65,25 @@ class AttentionLease:
         )
         return True
 
+    def exchange(self, evidence: str = "reply-done") -> bool:
+        """A real dialogue exchange happened (Reachy finished replying).
+
+        Slides the max-duration window so a live conversation never hits the
+        lease_max_s cap mid-flow - that cap exists to stop ambient speech
+        (TV) from holding attention via speech-start renewals, not to cut off
+        someone Reachy is actually talking with. Gives the user a full
+        renewal window to answer from the END of Reachy's reply."""
+        if not self.active():
+            return False
+        now = self.clock()
+        self._started = now
+        self._expires = now + self.profile.lease_renew_s
+        self.last_interaction = now
+        self.journal.write(
+            J.ATTENTION_LEASE_RENEWED, holder=self.holder, evidence=evidence, remaining_s=round(self.remaining_s, 1)
+        )
+        return True
+
     def note_interaction(self) -> None:
         self.last_interaction = self.clock()
 
