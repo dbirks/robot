@@ -5,8 +5,9 @@ callback bridges PCM into the loop. Engaged vs ambient is decided by the
 attention lease - the single gate for "does room audio reach the s2s
 service?" (ADR 0003: ignored ambient speech never enters the LLM).
 
-Robot tools are bridged from the legacy package during the migration
-window; Phase 2 moves them natively. Everything degrades gracefully with
+Robot tools: one real daemon connection (shell/robot.py); schemas and most
+handlers are bridged from the legacy package during the migration window,
+vision tools are shell-native (shell/robot_tools.py). Everything degrades gracefully with
 no robot connected (EPIC "run without a robot").
 """
 
@@ -25,35 +26,16 @@ from .attention import (
 )
 from .audio import MicOwner, SpeakerOwner
 from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
+from .camera import CameraGrabber
 from .config import ShellConfig
 from .journal import Journal
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
+from .robot import RobotLink
+from .robot_tools import build_handlers
 from .tools import ToolRouter
 
 log = logging.getLogger("shell")
-
-
-def load_robot_tools(journal):
-    """Best-effort bridge to the legacy handlers; empty shell still runs."""
-    try:
-        from app.robot_state import RobotConnection
-        from app.robot_tools import TOOLS, make_handlers
-    except Exception as e:  # missing robot SDK, etc.
-        log.warning("robot tools unavailable: %r", e)
-        return [], {}, None
-
-    class _DisconnectedRobot(RobotConnection):  # redefines __init__; no config needed
-        def __init__(self) -> None:
-            self.mini = None  # property 'connected' derives from this
-
-    robot = _DisconnectedRobot()
-    handlers = {}
-    try:
-        handlers = dict(make_handlers(robot))
-    except Exception as e:
-        log.warning("robot tool construction failed: %r", e)
-    return TOOLS, handlers, robot
 
 
 async def amain() -> None:
@@ -67,7 +49,10 @@ async def amain() -> None:
     mic = MicOwner(cfg.mic_device, cfg.sample_rate, cfg.block_size, cfg.preroll_seconds, journal)
     speaker = SpeakerOwner(rate=cfg.sample_rate, block=cfg.block_size, device=cfg.speaker_device, journal=journal)
 
-    tools, handlers, _robot = load_robot_tools(journal)
+    robot = RobotLink(journal)
+    await asyncio.to_thread(robot.connect)  # robot absent -> tools say so, shell runs
+    camera = CameraGrabber(robot.daemon_url)
+    tools, handlers = build_handlers(robot, camera, data_dir=cfg.data_dir)
     router = ToolRouter(
         tools,
         handlers,
@@ -178,6 +163,7 @@ async def amain() -> None:
     finally:
         mic.close()
         speaker.close()
+        await asyncio.to_thread(robot.disconnect)
         journal.closed()
 
 
