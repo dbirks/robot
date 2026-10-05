@@ -39,6 +39,10 @@ class ShellConfig:
     mic_device: str | None = field(default_factory=lambda: os.getenv("REACHY_MIC") or None)
     speaker_device: str | None = field(default_factory=lambda: os.getenv("REACHY_SPEAKER") or None)
 
+    # Motion (shell/motion): one control loop; 50 Hz matches the daemon's
+    # own control loop. Lower it if CPU is tight (ADR 0006).
+    motion_hz: float = field(default_factory=lambda: float(os.getenv("REACHY_MOTION_HZ", "50")))
+
     # Paths
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "data")))
     # Prerendered acknowledgements: <ack_dir>/wake/*.wav and <ack_dir>/think/*.wav,

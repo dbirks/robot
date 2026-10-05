@@ -29,10 +29,11 @@ from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
 from .config import ShellConfig
 from .journal import Journal
+from .motion import MotionOwner
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
 from .robot import RobotLink
-from .robot_tools import build_handlers
+from .robot_tools import build_handlers, load_sdk_sound
 from .tools import ToolRouter
 
 log = logging.getLogger("shell")
@@ -52,7 +53,16 @@ async def amain() -> None:
     robot = RobotLink(journal)
     await asyncio.to_thread(robot.connect)  # robot absent -> tools say so, shell runs
     camera = CameraGrabber(robot.daemon_url)
-    tools, handlers = build_handlers(robot, camera, data_dir=cfg.data_dir)
+    motion = MotionOwner(robot, journal, hz=cfg.motion_hz, is_speaking=lambda: speaker.playing)
+    sounds: dict[str, object] = {}
+
+    def play_sound(name: str) -> None:  # tool earcons go through the one speaker owner
+        if name not in sounds:
+            sounds[name] = load_sdk_sound(name, cfg.sample_rate)
+        if sounds[name] is not None:
+            speaker.enqueue(speaker.generation, "sound", sounds[name])
+
+    tools, handlers = build_handlers(robot, camera, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound)
     router = ToolRouter(
         tools,
         handlers,
@@ -142,6 +152,7 @@ async def amain() -> None:
 
     mic.open()
     speaker.open()
+    motion.start()  # no-op without a robot
     log.info("shell up: profile=%s tools=%d lease=%s", profile.name, len(tools), lease.holder)
 
     rt = asyncio.create_task(client.run(), name="realtime")
@@ -163,6 +174,7 @@ async def amain() -> None:
     finally:
         mic.close()
         speaker.close()
+        await asyncio.to_thread(motion.stop)
         await asyncio.to_thread(robot.disconnect)
         journal.closed()
 

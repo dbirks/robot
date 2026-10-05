@@ -16,6 +16,8 @@ import logging
 import os
 from dataclasses import dataclass, field
 
+from . import journal as J
+
 log = logging.getLogger("shell.robot")
 
 
@@ -54,7 +56,7 @@ class RobotLink:
             self.mini = None
             log.warning("Reachy Mini not connected (%r); robot tools will report it", e)
         if self.journal is not None:
-            self.journal.write("robot.connection", connected=self.connected, host=self.config.reachy_host)
+            self.journal.write(J.ROBOT_CONNECTION, connected=self.connected, host=self.config.reachy_host)
         return self.connected
 
     def disconnect(self) -> None:

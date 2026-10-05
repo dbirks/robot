@@ -128,3 +128,33 @@ def test_grabber_refuses_when_daemon_holds_camera(monkeypatch):
         cam.grab()
     with pytest.raises(RuntimeError, match="disabled"):
         CameraGrabber(mode="off").grab()
+
+
+def test_motion_tools_drive_the_owner():
+    import random
+
+    from shell.motion import MotionOwner
+    from shell.robot_tools import make_motion_handlers
+
+    class Mini:
+        def goto_target(self, **k):
+            pass
+
+    class Robot:
+        mini = Mini()
+        connected = True
+
+    robot = Robot()
+    motion = MotionOwner(robot, rng=random.Random(0))
+    h = make_motion_handlers(robot, motion, play_sound=lambda name: None, rng=random.Random(0))
+    assert h["look_left"]() == {"ok": True, "action": "look_left"}
+    assert motion.gaze_target_yaw_deg == pytest.approx(30)
+    assert h["look_right"]()["ok"] and motion.gaze_target_yaw_deg == pytest.approx(-30)
+    assert h["look_center"]()["ok"] and motion.gaze_source == "home"
+    assert h["nod"]()["ok"] and h["shake_head"]()["ok"]
+    assert [a.name for a in motion._anims] == ["nod", "shake_head"]
+    assert h["peekaboo"]()["ok"] is True
+    assert h["peekaboo"]()["ok"] is False  # busy: one exclusive move at a time
+    assert h["go_to_sleep"]()["ok"] is False
+    motion._jobs.clear()
+    assert h["go_to_sleep"]() == {"ok": True, "action": "sleeping"}

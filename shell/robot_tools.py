@@ -19,6 +19,7 @@ import base64
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -180,7 +181,136 @@ def make_vision_handlers(
     }
 
 
-def build_handlers(robot, camera, *, data_dir: Path = Path("data"), motion=None) -> tuple[list[dict], dict]:
+LOOK_ANGLE_DEG = 30.0
+LOOK_HOLD_S = 6.0  # then the gaze drifts home (or back to whoever wakes him)
+
+
+def load_sdk_sound(name: str, rate: int = 16000):
+    """An SDK asset (e.g. wake_up.wav) as mono int16 at `rate`, or None."""
+    import importlib.resources
+
+    import numpy as np
+    import soundfile as sf
+
+    path = Path(str(importlib.resources.files("reachy_mini") / "assets" / name))
+    if not path.exists():
+        return None
+    data, sr = sf.read(str(path), dtype="float32")
+    if data.ndim > 1:
+        data = data[:, 0]
+    if sr != rate:
+        from math import gcd
+
+        from scipy.signal import resample_poly
+
+        g = gcd(sr, rate)
+        data = resample_poly(data, rate // g, sr // g)
+    return np.clip(data * 32767.0, -32768, 32767).astype(np.int16)
+
+
+def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | None = None, rng=None):
+    """Motion tools on the single MotionOwner. Fire-and-forget: they return
+    as soon as the intent is queued; the owner plays it out."""
+    import random
+
+    from .motion import nod_animation, shake_animation
+    from .motion.kinematics import pose6, pose_matrix
+    from .motion.owner import SLEEP_ANTENNAS, SLEEP_HEAD_POSE
+
+    rng = rng or random.Random()
+
+    def _ready() -> dict | None:
+        if not robot.connected or motion is None:
+            return dict(NOT_CONNECTED)
+        return None
+
+    def _woken() -> None:
+        motion.wake()  # asked to move while asleep: get up first
+
+    @_guard
+    def look_left(**_kw: Any) -> dict:
+        if err := _ready():
+            return err
+        _woken()
+        motion.look_at(LOOK_ANGLE_DEG, hold_s=LOOK_HOLD_S, source="tool")
+        return {"ok": True, "action": "look_left"}
+
+    @_guard
+    def look_right(**_kw: Any) -> dict:
+        if err := _ready():
+            return err
+        _woken()
+        motion.look_at(-LOOK_ANGLE_DEG, hold_s=LOOK_HOLD_S, source="tool")
+        return {"ok": True, "action": "look_right"}
+
+    @_guard
+    def look_center(**_kw: Any) -> dict:
+        if err := _ready():
+            return err
+        _woken()
+        motion.center()
+        return {"ok": True, "action": "look_center"}
+
+    @_guard
+    def nod(**_kw: Any) -> dict:
+        if err := _ready():
+            return err
+        _woken()
+        motion.play(nod_animation())
+        return {"ok": True, "action": "nod"}
+
+    @_guard
+    def shake_head(**_kw: Any) -> dict:
+        if err := _ready():
+            return err
+        _woken()
+        motion.play(shake_animation())
+        return {"ok": True, "action": "shake_head"}
+
+    @_guard
+    def peekaboo(**_kw: Any) -> dict:
+        if err := _ready():
+            return err
+        hide_s = rng.uniform(1.0, 4.0)  # the suspense
+
+        def sequence(mini) -> None:
+            mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=1.0)
+            time.sleep(hide_s)
+            if play_sound is not None:
+                play_sound("wake_up.wav")  # lands ON the pop-up: enqueue is instant
+            mini.goto_target(head=pose_matrix(pose6(pitch=-10)), antennas=[0.5, 0.5], duration=0.2)
+            time.sleep(0.8)
+            mini.goto_target(head=pose_matrix(pose6()), antennas=[-0.1745, 0.1745], duration=0.8)
+
+        _woken()
+        if not motion.exclusive("peekaboo", sequence):
+            return {"ok": False, "error": "Busy with another move - wait for it to finish"}
+        return {"ok": True, "action": "peekaboo"}
+
+    @_guard
+    def go_to_sleep(**_kw: Any) -> dict:
+        if err := _ready():
+            return err
+        if motion.sleeping:
+            return {"ok": True, "action": "already_sleeping"}
+        if not motion.sleep():
+            return {"ok": False, "error": "Busy with another move - wait for it to finish"}
+        return {"ok": True, "action": "sleeping"}
+
+    return {
+        "look_left": look_left,
+        "look_right": look_right,
+        "look_center": look_center,
+        "nod": nod,
+        "shake_head": shake_head,
+        "peekaboo": peekaboo,
+        "go_to_sleep": go_to_sleep,
+    }
+
+
+def build_handlers(
+    robot, camera, *, data_dir: Path = Path("data"), motion=None, play_sound=None
+) -> tuple[list[dict], dict]:
     """(TOOLS, handlers) for the router. Never raises: a missing robot SDK or
     legacy package still yields a running shell with fewer tools."""
     try:
@@ -194,4 +324,7 @@ def build_handlers(robot, camera, *, data_dir: Path = Path("data"), motion=None)
     except Exception as e:
         log.warning("legacy robot tool construction failed: %r", e)
     handlers.update(make_vision_handlers(camera, data_dir=data_dir))
+    # play_emotion stays legacy: it feeds emotion keyframes to
+    # motion.queue_animation (the MovementManager-compatible adapter).
+    handlers.update(make_motion_handlers(robot, motion, play_sound=play_sound))
     return TOOLS, handlers
