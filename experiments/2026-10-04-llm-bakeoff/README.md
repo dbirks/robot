@@ -30,3 +30,19 @@ and ~6x faster on cold prefill, with less VRAM. Blocker before switching: the
 text-leaked tool calls. Next: newer llama.cpp Gemma 4 tool parser, or the
 template's tool-call tokens, then re-run; KV q8_0/q8_0 per run_llama_server.sh
 note (non-hybrid model) was used here.
+
+## Round 2 — IBM Granite (official ibm-granite GGUFs), same harness
+
+| model | tool test x2 | mean latency | decode | cold prefill | VRAM (32K ctx, 2 slots, LLM alone) |
+|---|---|---|---|---|---|
+| granite-4.1-3b Q8_0 (3.6 GB, no thinking mode) | 19 / 19 | 0.47-0.61 s | 44 tok/s | ~1040 tok/s | ~5.0 GB |
+| granite-4.2-3b Q8_0 (thinking off) | 17 / 19 | 0.82-0.86 s | 43 tok/s | ~1040 tok/s | ~5.0 GB |
+| granite-4.2-8b Q4_K_M | 19 / 19 | 1.17-1.41 s | 27 tok/s | ~440 tok/s | 7.9 GB (does not fit with TTS) |
+| granite-4.0-micro Q8_0 | 15 / 15 | 0.48-0.54 s | 43 tok/s | ~1035 tok/s | ~5.0 GB |
+
+- 4.1-3b: only miss was "Speak up" (answered in text / once emitted the bare word `louder`).
+- 4.2-3b: refuses go_to_sleep on a plain "Go to sleep." (over-reads the tool's EXACTLY rule); missed nod/peekaboo once.
+- 4.0-micro: over-calls tools on small talk (get_robot_status for "how are you", web_search for 2+2, go_to_sleep for "thanks, that's all").
+- 4.2-8b: accurate but slow and does not fit beside the Obama TTS.
+
+Leader: granite-4.1-3b. Before switching: VRAM with the live TTS (~5.0 GB here at 32K vs Qwen ~4.4 GB; Obama 1.7B TTS needs ~3.3 GB) - try 16K ctx or Q6_K, and listen-test persona quality.
