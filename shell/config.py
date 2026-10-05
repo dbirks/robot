@@ -17,6 +17,15 @@ DEFAULT_INSTRUCTIONS = (
     "and slightly charming."
 )
 
+# Appended to every persona. shell/llm_proxy.py stamps user messages with the
+# time they were said; without this the model can't use (or might read) them.
+TIME_NOTE = (
+    " Each user message begins with the time it was said, like [Mon 17:38]."
+    " Never say or repeat those stamps. Answer only the newest message; if a"
+    " lot of time has passed since the previous one, treat it as a fresh"
+    " conversation and do not bring back old, unanswered topics."
+)
+
 
 @dataclass
 class ShellConfig:
@@ -25,8 +34,14 @@ class ShellConfig:
     instructions: str = field(
         # Name mis-hearings (Richie/Ricci) are fixed in shell/llm_proxy.py, not
         # here: prompting the 4B model about them made it keep bringing it up.
-        default_factory=lambda: os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS)
+        default_factory=lambda: os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS).rstrip() + TIME_NOTE
     )
+
+    # Direct llama.cpp endpoint for side tasks (conversation compaction).
+    llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080/v1"))
+    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "local"))
+    compact_after_s: float = field(default_factory=lambda: float(os.getenv("REACHY_COMPACT_AFTER_S", "180")))
+    reset_after_s: float = field(default_factory=lambda: float(os.getenv("REACHY_RESET_AFTER_S", "600")))
 
     # Attention
     attention_profile: str = field(default_factory=lambda: os.getenv("REACHY_PROFILE", "quiet"))

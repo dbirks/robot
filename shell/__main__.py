@@ -26,6 +26,7 @@ from .attention import (
 from .audio import MicOwner, SpeakerOwner
 from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .config import ShellConfig
+from .conversation import ConversationMemory, llm_summarize
 from .journal import Journal
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
@@ -88,9 +89,16 @@ async def amain() -> None:
         filler.cancel()
 
     filled_for: list[str | None] = [None]  # lease holder that already got its "hmm"
+    memory = ConversationMemory(
+        journal,
+        lambda prior, turns: llm_summarize(cfg.llm_base_url, cfg.llm_model, prior, turns),
+        compact_after_s=cfg.compact_after_s,
+        reset_after_s=cfg.reset_after_s,
+    )
 
     def on_transcript(text: str) -> None:
         lease.note_interaction()
+        memory.add("user", text)
         # "hmm" only on the first turn after a wake word; mid-conversation it
         # is just noise before every answer.
         if text and lease.active() and filled_for[0] != lease.holder:
@@ -111,6 +119,7 @@ async def amain() -> None:
         on_speech_started=on_speech_started,
         on_transcript=on_transcript,
         on_response_done=on_response_done,
+        on_assistant_text=lambda text: memory.add("assistant", text),
     )
 
     kws = None
@@ -126,6 +135,13 @@ async def amain() -> None:
         log.warning("KWS unavailable (%r); wake fast path disabled until Phase 3 setup", e)
 
     silence: dict[int, bytes] = {}
+
+    def start_conversation() -> None:
+        # After a long quiet spell, start a fresh s2s session seeded with the
+        # compacted summary instead of hours-old raw history.
+        note = memory.on_wake()
+        if note is not None:
+            client.reset_session(note)
 
     was_speaking = [False]
 
@@ -150,6 +166,8 @@ async def amain() -> None:
         for hit in kws.process(pcm):
             decision = manager.on_keyword(None, hit.keyword)
             journal.write("kws.detected", keyword=hit.keyword, score=hit.score)
+            if decision.acquired:
+                loop.call_soon_threadsafe(start_conversation)
             client.feed(mic.preroll())  # preserve "Reachy, ..." as one utterance
             reaction.wake(doa_deg=None, attending_same=not decision.acquired)
 
@@ -168,6 +186,7 @@ async def amain() -> None:
             await asyncio.sleep(10.0)
             if not speaker.playing:  # never drop attention mid-reply
                 lease.expire_if_due()
+            memory.tick(engaged=lease.active() or speaker.playing)
             health = await asyncio.to_thread(mic.health)  # runs wpctl
             journal.write("audio.health", **health)
             await asyncio.to_thread(xmos.check, health)

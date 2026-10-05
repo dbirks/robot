@@ -155,3 +155,72 @@ def test_first_audio_journaled_once_per_response(journal, speaker):
 
     asyncio.run(go())
     assert journal.types().count("response.first_audio") == 1
+
+
+def test_assistant_transcript_routed(journal, speaker):
+    got = []
+    c = RealtimeClient(
+        "ws://fake",
+        instructions="t",
+        tools=[],
+        tool_router=object(),
+        speaker=speaker,
+        journal=journal,
+        on_assistant_text=got.append,
+    )
+    asyncio.run(c.handle_event({"type": "response.output_audio_transcript.done", "transcript": "Hello there."}))
+    assert got == ["Hello there."]
+
+
+def test_reset_session_reconnects_with_extra_instructions_and_keeps_audio(journal, speaker):
+    sessions = []
+
+    class WS:
+        def __init__(self):
+            self.sent = []
+            self.closed = asyncio.Event()
+
+        async def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await self.closed.wait()
+            raise StopAsyncIteration
+
+    class Conn:
+        async def __aenter__(self):
+            ws = WS()
+            sessions.append(ws)
+            return ws
+
+        async def __aexit__(self, *a):
+            sessions[-1].closed.set()
+
+    c = RealtimeClient(
+        "ws://fake",
+        instructions="base",
+        tools=[],
+        tool_router=object(),
+        speaker=speaker,
+        journal=journal,
+        connect=Conn,
+    )
+
+    async def go():
+        task = asyncio.create_task(c.run())
+        await asyncio.sleep(0.05)
+        c.reset_session(" EXTRA")  # on-loop: applies before the next feed
+        c.feed(b"\x01\x00" * 4)
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+    asyncio.run(go())
+    assert len(sessions) == 2
+    assert sessions[0].sent[0]["session"]["instructions"] == "base"
+    assert sessions[1].sent[0]["session"]["instructions"] == "base EXTRA"
+    appended = [m for m in sessions[1].sent if m["type"] == "input_audio_buffer.append"]
+    assert appended, "audio fed at reset time must reach the NEW session"
+    assert not [m for m in sessions[0].sent if m["type"] == "input_audio_buffer.append"]

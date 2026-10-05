@@ -46,6 +46,7 @@ class RealtimeClient:
         on_speech_started: Callable[[], None] | None = None,
         on_transcript: Callable[[str], None] | None = None,
         on_response_done: Callable[[str], None] | None = None,
+        on_assistant_text: Callable[[str], None] | None = None,
         reconnect_s: float = 2.0,
         connect=None,
     ) -> None:
@@ -58,6 +59,10 @@ class RealtimeClient:
         self.on_speech_started = on_speech_started
         self.on_transcript = on_transcript
         self.on_response_done = on_response_done
+        self.on_assistant_text = on_assistant_text
+        self._extra_instructions = ""  # e.g. summary of an earlier conversation
+        self._reset: asyncio.Event | None = None
+        self._carry: bytes | None = None
         self.reconnect_s = reconnect_s
         self._connect = connect  # injectable for tests; defaults to websockets
         self._in: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
@@ -109,8 +114,30 @@ class RealtimeClient:
 
     # ---- lifecycle ----
 
+    def reset_session(self, extra_instructions: str = "") -> None:
+        """Drop the s2s conversation and reconnect with a fresh session whose
+        instructions carry `extra_instructions`. Safe from any thread; queued
+        mic audio is kept and flows into the new session."""
+        if self._loop is None:
+            return
+
+        def _do() -> None:
+            self._extra_instructions = extra_instructions
+            if self._reset is not None:
+                self._reset.set()
+
+        try:
+            on_loop = asyncio.get_running_loop() is self._loop
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            _do()  # must land before audio queued right after this call
+        else:
+            self._loop.call_soon_threadsafe(_do)
+
     async def run(self) -> None:
         self._loop = asyncio.get_event_loop()
+        self._reset = asyncio.Event()
         while True:
             try:
                 await self._session()
@@ -140,7 +167,7 @@ class RealtimeClient:
                         "type": "session.update",
                         "session": {
                             "type": "realtime",
-                            "instructions": self.instructions,
+                            "instructions": self.instructions + self._extra_instructions,
                             "tools": self.tools,
                         },
                     }
@@ -148,20 +175,35 @@ class RealtimeClient:
             )
             sender = asyncio.create_task(self._sender(ws), name="rt-sender")
             receiver = asyncio.create_task(self._receiver(ws), name="rt-receiver")
+            if self._reset is not None:
+                self._reset.clear()
+            resetter = asyncio.create_task(self._reset.wait() if self._reset else asyncio.Event().wait())
             try:
-                done, _ = await asyncio.wait({sender, receiver}, return_when=asyncio.FIRST_EXCEPTION)
+                done, _ = await asyncio.wait({sender, receiver, resetter}, return_when=asyncio.FIRST_COMPLETED)
                 for t in done:  # a dead sender streams silence; make noise instead
-                    if not t.cancelled() and t.exception():
+                    if t is not resetter and not t.cancelled() and t.exception():
                         raise RuntimeError(f"{t.get_name()} died") from t.exception()
+                if resetter in done:
+                    log.info("realtime: starting a fresh session")
+                    self.journal.write("realtime.session_reset")
+                elif receiver in done:
+                    raise RuntimeError("realtime connection closed")
             finally:
                 sender.cancel()
                 receiver.cancel()
+                resetter.cancel()
                 self._ws = None
                 self.connected = False
 
     async def _sender(self, ws) -> None:
+        if self._carry is not None:  # audio taken just as a reset began
+            pcm, self._carry = self._carry, None
+            await ws.send(json.dumps({"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode()}))
         while True:
             pcm = await self._in.get()
+            if self._reset is not None and self._reset.is_set():
+                self._carry = pcm  # belongs to the NEW session (e.g. the wake preroll)
+                await asyncio.Event().wait()  # cancelled by the reset momentarily
             await ws.send(
                 json.dumps(
                     {
@@ -212,6 +254,10 @@ class RealtimeClient:
             if self.speaker.enqueue(gen, "tts", pcm) and rid not in self._first_audio:
                 self._first_audio.add(rid)  # only mark the FIRST delta
                 self.journal.write(J.RESPONSE_FIRST_AUDIO, response_id=rid)
+
+        elif t == "response.output_audio_transcript.done":
+            if self.on_assistant_text:
+                self.on_assistant_text(ev.get("transcript") or "")
 
         elif t == "response.function_call_arguments.done":
             await self._handle_function_call(ev)

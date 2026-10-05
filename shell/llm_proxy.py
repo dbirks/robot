@@ -10,7 +10,12 @@ streamed responses - passes through byte for byte.
 
     s2s --responses_api_base_url http://127.0.0.1:8081/v1 -> here -> llama :8080
 
-Rewrites are deterministic, so llama.cpp's prompt-prefix cache still hits.
+It also stamps each user message with the local time it was first seen
+("[Mon 17:38] ..."), so the model can tell a fresh question from one asked
+hours ago (2026-10-05: it answered a 40-minute-old dangling question).
+
+Both rewrites are deterministic per message, so llama.cpp's prompt-prefix
+cache still hits.
 """
 
 from __future__ import annotations
@@ -19,6 +24,8 @@ import json
 import logging
 import os
 import re
+import time
+from collections import OrderedDict
 
 import httpx
 from fastapi import FastAPI, Request
@@ -39,32 +46,71 @@ def fix_name(text: str) -> str:
     return NAME_RE.sub("Reachy", text)
 
 
-def rewrite_body(body: dict) -> dict:
-    """Fix the name in user-authored text of a Responses or Chat request."""
+STAMP_RE = re.compile(r"^\[[A-Z][a-z]{2} \d{2}:\d{2}\] ")
+
+
+class Timestamper:
+    """Remembers when each user message was first seen. s2s re-sends the whole
+    history every request, so the k-th occurrence of a given text keeps its
+    original time and the rendered prompt never changes for old turns."""
+
+    def __init__(self, clock=time.time, max_texts: int = 2000) -> None:
+        self.clock = clock
+        self.max_texts = max_texts
+        self._seen: OrderedDict[str, list[float]] = OrderedDict()
+
+    def stamp(self, text: str, occurrence: int) -> str:
+        if STAMP_RE.match(text):
+            return text
+        times = self._seen.setdefault(text, [])
+        self._seen.move_to_end(text)
+        while len(times) <= occurrence:
+            times.append(self.clock())
+        while len(self._seen) > self.max_texts:
+            self._seen.popitem(last=False)
+        return time.strftime("[%a %H:%M] ", time.localtime(times[occurrence])) + text
+
+
+def rewrite_body(body: dict, stamper: Timestamper | None = None) -> dict:
+    """Fix the name in user-authored text of a Responses or Chat request, and
+    (with a stamper) prefix each user message with when it was said."""
     items = body.get("input")
+    counts: dict[str, int] = {}
     if isinstance(items, str):
         body["input"] = fix_name(items)
     elif isinstance(items, list):
         for item in items:
-            _fix_message(item)
+            _fix_message(item, stamper, counts)
     for msg in body.get("messages") or []:  # chat-completions shape
-        _fix_message(msg)
+        _fix_message(msg, stamper, counts)
     return body
 
 
-def _fix_message(msg) -> None:
+def _fix_message(msg, stamper: Timestamper | None = None, counts: dict | None = None) -> None:
     if not isinstance(msg, dict) or msg.get("role") != "user":
         return
     content = msg.get("content")
     if isinstance(content, str):
-        msg["content"] = fix_name(content)
+        msg["content"] = _fix_text(content, stamper, counts)
     elif isinstance(content, list):
+        stamped = False
         for part in content:
             if isinstance(part, dict) and isinstance(part.get("text"), str):
-                part["text"] = fix_name(part["text"])
+                part["text"] = _fix_text(part["text"], None if stamped else stamper, counts)
+                stamped = True
+
+
+def _fix_text(text: str, stamper: Timestamper | None, counts: dict | None) -> str:
+    text = fix_name(text)
+    if stamper is None or counts is None:
+        return text
+    n = counts.get(text, 0)
+    counts[text] = n + 1
+    return stamper.stamp(text, n)
 
 
 app = FastAPI()
+_stamper = Timestamper()
 _client = httpx.AsyncClient(base_url=UPSTREAM, timeout=httpx.Timeout(300.0, connect=5.0))
 _HOP = {"host", "content-length", "transfer-encoding", "connection", "accept-encoding"}
 
@@ -74,7 +120,7 @@ async def proxy(path: str, request: Request):
     raw = await request.body()
     if raw and request.headers.get("content-type", "").startswith("application/json"):
         try:
-            raw = json.dumps(rewrite_body(json.loads(raw))).encode()
+            raw = json.dumps(rewrite_body(json.loads(raw), _stamper)).encode()
         except (ValueError, AttributeError):
             pass  # not our shape: forward untouched
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP}
