@@ -25,9 +25,18 @@ export HF_HOME="${HF_HOME:-$DIR/hf-cache}"
 # --responses_api_base_url is REQUIRED: upstream otherwise defaults to a hosted
 # OpenAI model. Upstream's default reasoning effort "none" is honored by
 # llama.cpp's /v1/responses and keeps Qwen3.5 from thinking (verified).
-# --max_speech_ms: upstream default is infinite. With a TV talking, Smart Turn
-# never sees a complete turn, so one turn grew to 74 s and never got answered
-# (2026-10-03). 20 s forces a split; a real request is far shorter.
+# --max_speech_ms: upstream default is infinite. It only bounds ONE Silero
+# segment (and discards it, despite the help text), not a turn - see below.
+# Endpointing (2026-10-10, from reading VAD/vad_handler.py at v1.0.0): a turn
+# ends only when no new speech starts within the reopen grace after a pause;
+# any speech inside it REOPENS the same turn and Parakeet re-transcribes the
+# whole growing buffer. The grace is max(speculative_reopen_ms,
+# unanswered_reopen_ms=7000 default, smart_turn_max_wait_ms=2000), so a TV
+# kept one turn open for ~2 min and the answer came a minute later
+# (2026-10-09). 1200 ms keeps a mid-sentence breath inside the turn while
+# background talk can't chain onto it. --thresh 0.7 (default 0.6) makes
+# distant/quiet speech less likely to start or extend a turn. The shell also
+# force-ends any turn longer than REACHY_MAX_TURN_S by feeding silence.
 # Parakeet: v3 (upstream nano-parakeet hardcodes the v3 vocab; v2 fails to
 # load with a decoder.embed size mismatch), fp32 on CPU - fp16 runs at 1/64 rate on GP104
 # and fp32-on-GPU does not fit beside llama.cpp + Kokoro (ADR 0004).
@@ -66,6 +75,9 @@ exec "$DIR/repo/.venv/bin/speech-to-speech" serve \
   --parakeet_tdt_compute_type float32 \
   --enable_live_transcription "${S2S_LIVE_TRANSCRIPTION:-False}" \
   --max_speech_ms "${S2S_MAX_SPEECH_MS:-20000}" \
+  --thresh "${S2S_VAD_THRESH:-0.7}" \
+  --unanswered_reopen_ms "${S2S_REOPEN_MS:-1200}" \
+  --smart_turn_max_wait_ms "${S2S_REOPEN_MS:-1200}" \
   --tts "$TTS" "${TTS_ARGS[@]}" \
   --llm_backend responses-api \
   --responses_api_base_url "$OPENAI_BASE_URL" \
@@ -74,5 +86,6 @@ exec "$DIR/repo/.venv/bin/speech-to-speech" serve \
   --model_name "${LLM_MODEL:-qwen3.5-4b}"
 # Phase 1 gate TODO (experiments/2026-07-28-realtime-spike): measure CPU of
 # --enable_live_transcription on the 4-core box before turning it on (it
-# re-transcribes the growing window every 500 ms); add --smart_turn only if
-# the upstream speculative-turn behavior proves weak.
+# re-transcribes the growing window every 500 ms). Smart Turn is ON by
+# default upstream; it only picks the grace (complete -> 800 ms, incomplete
+# -> smart_turn_max_wait_ms) and delays STT 600 ms on "incomplete".

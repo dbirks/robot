@@ -15,6 +15,34 @@ class FakeWS:
         self.sent.append(json.loads(raw))
 
 
+class AdmittingWS:
+    """Fake s2s socket: first frame is session.created (or a rejection)."""
+
+    def __init__(self, first=None):
+        self.sent = []
+        self.closed = asyncio.Event()
+        self._first = first or {"type": "session.created", "session": {}}
+
+    async def send(self, raw):
+        self.sent.append(json.loads(raw))
+
+    async def recv(self):
+        if self._first is None:
+            await self.closed.wait()
+            raise ConnectionError("closed")
+        first, self._first = self._first, None
+        return json.dumps(first)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._first is not None:
+            return await self.recv()
+        await self.closed.wait()
+        raise StopAsyncIteration
+
+
 def make_client(journal, speaker, router=None):
     return RealtimeClient(
         "ws://fake",
@@ -175,24 +203,9 @@ def test_assistant_transcript_routed(journal, speaker):
 def test_reset_session_reconnects_with_extra_instructions_and_keeps_audio(journal, speaker):
     sessions = []
 
-    class WS:
-        def __init__(self):
-            self.sent = []
-            self.closed = asyncio.Event()
-
-        async def send(self, raw):
-            self.sent.append(json.loads(raw))
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            await self.closed.wait()
-            raise StopAsyncIteration
-
     class Conn:
         async def __aenter__(self):
-            ws = WS()
+            ws = AdmittingWS()
             sessions.append(ws)
             return ws
 
@@ -224,3 +237,41 @@ def test_reset_session_reconnects_with_extra_instructions_and_keeps_audio(journa
     appended = [m for m in sessions[1].sent if m["type"] == "input_audio_buffer.append"]
     assert appended, "audio fed at reset time must reach the NEW session"
     assert not [m for m in sessions[0].sent if m["type"] == "input_audio_buffer.append"]
+
+
+def test_busy_slot_retries_fast_and_audio_goes_to_admitted_session(journal, speaker):
+    sessions = []
+    busy = {"type": "error", "error": {"type": "session_limit_reached", "message": "All 1 session slots are in use."}}
+
+    class Conn:
+        async def __aenter__(self):
+            ws = AdmittingWS(first=busy if not sessions else None)
+            sessions.append(ws)
+            return ws
+
+        async def __aexit__(self, *a):
+            sessions[-1].closed.set()
+
+    c = RealtimeClient(
+        "ws://fake",
+        instructions="base",
+        tools=[],
+        tool_router=object(),
+        speaker=speaker,
+        journal=journal,
+        busy_retry_s=0.01,
+        connect=Conn,
+    )
+
+    async def go():
+        task = asyncio.create_task(c.run())
+        await asyncio.sleep(0)
+        c.feed(b"\x01\x00" * 4)  # e.g. the wake preroll, queued while rejected
+        await asyncio.sleep(0.1)
+        task.cancel()
+
+    asyncio.run(go())
+    assert len(sessions) == 2
+    assert sessions[0].sent == [], "nothing may be sent into a rejected socket"
+    assert [m for m in sessions[1].sent if m["type"] == "input_audio_buffer.append"]
+    assert not journal.find("realtime.error")

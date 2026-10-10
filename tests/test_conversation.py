@@ -115,3 +115,23 @@ def test_rolling_summary_includes_prior():
 
 def test_render_turns():
     assert "User: hi" in render_turns([(1_800_000_000.0, "user", "hi")])
+
+
+def test_tick_resets_proactively_once_summary_is_ready():
+    mem, clock, _ = make()
+
+    async def go():
+        mem.add("user", "My name is Dave")
+        clock[0] += 200
+        assert mem.tick(engaged=False) is None  # starts compaction
+        await mem._task
+        assert mem.tick(engaged=False) is None  # summarized, but not quiet long enough
+        clock[0] += 500
+        assert mem.tick(engaged=True) is None  # never while engaged
+        note = mem.tick(engaged=False)
+        assert note and "Yoshi" in note
+        assert mem.tick(engaged=False) is None  # once
+        assert mem.on_wake() is None  # the wake word finds it already done
+
+    run(go)
+    assert mem.journal.events.count("conversation.reset") == 1

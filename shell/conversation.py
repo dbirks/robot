@@ -4,10 +4,12 @@ s2s keeps the last N exchanges forever with no sense of time, so a question
 left dangling by a failed reply got answered 40 minutes later (2026-10-05).
 This keeps our own record of the dialogue, and once the room has been quiet
 for `compact_after_s` it summarizes it in the background (LLM, idle time).
-On the next wake word after `reset_after_s` of silence the shell starts a
-FRESH s2s session seeded with that summary instead of the raw history. If the
-summary is still being written when someone wakes Reachy, the existing
-session is simply kept (no waiting, nothing lost).
+After `reset_after_s` of silence the shell starts a FRESH s2s session seeded
+with that summary instead of the raw history - proactively, while the room is
+quiet, so the reconnect never races the next wake word (2026-10-09: doing it
+on the wake word lost "Reachy, ..." to a rejected reconnect 20 times out of
+22). The wake word still checks, as a fallback. If the summary is not ready,
+the existing session is simply kept (no waiting, nothing lost).
 """
 
 from __future__ import annotations
@@ -62,15 +64,16 @@ class ConversationMemory:
     def compacting(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    def tick(self, engaged: bool) -> None:
-        """Call periodically on the event loop. Starts compaction when idle."""
+    def tick(self, engaged: bool) -> str | None:
+        """Call periodically on the event loop. Starts compaction when idle;
+        returns extra instructions when it is time for a fresh session."""
         if engaged or self.compacting or not self.turns:
-            return
-        if self.summary is not None and self.summary.covers >= len(self.turns):
-            return
-        if self.idle_s < self.compact_after_s:
-            return
-        self._task = asyncio.get_event_loop().create_task(self._compact(), name="compaction")
+            return None
+        if self.summary is None or self.summary.covers < len(self.turns):
+            if self.idle_s >= self.compact_after_s:
+                self._task = asyncio.get_event_loop().create_task(self._compact(), name="compaction")
+            return None
+        return self.on_wake()
 
     async def _compact(self) -> None:
         turns = list(self.turns)

@@ -26,6 +26,7 @@ from .attention import (
     load_profile,
 )
 from .audio import MicOwner, SpeakerOwner
+from .audio.xmos_tuning import XmosTuner
 from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
 from .config import ShellConfig
@@ -39,6 +40,11 @@ from .robot_tools import build_handlers, load_sdk_sound
 from .tools import ToolRouter
 
 log = logging.getLogger("shell")
+
+# Longer than the s2s reopen grace (--unanswered_reopen_ms in run_s2s.sh), so
+# the next sound starts a NEW turn instead of extending the cut one.
+FORCED_END_SILENCE_S = 1.5
+REPLY_WAIT_S = 30.0  # longest we keep attention waiting on one reply
 
 
 async def amain() -> None:
@@ -85,6 +91,8 @@ async def amain() -> None:
         lease_active=lease.active,
     )
     kws_hit_t = [0.0]
+    xmos_tuner = XmosTuner(journal, agc_max_gain=cfg.xmos_agc_max_gain, beam_focus=cfg.xmos_beam_focus)
+    await asyncio.to_thread(xmos_tuner.ensure)
 
     loop = asyncio.get_event_loop()
     reaction = WakeReaction(
@@ -98,14 +106,24 @@ async def amain() -> None:
         speaker, journal, sound_dir=cfg.ack_dir / "think", delay_range_s=(0.0, 0.05), min_interval_s=4.0, loop=loop
     )
 
+    turn_t0: list[float | None] = [None]  # first speech-start of the open user turn
+    mute_until = [0.0]  # forced endpoint: feed silence until then
+    stopped_at: list[float | None] = [None]  # last speech-stop while no speech is open
+
     def on_speech_started() -> None:
-        lease.renew(None, "speech-start")
+        # A bare VAD start is weak evidence (the TV makes plenty): it may only
+        # stretch the lease a little past the wake word / last reply.
+        lease.renew(None, "speech-start", cap_s=profile.lease_unanswered_s)
+        stopped_at[0] = None
+        if turn_t0[0] is None:
+            turn_t0[0] = time.monotonic()
         reaction.cancel()
         filler.cancel()
         motion.set_thinking(False)  # barge-in: he is listening again
         motion.set_listening(True)  # antennas hold still while the user talks
 
     def on_speech_stopped() -> None:
+        stopped_at[0] = time.monotonic()
         motion.set_listening(False)
 
     filled_for: list[str | None] = [None]  # lease holder that already got its "hmm"
@@ -116,7 +134,12 @@ async def amain() -> None:
         reset_after_s=cfg.reset_after_s,
     )
 
+    awaiting_reply = [0.0]  # monotonic time of the last transcript not yet answered
+
     def on_transcript(text: str) -> None:
+        turn_t0[0] = None
+        if text:
+            awaiting_reply[0] = time.monotonic()
         lease.note_interaction()
         memory.add("user", text)
         if text and (lease.active() or speaker.playing):
@@ -128,6 +151,7 @@ async def amain() -> None:
             filler.wake()
 
     def on_response_done(status: str) -> None:
+        awaiting_reply[0] = 0.0
         motion.set_thinking(False)
         if status == "completed":
             lease.exchange()  # Reachy answered: the user gets a fresh window
@@ -179,14 +203,26 @@ async def amain() -> None:
         if was_speaking[0] and not speaking:
             lease.exchange("reply-played")  # answer window starts when he stops
         was_speaking[0] = speaking
-        if lease.active() or speaking:
+        now = time.monotonic()
+        t0 = turn_t0[0]
+        st = stopped_at[0]
+        if t0 is not None and st is not None and now - st > FORCED_END_SILENCE_S:
+            turn_t0[0] = t0 = None  # quiet past the reopen grace: that turn is over (or was discarded)
+        if t0 is not None and now - t0 > cfg.max_turn_s:
+            # One user turn has absorbed > max_turn_s of "speech": background
+            # talk keeps reopening it (s2s reopens on any sound within its
+            # grace window). A short silence is the only way to end it.
+            turn_t0[0] = None
+            mute_until[0] = now + FORCED_END_SILENCE_S
+            journal.write("turn.forced_end", after_s=round(now - t0, 1))
+        if (lease.active() or speaking) and now >= mute_until[0]:
             client.feed(pcm)  # engaged: s2s owns VAD/turn/STT
             return
         # Not engaged: send silence, not nothing. If the stream just stops,
         # s2s never sees a turn end and keeps it open until the NEXT wake -
         # then answers a conversation from minutes ago (2026-10-04: 13 min).
         client.feed(silence.setdefault(len(pcm), bytes(len(pcm))))
-        if kws is None:
+        if kws is None or lease.active() or speaking:
             return
         for hit in kws.process(pcm):
             kws_hit_t[0] = time.monotonic()
@@ -194,7 +230,9 @@ async def amain() -> None:
             reaction.wake(doa_deg=None, attending_same=not decision.acquired)  # head turn first
             journal.write("kws.detected", keyword=hit.keyword, score=hit.score)
             if decision.acquired:
+                theta, _ = doa.buffer.median_speech(time.monotonic(), 1.0)
                 loop.call_soon_threadsafe(start_conversation)
+                loop.call_soon_threadsafe(lambda th=theta: loop.run_in_executor(None, xmos_tuner.focus, th))
             client.feed(mic.preroll())  # preserve "Reachy, ..." as one utterance
 
     mic.subscribe(on_pcm)
@@ -209,20 +247,37 @@ async def amain() -> None:
 
     xmos = XmosWatchdog(journal, reboot_xmos)
 
+    async def attention_tick():
+        # 1 Hz: the beam must widen again soon after attention ends, or the
+        # next wake word from another direction is attenuated.
+        while True:
+            await asyncio.sleep(1.0)
+            # Never drop attention mid-reply, nor while the LLM is still
+            # answering: the holder must survive until lease.exchange().
+            waiting = time.monotonic() - awaiting_reply[0] < REPLY_WAIT_S
+            if not speaker.playing and not waiting:
+                lease.expire_if_due()
+            if xmos_tuner.focused is not None and not lease.active() and not speaker.playing:
+                await asyncio.to_thread(xmos_tuner.release)
+
     async def watchdog_sample():
         while True:
             await asyncio.sleep(10.0)
-            if not speaker.playing:  # never drop attention mid-reply
-                lease.expire_if_due()
-            memory.tick(engaged=lease.active() or speaker.playing)
+            engaged = lease.active() or speaker.playing
+            note = memory.tick(engaged=engaged)
+            if note is not None:
+                client.reset_session(note)  # quiet room: fresh session now, not at the wake word
+            await asyncio.to_thread(xmos_tuner.ensure)
             health = await asyncio.to_thread(mic.health)  # runs wpctl
             journal.write("audio.health", **health)
             await asyncio.to_thread(xmos.check, health)
 
     wd = asyncio.create_task(watchdog_sample(), name="health")
+    at = asyncio.create_task(attention_tick(), name="attention")
     try:
-        await asyncio.gather(rt, wd)
+        await asyncio.gather(rt, wd, at)
     finally:
+        await asyncio.to_thread(xmos_tuner.close)
         mic.close()
         speaker.close()
         await asyncio.to_thread(doa.stop)

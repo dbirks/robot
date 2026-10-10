@@ -48,17 +48,17 @@ class AttentionLease:
             J.ATTENTION_LEASE_STARTED, holder=participant, evidence=evidence, base_s=self.profile.lease_base_s
         )
 
-    def renew(self, participant: str | None, evidence: str) -> bool:
+    def renew(self, participant: str | None, evidence: str, cap_s: float | None = None) -> bool:
+        """`cap_s` bounds this kind of evidence to that many seconds after the
+        lease started or the last real exchange (see `exchange`)."""
         if not self.active():
             return False
         if participant is not None and participant != self.holder:
             self.acquire(participant, evidence)
             return True
         now = self.clock()
-        self._expires = min(
-            self._started + self.profile.lease_max_s,
-            now + self.profile.lease_renew_s,
-        )
+        limit = self.profile.lease_max_s if cap_s is None else min(cap_s, self.profile.lease_max_s)
+        self._expires = max(self._expires, min(self._started + limit, now + self.profile.lease_renew_s))
         self.last_interaction = now
         self.journal.write(
             J.ATTENTION_LEASE_RENEWED, holder=self.holder, evidence=evidence, remaining_s=round(self.remaining_s, 1)

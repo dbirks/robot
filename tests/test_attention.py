@@ -237,3 +237,23 @@ def test_exchange_rearms_lease_that_lapsed_during_reply(journal):
     clock[0] += 60.0
     lease.expire_if_due()
     assert not lease.exchange()  # truly expired: needs a wake word again
+
+
+def test_speech_start_renewal_bounded_since_wake_or_reply(journal):
+    from shell.attention.lease import AttentionLease
+    from shell.attention.profiles import PROFILES
+
+    clock = [0.0]
+    prof = PROFILES["quiet"]
+    lease = AttentionLease(prof, journal, clock=lambda: clock[0])
+    lease.acquire("p", "kws:Reachy")
+    while lease.renew(None, "speech-start", cap_s=prof.lease_unanswered_s):  # TV
+        clock[0] += 3.0
+    assert clock[0] <= prof.lease_unanswered_s + 3.0
+    # a real exchange gives the user a fresh window
+    lease.acquire("p", "kws:Reachy")
+    clock[0] += 10.0
+    lease.exchange("reply-played")
+    clock[0] += 10.0
+    assert lease.renew(None, "speech-start", cap_s=prof.lease_unanswered_s)
+    assert lease.remaining_s <= prof.lease_unanswered_s - 10.0 + 1e-9

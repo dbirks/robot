@@ -33,6 +33,11 @@ from .. import journal as J
 log = logging.getLogger("shell.realtime")
 
 
+class SlotBusy(RuntimeError):
+    """s2s rejected the connection: its single pipeline slot is still held by
+    the session we just closed (it drains through every handler first)."""
+
+
 class RealtimeClient:
     def __init__(
         self,
@@ -50,6 +55,7 @@ class RealtimeClient:
         on_speech_stopped: Callable[[], None] | None = None,
         on_first_audio: Callable[[], None] | None = None,
         reconnect_s: float = 2.0,
+        busy_retry_s: float = 0.25,
         connect=None,
     ) -> None:
         self.url = url
@@ -68,6 +74,7 @@ class RealtimeClient:
         self.on_speech_stopped = on_speech_stopped
         self.on_first_audio = on_first_audio
         self.reconnect_s = reconnect_s
+        self.busy_retry_s = busy_retry_s
         self._connect = connect  # injectable for tests; defaults to websockets
         self._in: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
         self._ws = None
@@ -142,11 +149,22 @@ class RealtimeClient:
     async def run(self) -> None:
         self._loop = asyncio.get_event_loop()
         self._reset = asyncio.Event()
+        busy = 0
         while True:
             try:
                 await self._session()
+                busy = 0
             except asyncio.CancelledError:
                 raise
+            except SlotBusy:
+                # Normal right after a reset. Mic audio waits in self._in
+                # (~6 s) and goes to the session that is finally admitted.
+                self.connected = False
+                busy += 1
+                if busy % 40 == 0:
+                    log.warning("realtime: s2s slot still busy after %d tries", busy)
+                await asyncio.sleep(self.busy_retry_s)
+                continue
             except Exception as e:
                 log.warning("realtime session error: %r; reconnecting in %.1fs", e, self.reconnect_s)
                 self.connected = False
@@ -159,12 +177,24 @@ class RealtimeClient:
 
             connect = lambda: websockets.connect(self.url, max_size=None)  # noqa: E731
         async with connect() as ws:
+            # Admission first: a rejected socket still accepts writes, and the
+            # wake preroll sent into it was lost. The server's first frame is
+            # session.created, or an error when the slot is still taken.
+            recv = getattr(ws, "recv", None) or ws.__aiter__().__anext__
+            first = await asyncio.wait_for(recv(), timeout=10.0)
+            try:
+                ev = json.loads(first)
+            except (TypeError, json.JSONDecodeError):
+                ev = {}
+            if ev.get("type") == "error":
+                if (ev.get("error") or {}).get("type") == "session_limit_reached":
+                    raise SlotBusy()
+                await self.handle_event(ev)
             self._ws = ws
             self.connected = True
             log.info("realtime connected: %s", self.url)
-            # The server's first frame is some flavor of session created; we do
-            # not await a specific type because it varies and never guarantees
-            # session.updated. Then send a minimal session.update.
+            # Never await session.updated (it is never sent); send a minimal
+            # session.update and move on.
             await ws.send(
                 json.dumps(
                     {

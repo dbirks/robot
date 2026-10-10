@@ -41,7 +41,19 @@ class ShellConfig:
     llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080/v1"))
     llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "local"))
     compact_after_s: float = field(default_factory=lambda: float(os.getenv("REACHY_COMPACT_AFTER_S", "180")))
-    reset_after_s: float = field(default_factory=lambda: float(os.getenv("REACHY_RESET_AFTER_S", "600")))
+    reset_after_s: float = field(default_factory=lambda: float(os.getenv("REACHY_RESET_AFTER_S", "300")))
+
+    # A user turn still open after this many seconds is cut by feeding the
+    # service a moment of silence - the only endpoint it accepts from a
+    # client (input_audio_buffer.commit is a no-op upstream). Bounds how much
+    # background speech can pile into one turn.
+    max_turn_s: float = field(default_factory=lambda: float(os.getenv("REACHY_MAX_TURN_S", "15")))
+
+    # XVF3800 tuning (shell/audio/xmos_tuning.py): AGC gain ceiling (firmware
+    # boots at 64x and pumps the TV up whenever the room goes quiet; 0 turns
+    # AGC off) and steering both fixed beams at whoever said the wake word.
+    xmos_agc_max_gain: float = field(default_factory=lambda: float(os.getenv("REACHY_XMOS_AGC_MAX_GAIN", "10")))
+    xmos_beam_focus: bool = field(default_factory=lambda: os.getenv("REACHY_XMOS_BEAM_FOCUS", "1") != "0")
 
     # Attention
     attention_profile: str = field(default_factory=lambda: os.getenv("REACHY_PROFILE", "quiet"))

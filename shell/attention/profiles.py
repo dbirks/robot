@@ -31,6 +31,11 @@ class AttentionProfile:
     lease_base_s: float = 15.0
     lease_renew_s: float = 15.0
     lease_max_s: float = 120.0
+    # Bare VAD speech-starts may only keep the lease up this long after the
+    # wake word or Reachy's last reply. Background TV fires speech-starts
+    # every few seconds and used to hold attention for the full 120 s cap
+    # (2026-10-09: six leases of 120-129 s answering podcast transcripts).
+    lease_unanswered_s: float = 20.0
 
     # Minimum attention confidence (0..1) to allow STATE-CHANGING tools.
     tool_confidence: float = 0.6

@@ -30,6 +30,14 @@
   app: `PP_AGCMAXGAIN=10.0 PP_MIN_NS=0.8 PP_MIN_NN=0.8 PP_GAMMA_E=0.5
   PP_GAMMA_ETAIL=0.5 PP_NLATTENONOFF=0`.
 
+- **Now used (2026-10-10, `shell/audio/xmos_tuning.py`):** `PP_AGCMAXGAIN` capped
+  at 10 (boot value read on the robot: 64; `REACHY_XMOS_AGC_MAX_GAIN`, 0 = AGC off),
+  re-applied every 10 s because a REBOOT restores it. On a wake word both fixed
+  beams are steered at the wake DOA (`AEC_FIXEDBEAMSONOFF=1`, gating off) and
+  released within ~1 s of the lease ending, so KWS always hears the auto beam
+  (`REACHY_XMOS_BEAM_FOCUS=0` disables). Verified: params read back, mic keeps
+  streaming. Not yet measured: actual off-axis attenuation in the room.
+
 ## Watchdog design rules (from the 2026-07-27 reboot-loop incident)
 
 1. Monitor the **mic owner's** health signal (ADR 0002); never open a competing
