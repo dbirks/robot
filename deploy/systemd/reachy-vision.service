@@ -1,0 +1,14 @@
+[Unit]
+Description=Reachy camera VLM on CPU (scripts/run_vision_server.sh)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/robot
+EnvironmentFile=-%h/dev/robot/.env
+ExecStart=%h/dev/robot/scripts/run_vision_server.sh
+Restart=on-failure
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=default.target

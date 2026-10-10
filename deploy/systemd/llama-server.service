@@ -1,0 +1,14 @@
+[Unit]
+Description=llama.cpp chat LLM for Reachy (scripts/run_llama_server.sh)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/robot
+# LLAMA_* overrides (e.g. switching back to Qwen3.5-4B + mmproj) live in .env
+EnvironmentFile=-%h/dev/robot/.env
+ExecStart=%h/dev/robot/scripts/run_llama_server.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

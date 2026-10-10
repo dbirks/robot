@@ -4,17 +4,21 @@ set -euo pipefail
 # Defaults — override with env vars or edit below.
 # Long flags throughout: this file is read far more often than it is typed.
 
-# UD-Q4_K_XL rather than plain Q4_K_M: better KL-divergence (0.410 vs 0.548)
-# for +0.68GB. From unsloth/Qwen3.5-4B-MTP-GGUF, which bakes the MTP drafter
-# heads into the GGUF itself — see the --spec-type note below for why we don't
-# currently use them.
-MODEL_PATH="${LLAMA_MODEL_PATH:-models/gguf/mtp/Qwen3.5-4B-UD-Q4_K_XL.gguf}"
+# Default since 2026-10-10: IBM Granite 4.1 3B Q6_K (ibm-granite/granite-4.1-3b-GGUF),
+# text-only. 20/20 on the Reachy toolbench (Qwen3.5-4B: 16-17/20), ~1040 tok/s
+# cold prefill, 3.9 GB at 32K. Camera questions go to a separate small VLM
+# (scripts/run_vision_server.sh). Previous model, still a two-line switch:
+#   LLAMA_MODEL_PATH=models/gguf/mtp/Qwen3.5-4B-UD-Q4_K_XL.gguf
+#   LLAMA_MMPROJ_PATH=models/gguf/mtp/mmproj-F16.gguf
+# (UD-Q4_K_XL from unsloth/Qwen3.5-4B-MTP-GGUF: better KL-divergence than
+# Q4_K_M; MTP heads baked in, unused - see --spec-type below.)
+MODEL_PATH="${LLAMA_MODEL_PATH:-models/gguf/granite/granite-4.1-3b-Q6_K.gguf}"
 
 # Vision projector for the LLM's image input (describe_scene / take_snapshot).
 # F16, not the BF16 file we used to ship: the GTX 1070 (Pascal) has no BF16 in
 # hardware and had to emulate it. F16 is native. Leave the file absent to run
 # text-only.
-MMPROJ_PATH="${LLAMA_MMPROJ_PATH:-models/gguf/mtp/mmproj-F16.gguf}"
+MMPROJ_PATH="${LLAMA_MMPROJ_PATH:-}"   # vision projector, only for a VLM chat model
 
 PORT="${LLAMA_PORT:-8080}"
 
@@ -57,12 +61,14 @@ THREADS="${LLAMA_THREADS:-4}"
 # requires it, but worth A/B-ing per model.
 FLASH_ATTN="${LLAMA_FLASH_ATTN:-on}"
 
-# K at q8_0, V at q4_0. Verified lossless on Qwen3.5 specifically: only 8 of 32
-# layers use full attention, and the linear/gated-delta layers absorb the
-# quantization noise (BLEU 1.000 vs f16, llama.cpp issue #21385). Do NOT assume
-# this carries to a non-hybrid model like Gemma 4 — re-test at q8_0/q8_0 first.
+# K and V must be the SAME type on Pascal. Mixed q8_0/q4_0 (used until
+# 2026-10-10) has no matching flash-attention vec kernel here and prefill
+# collapses (llama-bench pp1024, GTX 1070, build 91f8c9c5):
+#   Qwen3.5-4B  q8_0/q8_0 956 t/s  vs q8_0/q4_0 245 t/s
+#   Granite 3B  q8_0/q8_0 1037 t/s vs q8_0/q4_0 53 t/s   (f16/f16 1061)
+# That was the 6-8 s "LLM" share of slow replies. Decode is unaffected.
 CACHE_TYPE_K="${LLAMA_CACHE_TYPE_K:-q8_0}"
-CACHE_TYPE_V="${LLAMA_CACHE_TYPE_V:-q4_0}"
+CACHE_TYPE_V="${LLAMA_CACHE_TYPE_V:-q8_0}"
 
 # Prompt-prefix caching is ON by default (--cache-ram defaults to 8192 MiB) and
 # it matters enormously here: the system prompt plus 19 tool schemas is ~1570

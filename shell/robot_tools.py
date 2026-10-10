@@ -67,8 +67,10 @@ def make_vision_handlers(
     faces: _Faces | None = None,
 ) -> dict[str, Callable[..., dict]]:
     faces = faces or _Faces()
-    base_url = llm_base_url or os.getenv("LLM_BASE_URL", "http://localhost:8080/v1")
-    model = llm_model or os.getenv("LLM_MODEL", "qwen3.5-4b")
+    # A text-only chat LLM (Granite) pairs with a small separate VLM server:
+    # VISION_BASE_URL/VISION_MODEL; unset = the chat LLM must have --mmproj.
+    base_url = llm_base_url or os.getenv("VISION_BASE_URL") or os.getenv("LLM_BASE_URL", "http://localhost:8080/v1")
+    model = llm_model or os.getenv("VISION_MODEL") or os.getenv("LLM_MODEL", "qwen3.5-4b")
     face_lock = threading.Lock()
 
     def _frame():
@@ -88,7 +90,7 @@ def make_vision_handlers(
 
     @_guard
     def describe_scene(question: str = "", **_kw: Any) -> dict:
-        # Needs a vision-capable model behind LLM_BASE_URL: llama-server with
+        # Needs a vision-capable model behind base_url: llama-server with
         # --mmproj (GET /props -> modalities.vision). Goes straight to
         # llama-server, not through the name-fixing proxy (no speech here).
         import cv2

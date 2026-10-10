@@ -19,11 +19,22 @@ services:
 
 models:
   llm:
+    id: ibm-granite/granite-4.1-3b-GGUF   # since 2026-10-10, text-only
+    quant: Q6_K (2.8 GB file)
+    context: 32K x 2 slots, KV q8_0/q8_0 (NEVER mixed K/V types on Pascal - see run_llama_server.sh)
+    measured: 3.86 GB VRAM @ 32K beside Obama Qwen3-TTS (total 7.2 of 8 GB);
+      llama-bench pp1024 1037 t/s, tg 46 t/s; toolbench 20/20 (experiments/2026-10-04-llm-bakeoff)
+  llm_previous:
     id: unsloth/Qwen3.5-4B-MTP-GGUF
     quant: UD-Q4_K_XL
     mmproj: F16 only, never BF16 (ADR 0004)
-    context: 8-16k, quantized KV
-    measured_vram: ~4.4 GB @ 8K (Q4_K_M baseline)
+    measured: 4.47 GB VRAM @ 32K with mmproj; pp1024 956 t/s at q8_0/q8_0 KV (245 at q8_0/q4_0)
+  vlm:
+    id: unsloth/Qwen3.5-0.8B-GGUF   # camera tools only, separate server (scripts/run_vision_server.sh)
+    quant: Q4_K_M + mmproj-F16
+    runtime: llama-server CPU, 4 threads, :8082
+    measured: 2.5 s per 448 px describe on the i7-6700K beside the live stack; ~1 GB RAM
+      (LFM2-VL-450M 1.9 s, LFM2-VL-1.6B 5.3 s - same harness)
   stt:
     id: nvidia/parakeet-tdt-0.6b-v3
     # v2 beats v3 on EN WER (6.05 vs 6.32, ADR 0006) but s2s v1.0.0 loads

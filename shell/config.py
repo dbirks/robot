@@ -26,6 +26,14 @@ TIME_NOTE = (
     " conversation and do not bring back old, unanswered topics."
 )
 
+# Granite 4.1 3B (2026-10-10) is tool-eager: "how's it going?" got only a
+# play_emotion call and no words. Measured with this note: it answers in words.
+TOOLS_NOTE = (
+    " Answer greetings, feelings and opinions yourself, in words. Use tools"
+    " when asked to do something physical, about what you can see, for current"
+    " or local information, or to remember something."
+)
+
 
 @dataclass
 class ShellConfig:
@@ -34,7 +42,7 @@ class ShellConfig:
     instructions: str = field(
         # Name mis-hearings (Richie/Ricci) are fixed in shell/llm_proxy.py, not
         # here: prompting the 4B model about them made it keep bringing it up.
-        default_factory=lambda: os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS).rstrip() + TIME_NOTE
+        default_factory=lambda: os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS).rstrip() + TOOLS_NOTE + TIME_NOTE
     )
 
     # Direct llama.cpp endpoint for side tasks (conversation compaction).
