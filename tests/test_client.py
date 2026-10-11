@@ -98,52 +98,98 @@ def test_transcript_routed_to_listeners(journal, speaker):
     assert journal.find("turn.transcript_final")[0]["text"] == "hey robot"
 
 
-def test_function_call_output_and_followup(journal, speaker):
-    class StubRouter:
-        def execute(self, name, args):
-            self.done = (name, args)
-            return {"ok": True, "temp": "61C"}
+class StubRouter:
+    def __init__(self, follow=True, delay=0.0, result=None):
+        self.follow, self.delay, self.calls = follow, delay, []
+        self.result = result or {"ok": True, "temp": "61C"}
 
-        def needs_followup(self, name, result):
-            return True
+    def execute(self, name, args):
+        import time
 
+        time.sleep(self.delay)
+        self.calls.append((name, args))
+        return self.result
+
+    def needs_followup(self, name, result):
+        return self.follow
+
+
+def _call(name, call_id, rid="r1"):
+    return {
+        "type": "response.function_call_arguments.done",
+        "name": name,
+        "call_id": call_id,
+        "arguments": "{}",
+        "response_id": rid,
+    }
+
+
+def test_function_call_output_and_followup_after_response_done(journal, speaker):
     r = StubRouter()
     c = make_client(journal, speaker, router=r)
     ws = FakeWS()
     c._ws = ws
-    asyncio.run(
-        c.handle_event(
-            {
-                "type": "response.function_call_arguments.done",
-                "name": "get_robot_status",
-                "call_id": "c1",
-                "arguments": "{}",
-            }
-        )
-    )
-    assert r.done == ("get_robot_status", {})
+
+    async def go():
+        await c.handle_event(_call("get_robot_status", "c1"))
+        await asyncio.sleep(0.05)
+        assert ws.sent == []  # results wait for the response that asked for them
+        await c.handle_event({"type": "response.done", "response": {"id": "r1", "status": "completed"}})
+        await asyncio.sleep(0.05)
+
+    asyncio.run(go())
+    assert r.calls == [("get_robot_status", {})]
     assert ws.sent[0]["item"]["type"] == "function_call_output"
     assert ws.sent[0]["item"]["call_id"] == "c1"
     assert ws.sent[1] == {"type": "response.create"}
 
 
-def test_fire_and_forget_function_call_gets_no_followup(journal, speaker):
-    class StubRouter:
-        def execute(self, name, args):
-            return {"ok": True}
+def test_slow_tool_does_not_block_other_events(journal, speaker):
+    c = make_client(journal, speaker, router=StubRouter(delay=0.3))
+    c._ws = FakeWS()
+    seen = []
+    c.on_speech_started = lambda: seen.append("speech")
 
-        def needs_followup(self, name, result):
-            return False
+    async def go():
+        loop = asyncio.get_event_loop()
+        t0 = loop.time()
+        await c.handle_event(_call("web_search", "c1"))
+        await c.handle_event({"type": "input_audio_buffer.speech_started"})
+        assert loop.time() - t0 < 0.1 and seen == ["speech"]  # barge-in seen mid-search
+        await c.handle_event({"type": "response.done", "response": {"id": "r1", "status": "cancelled"}})
+        await asyncio.sleep(0.4)
 
+    asyncio.run(go())
+    sent = c._ws.sent
+    assert [m["type"] for m in sent] == ["conversation.item.create"]  # result kept, no stale answer
+    assert journal.find("tool.followup_skipped")
+
+
+def test_parallel_calls_share_one_followup(journal, speaker):
     c = make_client(journal, speaker, router=StubRouter())
-    ws = FakeWS()
-    c._ws = ws
-    asyncio.run(
-        c.handle_event(
-            {"type": "response.function_call_arguments.done", "name": "nod", "call_id": "c2", "arguments": "{}"}
-        )
-    )
-    assert len(ws.sent) == 1
+    c._ws = FakeWS()
+
+    async def go():
+        await c.handle_event(_call("look_left", "c1"))
+        await c.handle_event(_call("nod", "c2"))
+        await c.handle_event({"type": "response.done", "response": {"id": "r1", "status": "completed"}})
+        await asyncio.sleep(0.05)
+
+    asyncio.run(go())
+    types = [m["type"] for m in c._ws.sent]
+    assert types == ["conversation.item.create", "conversation.item.create", "response.create"]
+
+
+def test_no_followup_when_router_says_so(journal, speaker):
+    c = make_client(journal, speaker, router=StubRouter(follow=False))
+    c._ws = FakeWS()
+
+    async def go():
+        await c.handle_event(_call("nod", "c2", rid=""))  # no response id: answer when done
+        await asyncio.sleep(0.05)
+
+    asyncio.run(go())
+    assert len(c._ws.sent) == 1
 
 
 def test_cancelled_response_journaled_with_reason(journal, speaker):

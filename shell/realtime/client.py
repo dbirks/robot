@@ -12,6 +12,12 @@ verified there (also ADR 0001):
 - a dead sender task means SILENCE, not an error: task death is logged
   loudly and never swallowed
 
+Tool calls run as background tasks (2026-10-11): awaiting a 2 s web search
+inside the receiver froze every other event - the "Let me check..." audio
+already on the wire, and speech_started for barge-in. Results go back once
+the server has finished the response that asked for them, batched into one
+follow-up, and the follow-up is skipped if the user spoke in the meantime.
+
 Barge-in invariant (ADR 0002): on input_audio_buffer.speech_started the
 speaker owner drops the in-flight generation immediately; the server's
 CancelScope guarantees the response itself dies. The interrupting
@@ -31,6 +37,19 @@ import numpy as np
 from .. import journal as J
 
 log = logging.getLogger("shell.realtime")
+
+
+TOOL_TIMEOUT_S = 12.0  # a hung tool must not hold a reply forever
+BATCH_WAIT_S = 30.0  # longest we wait for response.done before sending results
+
+
+class _ToolBatch:
+    """Tool calls of one response, answered together after its response.done."""
+
+    def __init__(self, epoch: int) -> None:
+        self.epoch = epoch  # user-speech counter when the calls started
+        self.tasks: list[asyncio.Task] = []
+        self.done = asyncio.Event()
 
 
 class SlotBusy(RuntimeError):
@@ -84,6 +103,8 @@ class RealtimeClient:
         self._cur: dict[str, float] = {}  # per-turn latency marks
         self._first_audio: set[str] = set()  # response ids already marked
         self._drop_until = 0.0  # loop time before which the next response is dropped
+        self._epoch = 0  # bumped on every user speech start (barge-in)
+        self._tool_batches: dict[str, _ToolBatch] = {}
 
     def _instructions(self) -> str:
         # a callable is re-read per session (e.g. to include new memories)
@@ -272,6 +293,7 @@ class RealtimeClient:
         t = ev.get("type", "")
 
         if t == "input_audio_buffer.speech_started":
+            self._epoch += 1
             cut = self.speaker.cancel_current()
             self.journal.write(J.AUDIO_SPEECH_STARTED, cut_playback=cut)
             if self.on_speech_started:
@@ -315,10 +337,13 @@ class RealtimeClient:
                 self.on_assistant_text(ev.get("transcript") or "")
 
         elif t == "response.function_call_arguments.done":
-            await self._handle_function_call(ev)
+            self._start_tool(ev)
 
         elif t == "response.done":
             resp = ev.get("response") or {}
+            batch = self._tool_batches.get(resp.get("id", ""))
+            if batch is not None:
+                batch.done.set()
             status = resp.get("status", "?")
             if status == "cancelled":
                 self.journal.write(
@@ -335,31 +360,58 @@ class RealtimeClient:
             log.error("realtime server error: %s", ev.get("error"))
             self.journal.write("realtime.error", error=ev.get("error"))
 
-    async def _handle_function_call(self, ev: dict) -> None:
+    def _start_tool(self, ev: dict) -> None:
+        rid = ev.get("response_id") or ""
+        batch = self._tool_batches.get(rid)
+        if batch is None:
+            batch = self._tool_batches[rid] = _ToolBatch(self._epoch)
+            asyncio.get_event_loop().create_task(self._finish_batch(rid, batch), name=f"tools-{rid}")
+        batch.tasks.append(asyncio.get_event_loop().create_task(self._run_tool(ev), name=f"tool-{ev.get('name')}"))
+        if not rid:
+            batch.done.set()  # no response id to wait for: answer when the tool is done
+
+    async def _run_tool(self, ev: dict) -> tuple[str, dict, bool]:
         name = ev.get("name", "")
-        call_id = ev.get("call_id", "")
         try:
             args = json.loads(ev.get("arguments") or "{}")
         except json.JSONDecodeError:
             args = {}
-        result = await asyncio.to_thread(self.router.execute, name, args)
-        follow_up = self.router.needs_followup(name, result)
+        try:
+            result = await asyncio.wait_for(asyncio.to_thread(self.router.execute, name, args), TOOL_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            result = {"ok": False, "error": f"{name} took too long"}
+            self.journal.write("tool.timeout", tool=name, seconds=TOOL_TIMEOUT_S)
+        return ev.get("call_id", ""), result, self.router.needs_followup(name, result)
+
+    async def _finish_batch(self, rid: str, batch: _ToolBatch) -> None:
+        try:
+            await asyncio.wait_for(batch.done.wait(), BATCH_WAIT_S)
+        except asyncio.TimeoutError:
+            pass
+        results = await asyncio.gather(*batch.tasks)
+        self._tool_batches.pop(rid, None)
         if self._ws is None:
             return
-        await self._ws.send(
-            json.dumps(
-                {
-                    "type": "conversation.item.create",
-                    "item": {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": json.dumps(result, default=str),
-                    },
-                }
+        for call_id, result, _ in results:
+            await self._ws.send(
+                json.dumps(
+                    {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": json.dumps(result, default=str),
+                        },
+                    }
+                )
             )
-        )
-        if follow_up:
-            await self._ws.send(json.dumps({"type": "response.create"}))
+        if not any(follow for _, _, follow in results):
+            return
+        if self._epoch != batch.epoch:
+            # the user spoke while the tool ran: answer them, not the old question
+            self.journal.write("tool.followup_skipped", reason="user spoke")
+            return
+        await self._ws.send(json.dumps({"type": "response.create"}))
 
 
 def _realtime_tool(tool: dict) -> dict:
