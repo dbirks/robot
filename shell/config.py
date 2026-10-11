@@ -31,13 +31,19 @@ TIME_NOTE = (
 # play_emotion for "how's it going?", remember for "bye") and, when told to
 # "speak first", narrates actions instead of calling them. Measured with this
 # note and s2s's wrapper stripped (shell/llm_proxy.py): 35/38 on the tool bench.
+# The narration ask (2026-10-11, user: "follow along with its progress
+# audibly") also made Qwen actually call describe_scene/remember where it had
+# been answering from imagination.
 TOOLS_NOTE = (
     " Speak plain words: no emoji or action text like *laughs*."
     " Use a tool only when the user asks you to do something (move, nod, dance,"
     " play, change volume, sleep), asks what you see, asks for the time,"
     " weather, news or facts you are unsure of, or asks you to remember, recall"
     " or forget something. Greetings, small talk, jokes, feelings and goodbyes"
-    " need no tool: just answer."
+    " need no tool: just answer. Narrate tool use out loud so the user can"
+    " follow along: when you call a tool, also say a few words about what you"
+    " are doing, like 'Let me take a look.' or 'Turning left.' After each tool"
+    " result, say one short sentence about what happened or what you found."
 )
 
 

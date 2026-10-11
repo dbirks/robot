@@ -32,10 +32,17 @@ def test_dedupe_identical_calls_in_one_response(journal):
     assert ToolRouter.dedupe(calls) == [("look_left", {}), ("look_right", {}), ("nod", {"n": 1}), ("nod", {"n": 2})]
 
 
-def test_fire_and_forget_skips_llm_followup(journal):
+def test_every_tool_gets_a_spoken_followup_by_default(journal):
     r = make_router(journal, {"nod": lambda **k: {"ok": True}, "web_search": lambda **k: {"ok": True, "results": []}})
-    assert r.needs_followup("nod", {"ok": True}) is False
+    assert r.needs_followup("nod", {"ok": True}) is True  # user hears "There you go."
     assert r.needs_followup("web_search", {"ok": True}) is True
+
+
+def test_fire_and_forget_hook_still_skips_followup(journal):
+    from shell.tools import ToolRouter
+
+    r = ToolRouter([], {"nod": lambda **k: {"ok": True}}, journal, fire_and_forget={"nod"})
+    assert r.needs_followup("nod", {"ok": True}) is False
 
 
 def test_denied_tool_not_narrated(journal):

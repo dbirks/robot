@@ -34,18 +34,10 @@ STATE_CHANGING = {
     "play_emotion",
 }
 
-# Physical actions with no informative payload: execute, don't narrate.
-FIRE_AND_FORGET = {
-    "look_left",
-    "look_right",
-    "look_center",
-    "nod",
-    "shake_head",
-    "go_to_sleep",
-    "play_emotion",
-    "peekaboo",
-    "set_volume",
-}
+# Tools whose result gets no spoken follow-up. Empty since 2026-10-11: the
+# user wants to hear progress after every call ("Turning left.", "There you
+# go."), not silence after physical actions. Kept as a hook.
+FIRE_AND_FORGET: set[str] = set()
 
 
 class ToolRouter:
