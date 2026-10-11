@@ -32,6 +32,7 @@ from .camera import CameraGrabber
 from .config import ShellConfig
 from .conversation import ConversationMemory, llm_summarize
 from .journal import Journal
+from .memories import MemoryStore
 from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
@@ -72,7 +73,10 @@ async def amain() -> None:
         if sounds[name] is not None:
             speaker.enqueue(speaker.generation, "sound", sounds[name])
 
-    tools, handlers = build_handlers(robot, camera, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound)
+    memories = MemoryStore(cfg.data_dir / "memories.json")
+    tools, handlers = build_handlers(
+        robot, camera, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound, memories=memories
+    )
     router = ToolRouter(
         tools,
         handlers,
@@ -158,7 +162,7 @@ async def amain() -> None:
 
     client = RealtimeClient(
         cfg.s2s_url,
-        instructions=cfg.instructions,
+        instructions=lambda: cfg.instructions + memories.prompt_block(),
         tools=tools,
         tool_router=router,
         speaker=speaker,

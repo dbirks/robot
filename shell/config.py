@@ -32,7 +32,8 @@ TIME_NOTE = (
 TOOLS_NOTE = (
     " Answer greetings, feelings and opinions yourself, in words. Use tools"
     " when asked to do something physical, about what you can see, for current"
-    " or local information, or to remember something."
+    " or local information, or to remember, recall or forget something the"
+    " user told you."
 )
 
 

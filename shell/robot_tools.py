@@ -311,7 +311,7 @@ def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | N
 
 
 def build_handlers(
-    robot, camera, *, data_dir: Path = Path("data"), motion=None, play_sound=None
+    robot, camera, *, data_dir: Path = Path("data"), motion=None, play_sound=None, memories=None
 ) -> tuple[list[dict], dict]:
     """(TOOLS, handlers) for the router. Never raises: a missing robot SDK or
     legacy package still yields a running shell with fewer tools."""
@@ -329,4 +329,13 @@ def build_handlers(
     # play_emotion stays legacy: it feeds emotion keyframes to
     # motion.queue_animation (the MovementManager-compatible adapter).
     handlers.update(make_motion_handlers(robot, motion, play_sound=play_sound))
-    return TOOLS, handlers
+    tools = list(TOOLS)
+    if memories is not None:
+        # shell-native memory replaces the legacy `remember` (it needed the
+        # old agent object and answered "Agent not available" here)
+        from .memories import MEMORY_TOOLS, make_memory_handlers
+
+        names = {t["function"]["name"] for t in MEMORY_TOOLS}
+        tools = [t for t in tools if t.get("function", {}).get("name") not in names] + MEMORY_TOOLS
+        handlers.update(make_memory_handlers(memories))
+    return tools, handlers

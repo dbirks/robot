@@ -28,6 +28,7 @@ STATE_CHANGING = {
     "learn_face",
     "forget_face",
     "remember",
+    "forget_memory",
     "reset_conversation",
     "peekaboo",
     "play_emotion",

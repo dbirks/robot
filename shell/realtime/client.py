@@ -43,7 +43,7 @@ class RealtimeClient:
         self,
         url: str,
         *,
-        instructions: str,
+        instructions: str | Callable[[], str],
         tools: list[dict],
         tool_router,
         speaker,
@@ -83,6 +83,10 @@ class RealtimeClient:
         self.connected = False
         self._cur: dict[str, float] = {}  # per-turn latency marks
         self._first_audio: set[str] = set()  # response ids already marked
+
+    def _instructions(self) -> str:
+        # a callable is re-read per session (e.g. to include new memories)
+        return self.instructions() if callable(self.instructions) else self.instructions
 
     # ---- ingestion (thread-safe: called from the mic callback) ----
 
@@ -201,7 +205,7 @@ class RealtimeClient:
                         "type": "session.update",
                         "session": {
                             "type": "realtime",
-                            "instructions": self.instructions + self._extra_instructions,
+                            "instructions": self._instructions() + self._extra_instructions,
                             "tools": self.tools,
                         },
                     }
