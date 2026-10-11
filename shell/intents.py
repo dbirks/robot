@@ -12,6 +12,24 @@ from __future__ import annotations
 
 import re
 
+# Parakeet's mis-hearings of "Reachy" observed in the journal, plus near
+# spellings (shell/llm_proxy.py rewrites them before the LLM sees them).
+NAME_VARIANTS = (
+    "Richie|Richy|Ricky|Rickie|Ritchie|Ritchy|Richey|Ritchey|Ricci|Riche|Rachi|Rachie|Reechy|Reachie|Reachey|Reechie"
+)
+NAME_RE = re.compile(rf"\b(?:{NAME_VARIANTS})\b", re.IGNORECASE)
+_NAME = rf"(?:Reachy|{NAME_VARIANTS})"
+# Just the wake word, nothing else: "Reachy?", "Hey Richie.", "Okay, Reachy, Reachy!"
+WAKE_ONLY_RE = re.compile(
+    rf"^\W*(?:(?:hey|hi|hello|ok|okay|yo|oh|um|uh)\W+)*{_NAME}(?:\W+{_NAME})*\W*$",
+    re.IGNORECASE,
+)
+
+
+def is_bare_wake(text: str) -> bool:
+    return bool(WAKE_ONLY_RE.match(text or ""))
+
+
 SLEEP_RE = re.compile(
     r"\b(?:go(?:ing)?|get|head|off) (?:back )?to (?:sleep|bed)\b"
     r"|\btime (?:for|to go to) (?:bed|sleep)\b"

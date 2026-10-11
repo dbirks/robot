@@ -1,17 +1,16 @@
-"""Wake reaction: turn FIRST, acknowledge lazily, shut up if they keep talking.
+"""Wake reaction: turn FIRST, acknowledge only a bare wake word.
 
 EPIC order of importance: the sub-100ms-class physical reaction beats a
 clever spoken acknowledgement. On a wake phrase:
   1. head-turn toward DOA fires immediately (callback, not the LLM)
-  2. a prerendered acknowledgement from a small rotating pool is scheduled
-     after 250-400ms and bypasses TTS entirely
-  3. if the person continues speaking before it fires, it is cancelled
-  4. no repeated grunts while already attending to the same participant
+  2. a prerendered "yes?" from a small rotating pool, bypassing TTS - but only
+     if the wake word came alone. The timer fires after `delay_range_s` and
+     asks `gate()` (quiet, nothing else said?); the shell also calls
+     `fire_now()` when the transcript turns out to be just the name.
+  3. no repeated grunts while already attending to the same participant
 
-The same class drives the "thinking" filler: a short "hmm" played the moment
-a user turn is transcribed, covering the LLM+TTS gap. It never plays over
-queued speech and is rate-limited, because s2s can finalize several
-speculative revisions of one turn.
+(2026-10-11: the old 250-400 ms ack and the "hmm" before every first reply
+were dropped - with replies ~1-2 s away they were just noise.)
 """
 
 from __future__ import annotations
@@ -37,6 +36,7 @@ class WakeReaction:
         loop=None,
         min_interval_s: float = 0.0,
         clock=time.monotonic,
+        gate=None,  # callable() -> bool, checked when the timer fires
     ) -> None:
         self.speaker = speaker
         self.journal = journal
@@ -52,10 +52,13 @@ class WakeReaction:
         self.min_interval_s = min_interval_s
         self._clock = clock
         self._last_fired: float | None = None
+        self.gate = gate
+        self.played_since_wake = False
 
     def wake(self, doa_deg: float | None = None, attending_same: bool = False) -> None:
         if self.on_wake:
             self.on_wake(doa_deg)
+        self.played_since_wake = False
         if attending_same or not self._pool:
             return
         delay = self._rng.uniform(*self.delay_range_s)
@@ -80,8 +83,21 @@ class WakeReaction:
             self._timer.cancel()
             self._timer = None
 
+    def fire_now(self) -> None:
+        """Play the acknowledgement now (once per wake)."""
+        self.cancel()
+        if not self.played_since_wake:
+            self._play()
+
     def _fire(self) -> None:
         self._timer = None
+        if self.gate is not None and not self.gate():
+            return
+        self._play()
+
+    def _play(self) -> None:
+        if not self._pool:
+            return
         now = self._clock()
         if self._last_fired is not None and now - self._last_fired < self.min_interval_s:
             return
@@ -92,6 +108,7 @@ class WakeReaction:
         samples = self._load(pick)
         gen = self.speaker.generation
         if self.speaker.enqueue(gen, "ack", samples):
+            self.played_since_wake = True
             self.journal.write("reaction.ack_played", sound=pick.name)
 
     def _pick(self) -> Path:

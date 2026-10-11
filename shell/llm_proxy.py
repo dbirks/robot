@@ -34,17 +34,13 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
+from .intents import NAME_RE  # mis-hearings of "Reachy"
+
 log = logging.getLogger("shell.llm_proxy")
 
 UPSTREAM = os.getenv("LLM_PROXY_UPSTREAM", "http://127.0.0.1:8080")
 # Debug aid: the last rewritten request body is written here (what the LLM saw).
 DUMP_PATH = os.getenv("LLM_PROXY_DUMP", "data/llm_last_request.json")
-
-# Mis-hearings of "Reachy" observed in the journal, plus near spellings.
-NAME_RE = re.compile(
-    r"\b(?:Richie|Richy|Ricky|Rickie|Ritchie|Ritchy|Richey|Ritchey|Ricci|Riche|Rachi|Rachie|Reechy|Reachie|Reachey|Reechie)\b",
-    re.IGNORECASE,
-)
 
 
 def fix_name(text: str) -> str:

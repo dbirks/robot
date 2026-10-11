@@ -83,6 +83,7 @@ class RealtimeClient:
         self.connected = False
         self._cur: dict[str, float] = {}  # per-turn latency marks
         self._first_audio: set[str] = set()  # response ids already marked
+        self._drop_until = 0.0  # loop time before which the next response is dropped
 
     def _instructions(self) -> str:
         # a callable is re-read per session (e.g. to include new memories)
@@ -126,6 +127,12 @@ class RealtimeClient:
             )
         )
         await self._ws.send(json.dumps({"type": "response.create"}))
+
+    def drop_next_response(self, within_s: float = 5.0) -> None:
+        """Silence and cancel the next response the server starts within
+        `within_s` (e.g. its reply to a bare wake word we already answered
+        with a prerendered "yes?"). Call on the loop."""
+        self._drop_until = asyncio.get_event_loop().time() + within_s
 
     # ---- lifecycle ----
 
@@ -286,6 +293,12 @@ class RealtimeClient:
             self._resp_gen[rid] = self.speaker.begin_generation()
             self._first_audio.clear()  # one response in flight at a time
             self.journal.write(J.RESPONSE_CREATED, response_id=rid)
+            if self._drop_until and asyncio.get_event_loop().time() < self._drop_until:
+                self._drop_until = 0.0
+                self.speaker.cancel_current()  # refuse its audio
+                self.journal.write("response.dropped", response_id=rid)
+                if self._ws is not None:
+                    await self._ws.send(json.dumps({"type": "response.cancel"}))
 
         elif t == "response.output_audio.delta":
             rid = ev.get("response_id", "")

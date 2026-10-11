@@ -63,3 +63,16 @@ def test_empty_pool_is_silent(tmp_path):
     r = WakeReaction(FakeSpeaker(), FakeJournal(), sound_dir=tmp_path / "missing")
     r.wake()
     assert r._timer is None
+
+
+def test_gate_blocks_timer_ack_but_fire_now_plays_once(tmp_path):
+    allowed = [False]
+    r, _ = make(tmp_path, gate=lambda: allowed[0])
+    r._fire()  # still talking / said more than the name
+    assert r.speaker.queued == []
+    r.fire_now()  # transcript was just "Reachy"
+    r.fire_now()
+    assert r.speaker.queued == ["ack"]
+    r.wake(attending_same=True)  # a new wake word re-arms the once-per-wake guard
+    r.fire_now()
+    assert r.speaker.queued == ["ack", "ack"]

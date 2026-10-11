@@ -33,3 +33,17 @@ def test_sleep_requests(text):
 )
 def test_not_sleep_requests(text):
     assert not wants_sleep(text)
+
+
+@pytest.mark.parametrize("text", ["Reachy.", "Hey Richie?", "Okay, Reachy, Reachy!", "Ricci", " hey reachy "])
+def test_bare_wake(text):
+    from shell.intents import is_bare_wake
+
+    assert is_bare_wake(text)
+
+
+@pytest.mark.parametrize("text", ["Reachy, what time is it?", "Hey Reachy, go to sleep.", "Yeah.", "", "Richard"])
+def test_not_bare_wake(text):
+    from shell.intents import is_bare_wake
+
+    assert not is_bare_wake(text)

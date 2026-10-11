@@ -275,3 +275,22 @@ def test_busy_slot_retries_fast_and_audio_goes_to_admitted_session(journal, spea
     assert sessions[0].sent == [], "nothing may be sent into a rejected socket"
     assert [m for m in sessions[1].sent if m["type"] == "input_audio_buffer.append"]
     assert not journal.find("realtime.error")
+
+
+def test_drop_next_response_silences_and_cancels_it(journal, speaker):
+    c = make_client(journal, speaker)
+    ws = FakeWS()
+    c._ws = ws
+
+    async def go():
+        c.drop_next_response()
+        await c.handle_event({"type": "response.created", "response": {"id": "r1"}})
+        delta = base64.b64encode(np.zeros(10, dtype=np.int16).tobytes()).decode()
+        await c.handle_event({"type": "response.output_audio.delta", "response_id": "r1", "delta": delta})
+        await c.handle_event({"type": "response.created", "response": {"id": "r2"}})  # only the next one
+
+    asyncio.run(go())
+    assert {"type": "response.cancel"} in ws.sent
+    assert len([m for m in ws.sent if m["type"] == "response.cancel"]) == 1
+    assert speaker.pending() == 0
+    assert journal.find("response.dropped")

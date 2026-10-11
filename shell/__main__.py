@@ -31,7 +31,7 @@ from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
 from .config import ShellConfig
 from .conversation import ConversationMemory, llm_summarize
-from .intents import wants_sleep
+from .intents import is_bare_wake, wants_sleep
 from .journal import Journal
 from .memories import MemoryStore
 from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
@@ -47,6 +47,7 @@ log = logging.getLogger("shell")
 # the next sound starts a NEW turn instead of extending the cut one.
 FORCED_END_SILENCE_S = 1.5
 REPLY_WAIT_S = 30.0  # longest we keep attention waiting on one reply
+WAKE_ACK_WAIT_S = 1.5  # quiet after a bare wake word before the "yes?"
 
 
 async def amain() -> None:
@@ -100,15 +101,18 @@ async def amain() -> None:
     await asyncio.to_thread(xmos_tuner.ensure)
 
     loop = asyncio.get_event_loop()
+    # "yes?" only for a bare wake word: after WAKE_ACK_WAIT_S of quiet with
+    # nothing else said, or as soon as the transcript is just the name.
+    wake_t: list[float | None] = [None]  # last wake word still waiting for its first transcript
+    speech_open = [False]
     reaction = WakeReaction(
         speaker,
         journal,
         sound_dir=cfg.ack_dir / "wake",
         loop=loop,
+        delay_range_s=(WAKE_ACK_WAIT_S, WAKE_ACK_WAIT_S),
+        gate=lambda: wake_t[0] is not None and not speech_open[0],
         on_wake=lambda _deg: doa.wake_turn(kws_hit_t[0]),
-    )
-    filler = WakeReaction(
-        speaker, journal, sound_dir=cfg.ack_dir / "think", delay_range_s=(0.0, 0.05), min_interval_s=4.0, loop=loop
     )
 
     turn_t0: list[float | None] = [None]  # first speech-start of the open user turn
@@ -122,16 +126,15 @@ async def amain() -> None:
         stopped_at[0] = None
         if turn_t0[0] is None:
             turn_t0[0] = time.monotonic()
-        reaction.cancel()
-        filler.cancel()
+        speech_open[0] = True
         motion.set_thinking(False)  # barge-in: he is listening again
         motion.set_listening(True)  # antennas hold still while the user talks
 
     def on_speech_stopped() -> None:
         stopped_at[0] = time.monotonic()
+        speech_open[0] = False
         motion.set_listening(False)
 
-    filled_for: list[str | None] = [None]  # lease holder that already got its "hmm"
     memory = ConversationMemory(
         journal,
         lambda prior, turns: llm_summarize(cfg.llm_base_url, cfg.llm_model, prior, turns),
@@ -150,14 +153,19 @@ async def amain() -> None:
             journal.write("intent.sleep", text=text)
             loop.run_in_executor(None, router.execute, "go_to_sleep", {})
         lease.note_interaction()
+        if wake_t[0] is not None and text:
+            fresh = time.monotonic() - wake_t[0] < 10.0
+            wake_t[0] = None
+            if fresh and is_bare_wake(text):
+                # Just "Reachy": the prerendered "yes?" is the answer; drop the
+                # LLM's slower, wordier one.
+                reaction.fire_now()
+                client.drop_next_response()
+                return
+            reaction.cancel()
         memory.add("user", text)
         if text and (lease.active() or speaker.playing):
             motion.set_thinking(True)  # look away until his first audio
-        # "hmm" only on the first turn after a wake word; mid-conversation it
-        # is just noise before every answer.
-        if text and lease.active() and filled_for[0] != lease.holder:
-            filled_for[0] = lease.holder
-            filler.wake()
 
     def on_response_done(status: str) -> None:
         awaiting_reply[0] = 0.0
@@ -239,6 +247,7 @@ async def amain() -> None:
             reaction.wake(doa_deg=None, attending_same=not decision.acquired)  # head turn first
             journal.write("kws.detected", keyword=hit.keyword, score=hit.score)
             if decision.acquired:
+                wake_t[0] = time.monotonic()
                 theta, _ = doa.buffer.median_speech(time.monotonic(), 1.0)
                 loop.call_soon_threadsafe(start_conversation)
                 loop.call_soon_threadsafe(lambda th=theta: loop.run_in_executor(None, xmos_tuner.focus, th))
