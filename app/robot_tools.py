@@ -425,7 +425,15 @@ def make_handlers(
         }
 
     def get_time(**_kwargs: Any) -> dict:
-        return {"time": datetime.now(tz=timezone.utc).isoformat()}
+        # Local time, spelled out: a bare UTC ISO string made the model give
+        # tomorrow's date every evening after 20:00 EDT.
+        now = datetime.now().astimezone()
+        return {
+            "date": now.strftime("%A, %B %d, %Y"),
+            "time": now.strftime("%I:%M %p").lstrip("0"),
+            "timezone": now.tzname(),
+            "iso": now.isoformat(timespec="minutes"),
+        }
 
     def describe_scene(question: str = "", **_kwargs: Any) -> dict:
         try:
