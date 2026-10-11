@@ -11,10 +11,11 @@ streamed responses - passes through byte for byte.
     s2s --responses_api_base_url http://127.0.0.1:8081/v1 -> here -> llama :8080
 
 It also stamps each user message with the local time it was first seen
-("[Sun 11 Oct 2026 17:38] ..."), so the model can tell a fresh question from
+("[Sunday, October 11, 2026, 5:38 PM] ..."), so the model can tell a fresh question from
 one asked hours ago (2026-10-05: it answered a 40-minute-old dangling
 question). The full date matters: with only "[Sun 11:40]" Granite said
-"October 14, 2023" and searched weather for "May 2025" (2026-10-10/11).
+"October 14, 2023" and searched weather for "May 2025" (2026-10-10/11); with
+"[Sun 11 Oct 2026 11:47]" it once said "Sunday, November 11". Spelled out.
 
 Both rewrites are deterministic per message, so llama.cpp's prompt-prefix
 cache still hits.
@@ -36,10 +37,12 @@ from fastapi.responses import Response, StreamingResponse
 log = logging.getLogger("shell.llm_proxy")
 
 UPSTREAM = os.getenv("LLM_PROXY_UPSTREAM", "http://127.0.0.1:8080")
+# Debug aid: the last rewritten request body is written here (what the LLM saw).
+DUMP_PATH = os.getenv("LLM_PROXY_DUMP", "data/llm_last_request.json")
 
 # Mis-hearings of "Reachy" observed in the journal, plus near spellings.
 NAME_RE = re.compile(
-    r"\b(?:Richie|Richy|Ritchie|Ritchy|Richey|Ritchey|Ricci|Riche|Rachi|Rachie|Reechy|Reachie|Reachey|Reechie)\b",
+    r"\b(?:Richie|Richy|Ricky|Rickie|Ritchie|Ritchy|Richey|Ritchey|Ricci|Riche|Rachi|Rachie|Reechy|Reachie|Reachey|Reechie)\b",
     re.IGNORECASE,
 )
 
@@ -48,8 +51,12 @@ def fix_name(text: str) -> str:
     return NAME_RE.sub("Reachy", text)
 
 
-STAMP_FMT = "[%a %d %b %Y %H:%M] "
-STAMP_RE = re.compile(r"^\[[A-Z][a-z]{2} (?:\d{2} [A-Z][a-z]{2} \d{4} )?\d{2}:\d{2}\] ")
+STAMP_RE = re.compile(r"^\[(?:[A-Z][a-z]+,? )+[^\]]*\d{1,2}:\d{2}(?: [AP]M)?\] ")
+
+
+def format_stamp(t: float) -> str:
+    lt = time.localtime(t)
+    return time.strftime(f"[%A, %B {lt.tm_mday}, %Y, {(lt.tm_hour % 12) or 12}:%M %p] ", lt)
 
 
 class Timestamper:
@@ -71,7 +78,7 @@ class Timestamper:
             times.append(self.clock())
         while len(self._seen) > self.max_texts:
             self._seen.popitem(last=False)
-        return time.strftime(STAMP_FMT, time.localtime(times[occurrence])) + text
+        return format_stamp(times[occurrence]) + text
 
 
 def rewrite_body(body: dict, stamper: Timestamper | None = None) -> dict:
@@ -124,6 +131,9 @@ async def proxy(path: str, request: Request):
     if raw and request.headers.get("content-type", "").startswith("application/json"):
         try:
             raw = json.dumps(rewrite_body(json.loads(raw), _stamper)).encode()
+            if DUMP_PATH:
+                with open(DUMP_PATH, "wb") as f:
+                    f.write(raw)
         except (ValueError, AttributeError):
             pass  # not our shape: forward untouched
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP}

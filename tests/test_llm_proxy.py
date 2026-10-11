@@ -68,7 +68,9 @@ def test_stamp_carries_the_full_date():
 
     t = time.mktime((2026, 10, 11, 11, 40, 0, 0, 0, -1))
     s = Timestamper(clock=lambda: t).stamp("what year is it?", 0)
-    assert s == "[Sun 11 Oct 2026 11:40] what year is it?"
+    assert s == "[Sunday, October 11, 2026, 11:40 AM] what year is it?"
     assert STAMP_RE.match(s) and STAMP_RE.match("[Mon 17:38] old-style")
+    assert STAMP_RE.match("[Sun 11 Oct 2026 11:40] previous-style")
+    assert not STAMP_RE.match("[laughs] hello")
     assert Timestamper().stamp(s, 0) == s  # never double-stamped
     assert re.search(r"2026", s)
