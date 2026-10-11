@@ -20,8 +20,9 @@ DEFAULT_INSTRUCTIONS = (
 # Appended to every persona. shell/llm_proxy.py stamps user messages with the
 # time they were said; without this the model can't use (or might read) them.
 TIME_NOTE = (
-    " Each user message begins with the time it was said, like [Mon 17:38]."
-    " Never say or repeat those stamps. Answer only the newest message; if a"
+    " Each user message begins with the date and time it was said, like"
+    " [Sun 11 Oct 2026 17:38]; the newest one is today's date and the current"
+    " time - use it, never guess the date. Never read the stamps aloud. Answer only the newest message; if a"
     " lot of time has passed since the previous one, treat it as a fresh"
     " conversation and do not bring back old, unanswered topics."
 )

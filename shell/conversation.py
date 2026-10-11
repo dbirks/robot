@@ -104,7 +104,7 @@ class ConversationMemory:
         self.turns = []
         self.summary = _Summary(text=s.text, covers=0, ended_at=s.ended_at)
         self.journal.write("conversation.reset", idle_s=round(self.clock() - s.ended_at))
-        when = time.strftime("%a %H:%M", time.localtime(s.ended_at))
+        when = time.strftime("%a %d %b %H:%M", time.localtime(s.ended_at))
         return (
             f"\n\nEarlier conversation (it ended {when}, so treat what follows as a new conversation): "
             f"{s.text} Only bring any of this up if the user does."
@@ -113,7 +113,7 @@ class ConversationMemory:
 
 def render_turns(turns: list[Turn]) -> str:
     return "\n".join(
-        f"[{time.strftime('%a %H:%M', time.localtime(t))}] {'User' if r == 'user' else 'Reachy'}: {x}"
+        f"[{time.strftime('%a %d %b %Y %H:%M', time.localtime(t))}] {'User' if r == 'user' else 'Reachy'}: {x}"
         for t, r, x in turns
     )
 

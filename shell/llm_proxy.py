@@ -11,8 +11,10 @@ streamed responses - passes through byte for byte.
     s2s --responses_api_base_url http://127.0.0.1:8081/v1 -> here -> llama :8080
 
 It also stamps each user message with the local time it was first seen
-("[Mon 17:38] ..."), so the model can tell a fresh question from one asked
-hours ago (2026-10-05: it answered a 40-minute-old dangling question).
+("[Sun 11 Oct 2026 17:38] ..."), so the model can tell a fresh question from
+one asked hours ago (2026-10-05: it answered a 40-minute-old dangling
+question). The full date matters: with only "[Sun 11:40]" Granite said
+"October 14, 2023" and searched weather for "May 2025" (2026-10-10/11).
 
 Both rewrites are deterministic per message, so llama.cpp's prompt-prefix
 cache still hits.
@@ -46,7 +48,8 @@ def fix_name(text: str) -> str:
     return NAME_RE.sub("Reachy", text)
 
 
-STAMP_RE = re.compile(r"^\[[A-Z][a-z]{2} \d{2}:\d{2}\] ")
+STAMP_FMT = "[%a %d %b %Y %H:%M] "
+STAMP_RE = re.compile(r"^\[[A-Z][a-z]{2} (?:\d{2} [A-Z][a-z]{2} \d{4} )?\d{2}:\d{2}\] ")
 
 
 class Timestamper:
@@ -68,7 +71,7 @@ class Timestamper:
             times.append(self.clock())
         while len(self._seen) > self.max_texts:
             self._seen.popitem(last=False)
-        return time.strftime("[%a %H:%M] ", time.localtime(times[occurrence])) + text
+        return time.strftime(STAMP_FMT, time.localtime(times[occurrence])) + text
 
 
 def rewrite_body(body: dict, stamper: Timestamper | None = None) -> dict:
