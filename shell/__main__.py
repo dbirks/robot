@@ -31,6 +31,7 @@ from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
 from .config import ShellConfig
 from .conversation import ConversationMemory, llm_summarize
+from .intents import wants_sleep
 from .journal import Journal
 from .memories import MemoryStore
 from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
@@ -144,6 +145,10 @@ async def amain() -> None:
         turn_t0[0] = None
         if text:
             awaiting_reply[0] = time.monotonic()
+        if text and lease.active() and wants_sleep(text):
+            # don't trust the LLM to act on it (it often just says goodnight)
+            journal.write("intent.sleep", text=text)
+            loop.run_in_executor(None, router.execute, "go_to_sleep", {})
         lease.note_interaction()
         memory.add("user", text)
         if text and (lease.active() or speaker.playing):

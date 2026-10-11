@@ -74,3 +74,25 @@ def test_stamp_carries_the_full_date():
     assert not STAMP_RE.match("[laughs] hello")
     assert Timestamper().stamp(s, 0) == s  # never double-stamped
     assert re.search(r"2026", s)
+
+
+def test_s2s_voice_wrapper_is_stripped_to_our_instructions():
+    wrapped = (
+        "You are in a spoken conversation. The user speaks and hears you.\n"
+        "The session prompt defines persona...\n\n"
+        "Session Prompt:\nYou are Reachy. Use tools.\n\n"
+        "## Voice Rules\n- For expression/background tools, speak first.\n- If unsure, just speak."
+    )
+    body = rewrite_body(
+        {
+            "input": [
+                {"type": "message", "role": "system", "content": [{"type": "input_text", "text": wrapped}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            ],
+            "instructions": wrapped,
+        }
+    )
+    assert body["input"][0]["content"][0]["text"] == "You are Reachy. Use tools."
+    assert body["instructions"] == "You are Reachy. Use tools."
+    other = rewrite_body({"messages": [{"role": "system", "content": "Summarize this."}]})
+    assert other["messages"][0]["content"] == "Summarize this."  # not the s2s wrapper: untouched

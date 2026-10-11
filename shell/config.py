@@ -27,13 +27,17 @@ TIME_NOTE = (
     " conversation and do not bring back old, unanswered topics."
 )
 
-# Granite 4.1 3B (2026-10-10) is tool-eager: "how's it going?" got only a
-# play_emotion call and no words. Measured with this note: it answers in words.
+# When to call tools. Granite 4.1 3B (2026-10-10/11) both over-calls (a bare
+# play_emotion for "how's it going?", remember for "bye") and, when told to
+# "speak first", narrates actions instead of calling them. Measured with this
+# note and s2s's wrapper stripped (shell/llm_proxy.py): 35/38 on the tool bench.
 TOOLS_NOTE = (
-    " Answer greetings, feelings and opinions yourself, in words. Use tools"
-    " when asked to do something physical, about what you can see, for current"
-    " or local information, or to remember, recall or forget something the"
-    " user told you."
+    " Speak plain words: no emoji or action text like *laughs*."
+    " Use a tool only when the user asks you to do something (move, nod, dance,"
+    " play, change volume, sleep), asks what you see, asks for the time,"
+    " weather, news or facts you are unsure of, or asks you to remember, recall"
+    " or forget something. Greetings, small talk, jokes, feelings and goodbyes"
+    " need no tool: just answer."
 )
 
 

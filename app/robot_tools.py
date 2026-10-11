@@ -215,7 +215,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "go_to_sleep",
-            "description": "Put the robot to sleep. ONLY use when the user says EXACTLY 'go to sleep', 'time to sleep', or 'shut down'. NEVER use for: goodbye, bye, see you later, goodnight, or any other farewell. If unsure, do NOT call this tool.",
+            "description": "Put yourself to sleep (head down, motors relaxed). Call it whenever the user asks you to sleep, nap, rest or shut down, e.g. 'go to sleep', 'can you go to sleep?', 'time for bed, Reachy'. Do not call it for a plain goodbye or goodnight that is not asking you to sleep.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },

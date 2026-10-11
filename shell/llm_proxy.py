@@ -81,19 +81,54 @@ class Timestamper:
         return format_stamp(times[occurrence]) + text
 
 
+# s2s v1.0.0 wraps the session instructions in its own "voice channel" system
+# prompt (LLM/voice_prompt.py): a lead paragraph, "Session Prompt:", ours, then
+# "## Voice Rules" ("For expression/background tools, speak first", "If unsure
+# whether a tool is needed, just speak", ...). Granite 4.1 3B then answers
+# "Sure, here's my best nod." instead of calling nod and refuses go_to_sleep:
+# 24/38 on the tool bench with the wrapper, 35/38 with only our instructions
+# (2026-10-11). Our instructions already carry the voice rules we want.
+VOICE_WRAP_RE = re.compile(
+    r"\AYou are in a spoken conversation\..*?\nSession Prompt:\n(?P<session>.*?)\n+## Voice Rules\n.*\Z",
+    re.DOTALL,
+)
+
+
+def unwrap_system(text: str) -> str:
+    m = VOICE_WRAP_RE.match(text)
+    return m.group("session").strip() if m else text
+
+
 def rewrite_body(body: dict, stamper: Timestamper | None = None) -> dict:
-    """Fix the name in user-authored text of a Responses or Chat request, and
-    (with a stamper) prefix each user message with when it was said."""
+    """Fix the name in user-authored text of a Responses or Chat request,
+    (with a stamper) prefix each user message with when it was said, and
+    strip s2s's voice-channel wrapper from the system prompt."""
     items = body.get("input")
     counts: dict[str, int] = {}
+    if isinstance(body.get("instructions"), str):
+        body["instructions"] = unwrap_system(body["instructions"])
     if isinstance(items, str):
         body["input"] = fix_name(items)
     elif isinstance(items, list):
         for item in items:
+            _unwrap_message(item)
             _fix_message(item, stamper, counts)
     for msg in body.get("messages") or []:  # chat-completions shape
+        _unwrap_message(msg)
         _fix_message(msg, stamper, counts)
     return body
+
+
+def _unwrap_message(msg) -> None:
+    if not isinstance(msg, dict) or msg.get("role") not in ("system", "developer"):
+        return
+    content = msg.get("content")
+    if isinstance(content, str):
+        msg["content"] = unwrap_system(content)
+    elif isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                part["text"] = unwrap_system(part["text"])
 
 
 def _fix_message(msg, stamper: Timestamper | None = None, counts: dict | None = None) -> None:

@@ -4,21 +4,22 @@ set -euo pipefail
 # Defaults — override with env vars or edit below.
 # Long flags throughout: this file is read far more often than it is typed.
 
-# Default since 2026-10-10: IBM Granite 4.1 3B Q6_K (ibm-granite/granite-4.1-3b-GGUF),
-# text-only. 20/20 on the Reachy toolbench (Qwen3.5-4B: 16-17/20), ~1040 tok/s
-# cold prefill, 3.9 GB at 32K. Camera questions go to a separate small VLM
-# (scripts/run_vision_server.sh). Previous model, still a two-line switch:
-#   LLAMA_MODEL_PATH=models/gguf/mtp/Qwen3.5-4B-UD-Q4_K_XL.gguf
-#   LLAMA_MMPROJ_PATH=models/gguf/mtp/mmproj-F16.gguf
-# (UD-Q4_K_XL from unsloth/Qwen3.5-4B-MTP-GGUF: better KL-divergence than
-# Q4_K_M; MTP heads baked in, unused - see --spec-type below.)
-MODEL_PATH="${LLAMA_MODEL_PATH:-models/gguf/granite/granite-4.1-3b-Q6_K.gguf}"
+# Qwen3.5-4B UD-Q4_K_XL (unsloth/Qwen3.5-4B-MTP-GGUF; better KL-divergence than
+# Q4_K_M; MTP heads baked in, unused - see --spec-type below) + F16 mmproj, so
+# the camera tools use the chat model itself.
+# Tried 2026-10-10/11: IBM Granite 4.1 3B Q6_K (text-only, + CPU VLM via
+# scripts/run_vision_server.sh). 20/20 on the short-prompt toolbench, but on a
+# replayed real session (s2s system prompt, ~10 turns of chat) only 24-30/48
+# vs Qwen 37-38/48 - it narrated "going to sleep now" instead of calling the
+# tool. To try it again:
+#   LLAMA_MODEL_PATH=models/gguf/granite/granite-4.1-3b-Q6_K.gguf LLAMA_MMPROJ_PATH=
+MODEL_PATH="${LLAMA_MODEL_PATH:-models/gguf/mtp/Qwen3.5-4B-UD-Q4_K_XL.gguf}"
 
 # Vision projector for the LLM's image input (describe_scene / take_snapshot).
 # F16, not the BF16 file we used to ship: the GTX 1070 (Pascal) has no BF16 in
 # hardware and had to emulate it. F16 is native. Leave the file absent to run
 # text-only.
-MMPROJ_PATH="${LLAMA_MMPROJ_PATH:-}"   # vision projector, only for a VLM chat model
+MMPROJ_PATH="${LLAMA_MMPROJ_PATH-models/gguf/mtp/mmproj-F16.gguf}"   # set empty for a text-only model
 
 PORT="${LLAMA_PORT:-8080}"
 
@@ -30,7 +31,9 @@ HOST="${LLAMA_HOST:-127.0.0.1}"
 # 32768/2 = 16K per slot. Ample for a voice turn, and it keeps us under the
 # ~22-24K per-slot threshold where Pascal + quantized KV + flash-attn is
 # reported to crash (llama.cpp issue #22032, closed as not-planned).
-CTX="${LLAMA_CTX:-32768}"
+# 2 x 12K slots. With matched q8_0 KV (below) 32K left ~180 MB of the 8 GB
+# beside the Obama Qwen3-TTS; 24K runs at 7.84 GB (2026-10-11).
+CTX="${LLAMA_CTX:-24576}"
 
 # Two slots so an interruption isn't queued behind the in-flight request.
 #
