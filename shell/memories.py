@@ -1,4 +1,8 @@
-"""Long-term memories the user asks Reachy to keep ("remember that ...").
+"""Long-term memories: things the user asks Reachy to keep ("remember that
+...") plus lasting facts he picks up on his own (names, family, home) - the
+latter extracted in the background when a conversation is compacted
+(shell/conversation.py), because the conversation summary alone loses them
+(2026-10-11: family names told at 15:01 were gone by 15:21).
 
 A small JSON file (data/memories.json), human-readable and hand-editable.
 Three tools: remember / recall / forget_memory. Recent memories are also put
@@ -23,7 +27,7 @@ from typing import Any, Callable
 log = logging.getLogger("shell.memories")
 
 RETURN_ALL_BELOW = 25
-PROMPT_MAX = 20
+PROMPT_MAX = 30
 
 _STOP = set(
     "a an the and or but of to in on at for with about is are was were be been am i me my mine you your "
@@ -59,14 +63,19 @@ class MemoryStore:
         tmp.write_text(json.dumps(self._items, indent=1, ensure_ascii=False))
         tmp.replace(self.path)
 
-    def add(self, text: str) -> dict:
+    def add(self, text: str, source: str = "asked") -> dict:
         text = " ".join(text.split())
         with self._lock:
             for m in self._items:
                 if m["text"].lower() == text.lower():
                     return m  # already known
             mid = max((m["id"] for m in self._items), default=0) + 1
-            m = {"id": mid, "text": text, "saved": time.strftime("%Y-%m-%d %H:%M", time.localtime(self.clock()))}
+            m = {
+                "id": mid,
+                "text": text,
+                "saved": time.strftime("%Y-%m-%d %H:%M", time.localtime(self.clock())),
+                "source": source,
+            }
             self._items.append(m)
             self._save()
             return m
@@ -106,7 +115,7 @@ class MemoryStore:
         if not items:
             return ""
         facts = " ".join(f"- {m['text']}" for m in items)
-        return f" Things the user asked you to remember (use them naturally, don't recite them): {facts}"
+        return f" What you know about the user and their family (use it naturally, don't recite it): {facts}"
 
 
 MEMORY_TOOLS: list[dict] = [

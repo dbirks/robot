@@ -30,7 +30,7 @@ from .audio.xmos_tuning import XmosTuner
 from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
 from .config import ShellConfig
-from .conversation import ConversationMemory, llm_summarize
+from .conversation import ConversationMemory, llm_extract_facts, llm_summarize
 from .intents import is_bare_wake, wants_sleep
 from .journal import Journal
 from .memories import MemoryStore
@@ -140,6 +140,10 @@ async def amain() -> None:
         lambda prior, turns: llm_summarize(cfg.llm_base_url, cfg.llm_model, prior, turns),
         compact_after_s=cfg.compact_after_s,
         reset_after_s=cfg.reset_after_s,
+        extract_facts=lambda turns: llm_extract_facts(
+            cfg.llm_base_url, cfg.llm_model, turns, [m["text"] for m in memories.all()]
+        ),
+        save_fact=lambda fact: memories.add(fact, source="auto"),
     )
 
     awaiting_reply = [0.0]  # monotonic time of the last transcript not yet answered

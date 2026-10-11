@@ -135,3 +135,62 @@ def test_tick_resets_proactively_once_summary_is_ready():
 
     run(go)
     assert mem.journal.events.count("conversation.reset") == 1
+
+
+def test_grounded_drops_invented_names_and_vague_facts():
+    from shell.conversation import grounded
+
+    said = "my wife Rachel and my son Barney are seven, we live in McCordsville"
+    facts = [
+        "The user's wife is named Rachel.",
+        "The user's wife is named Sarah.",  # never said
+        "The user has kids.",  # nothing specific
+        "The user has a son named Barney who is 7 years old.",
+        "The user lives in McCordsville, Indiana.",  # Indiana never said
+    ]
+    assert grounded(facts, said) == [facts[0], facts[3]]
+
+
+def test_parse_facts_tolerates_chatter_and_rejects_non_user_facts():
+    from shell.conversation import parse_facts
+
+    raw = 'Sure! ["The user\'s name is David.", "Reachy is a robot.", 42, "The user likes tea."] Hope that helps.'
+    assert parse_facts(raw) == ["The user's name is David.", "The user likes tea."]
+    assert parse_facts("no json here") == [] and parse_facts("[") == []
+
+
+def test_compaction_mines_new_turns_for_facts_once():
+    saved = []
+    clock = [1_800_000_000.0]
+    calls = []
+
+    async def summarize(prior, turns):
+        return "A summary."
+
+    async def extract(turns):
+        calls.append(len(turns))
+        return ["The user's wife is named Rachel."]
+
+    mem = ConversationMemory(
+        FakeJournal(),
+        summarize,
+        compact_after_s=180,
+        clock=lambda: clock[0],
+        extract_facts=extract,
+        save_fact=saved.append,
+    )
+
+    async def go():
+        mem.add("user", "my wife is Rachel")
+        mem.add("assistant", "Nice.")
+        clock[0] += 200
+        mem.tick(engaged=False)
+        await mem._task
+        mem.add("assistant", "Anything else?")  # no new user speech: nothing to mine
+        clock[0] += 200
+        mem.tick(engaged=False)
+        await mem._task
+
+    run(go)
+    assert saved == ["The user's wife is named Rachel."] and calls == [2]
+    assert "conversation.facts_saved" in mem.journal.events
