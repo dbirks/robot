@@ -553,31 +553,35 @@ def make_handlers(
 
     def set_volume(level: str = "louder", **_kwargs: Any) -> dict:
         # The Reachy's hardware gain is already at max; this is the PipeWire
-        # sink gain, where 1.0 (100%) measured as only "medium-quiet" in the
-        # room. Named levels sit above that; relative steps read the current
-        # level so "louder" always does something. Capped at 2.0 (distortion).
+        # sink gain. Retuned down 2026-10-12 (user: "turn the volume down a
+        # bunch" - the desk sits close and 1.7 was painful in a small room).
+        # The old 1.0 = "medium-quiet" note predates the s2s/Qwen3-TTS output
+        # path, which is hotter than the legacy Kokoro one. Relative steps read
+        # the current level so "louder" always does something. Capped at 1.2:
+        # measured distortion territory, and a per-env volume policy (loud
+        # conference room vs. quiet home) is planned - see docs/environments.md.
         try:
             from .playback import set_volume_boost
 
             levels = {
                 "mute": 0.0,
-                "whisper": 0.6,
-                "quiet": 1.0,
-                "low": 1.0,
-                "medium": 1.3,
-                "normal": 1.3,
-                "loud": 1.6,
-                "high": 1.6,
-                "max": 2.0,
+                "whisper": 0.2,
+                "quiet": 0.35,
+                "low": 0.35,
+                "medium": 0.5,
+                "normal": 0.5,
+                "loud": 0.8,
+                "high": 0.8,
+                "max": 1.2,
             }
             steps = {
-                "louder": 0.2,
-                "up": 0.2,
-                "much louder": 0.4,
-                "quieter": -0.2,
-                "down": -0.2,
-                "softer": -0.2,
-                "much quieter": -0.4,
+                "louder": 0.1,
+                "up": 0.1,
+                "much louder": 0.25,
+                "quieter": -0.1,
+                "down": -0.1,
+                "softer": -0.1,
+                "much quieter": -0.25,
             }
             current = _get_sink_volume()
             key = level.strip().lower()
@@ -592,14 +596,14 @@ def make_handlers(
                     target = float(key.rstrip("%")) / (100.0 if key.endswith("%") else 1.0)
                 except ValueError:
                     return {"ok": False, "error": f"Unknown volume level: {level}"}
-            target = round(max(0.0, min(2.0, target)), 2)
+            target = round(max(0.0, min(1.2, target)), 2)
             set_volume_boost(target)
             log.info("Volume %s -> %.2f (level=%s)", current, target, level)
             return {
                 "ok": True,
                 "volume_percent": round(target * 100),
                 "previous_percent": None if current is None else round(current * 100),
-                "at_max": target >= 2.0,
+                "at_max": target >= 1.2,
             }
         except Exception as e:
             return {"ok": False, "error": str(e)}

@@ -82,9 +82,28 @@ and `python -m shell --print-env` dumps the resolved config for the dashboard/AD
 - [ ] A5 `MemoryStore` namespaces (`memories.home.json` / `memories.hackday.json`); migrate current `data/memories.json` → home
 - [ ] A6 systemd: `Environment=REACHY_ENV=home` in `deploy/systemd/reachy-shell.service`, event swap documented in `deploy/README.md`
 - [ ] A7 Tests: precedence, unknown-key tolerance, home parity (resolved instructions match today's)
+- [ ] A8 CI drift: `uvx ruff format --check .` currently flags
+      `experiments/2026-10-03-voice-design/design.py` and `experiments/2026-10-04-llm-bakeoff/toolbench.py`
+      with the latest ruff (the repo has no ruff pin). Pin the lint toolchain or format the files.
 
 ### Phase B — hack-day capability
 
+- [ ] B0 **Look people in the eye.** Port the legacy face lock-on (`app/face_tracker.py`:
+      InsightFace `buffalo_sc` on the CPU execution provider, head yaw/pitch targets that keep
+      a face centred — `OVERSHOOT_SCALE`/`MAX_YAW`/`MAX_PITCH`) natively into `shell/`:
+      frames from `shell/camera.py`, targets through `MotionOwner` (the single caller of
+      `set_target`), and a "someone is looking at me" trigger that opens with a spoken hello.
+      Needs a measured CPU cost in `docs/pins.yaml` (ADRs 0004/0006) and ADR 0003-style gating
+      so a face scanning a laptop is not greeted.
+- [ ] B0b **Persona picker**: Obama (today) vs Alan Rickman. A persona = talker GGUF + speaker +
+      TTS instruct + ack sounds + system prompt, i.e. how he sounds *and* how he behaves.
+      Nests under the environment (`persona: obama` / `persona: rickman`). The Alan Rickman
+      voice work of 2026-10-08 (`models/voices/marvin-rickman/`) needs its own issue — see
+      `docs/notes/alan-rickman-voice-issue.md`.
+- [ ] V1 Volume: named levels retuned down 2026-10-12 (cap 2.0 → 1.2, "normal" 1.3 → 0.5) and the
+      live sink dropped 1.70 → 0.50. Still open: per-env volume policy (a conference room needs
+      headroom the home table does not) and `reachy-audio-init.service`, which hardcodes
+      `amixer -c 3` and now fails at boot with `Invalid card number '3'` — match the card by name.
 - [ ] B1 Wire face recognition natively into the shell (`learn_face` / `identify_face`
       return "not available" today because `make_handlers` gets no `face_tracker`);
       per-env faces file; measured InsightFace CPU cost in `pins.yaml`
