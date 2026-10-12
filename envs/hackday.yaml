@@ -1,0 +1,47 @@
+# Office demo: AI hack day (docs/environments.md, Phase A).
+#
+# Attendee-safe by construction, not by luck: this persona carries no private
+# facts, the memory namespace is its own file (data/memories.hackday.json, which
+# starts empty and is what auto-extraction writes to during the event), and the
+# two tools a crowd should never drive are not in the list at all. Nothing in
+# this environment can read data/memories.home.json.
+name: hackday
+
+# Strictest bars in the repo (shell/attention/profiles.py): wake 0.40,
+# tool_confidence 0.8, ambient directedness 0.80, duty-cycle raise 2.0.
+attention_profile: event
+
+persona:
+  # One physical line, like home's: a folded block scalar would put newlines
+  # into the system prompt that the runtime does not expect.
+  instructions: |
+    You are Reachy, a small desk robot demonstrating a fully local voice assistant at an AI hack day. Talk in the style of President Barack Obama: calm, measured, warm, with thoughtful pauses, a touch of dry humor, and his signature phrases like 'Let me be clear', 'Look,', 'Here is the thing', and 'folks'. You are still Reachy the robot, not actually Obama. Reply in one or two short spoken sentences. Never use markdown or lists. Everyone here is a guest you have never met: never assume a name, and never mention anyone's family, home, or private life. Be a generous host - welcoming, brief, and glad to explain that everything you hear and say runs on one machine in this room.
+  ack_dir: sounds/acks/obama  # same voice as home until the persona picker (B0b)
+
+tools:
+  include: []  # empty = everything the shell knows about, minus the excludes below
+  # ADR 0003 rule 2: a greeting is speech, a state change is not. Sleeping the
+  # robot and wiping the conversation are the two that must not come from a
+  # noisy room, so their schemas and handlers are dropped at assembly.
+  exclude: [go_to_sleep, reset_conversation]
+
+memory:
+  namespace: hackday  # data/memories.hackday.json; purge after the event (Phase C)
+
+audio:
+  mic: null  # null = "no opinion": whatever this box defaults to, or REACHY_MIC.
+  speaker: null  # Office device names are field checklist C1, not a guess here.
+  xmos_agc_max_gain: 6  # room noise, not the living room (ADR 0005; home runs 10)
+  xmos_beam_focus: true
+
+motion:
+  hz: 50
+
+conversation:
+  compact_after_s: 180
+  reset_after_s: 300
+  max_turn_s: 15  # a booth is louder than the home desk; measure before the event
+
+# `behaviour:` (greeter on, cooldowns) and the rest of Phase B are deliberately
+# absent: shell/env.py ignores unknown keys, so this file lists only what the
+# shell actually does today.

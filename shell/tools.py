@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 
 from . import journal as J
 
@@ -38,6 +39,33 @@ STATE_CHANGING = {
 # user wants to hear progress after every call ("Turning left.", "There you
 # go."), not silence after physical actions. Kept as a hook.
 FIRE_AND_FORGET: set[str] = set()
+
+
+def tool_name(schema: dict) -> str:
+    """The function name of an OpenAI-tool-call schema dict."""
+    return str(schema.get("function", {}).get("name", ""))
+
+
+def apply_tool_policy(
+    tools: list[dict],
+    handlers: dict,
+    *,
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+) -> tuple[list[dict], dict]:
+    """Environment tool subset (docs/environments.md A3): empty `include` keeps
+    everything the shell knows about, `exclude` always wins.
+
+    Schema AND handler both go away, so a hallucinated call to an excluded tool
+    comes back as an unknown tool and gets journaled as one — never as a side
+    effect. Names must match the schema exactly; a name the shell has never
+    heard of is a no-op, so an env file from a newer main still boots.
+    """
+    keep = {str(name).strip() for name in include if str(name).strip()}
+    drop = {str(name).strip() for name in exclude if str(name).strip()}
+    selected = [tool for tool in tools if (not keep or tool_name(tool) in keep) and tool_name(tool) not in drop]
+    allowed = {tool_name(tool) for tool in selected}
+    return selected, {name: handler for name, handler in handlers.items() if name in allowed}
 
 
 class ToolRouter:

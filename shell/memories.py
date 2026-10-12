@@ -4,9 +4,10 @@ latter extracted in the background when a conversation is compacted
 (shell/conversation.py), because the conversation summary alone loses them
 (2026-10-11: family names told at 15:01 were gone by 15:21).
 
-A small JSON file (data/memories.json), human-readable and hand-editable.
-Three tools: remember / recall / forget_memory. Recent memories are also put
-in the session instructions (`prompt_block`) so Reachy knows them without a
+A small JSON file (data/memories.<namespace>.json, one per deployment environment
+so a hack-day store starts empty and can never read home facts), human-readable and
+hand-editable. Three tools: remember / recall / forget_memory. Recent memories are
+also put in the session instructions (`prompt_block`) so Reachy knows them without a
 tool call; `recall` covers anything said since the session started.
 
 Matching is deliberately simple word overlap: a desk robot holds tens of
@@ -19,15 +20,19 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .config import DEFAULT_ENV
+
 log = logging.getLogger("shell.memories")
 
 RETURN_ALL_BELOW = 25
 PROMPT_MAX = 30
+LEGACY_STORE = "memories.json"  # the single pre-namespaces file, data/memories.json
 
 _STOP = set(
     "a an the and or but of to in on at for with about is are was were be been am i me my mine you your "
@@ -116,6 +121,66 @@ class MemoryStore:
             return ""
         facts = " ".join(f"- {m['text']}" for m in items)
         return f" What you know about the user and their family (use it naturally, don't recite it): {facts}"
+
+
+def migrate_legacy_memories(data_dir: Path, namespace: str) -> dict:
+    """Copy the pre-namespaces store into `data/memories.home.json` (A5).
+
+    Copy, never delete, and never overwrite an existing target. Read this before
+    running it: the LIVE SHELL STILL HOLDS THE OLD FILE. `MemoryStore` reads
+    `data/memories.json` once at startup and rewrites that same path on every
+    saved fact, so anything the running shell learns after this copy lands in
+    the legacy file and is silently lost on the next start. Stop the shell
+    first (deploy/README.md has the order), then migrate, then start it again;
+    archive `data/memories.json` by hand only once the new file looks right.
+
+    `home` only, by construction. The legacy file is the desk robot's: it holds
+    family names and the home address, and hard rule 1 of docs/environments.md is
+    that the event store starts empty, so pointing this at another namespace is
+    refused rather than honoured. Moving facts into some other environment on
+    purpose is a `cp` and a decision, not a flag at 9am.
+
+    Returns a JSON-ready summary and never raises, like every other tool-facing
+    helper in this package.
+    """
+    legacy = Path(data_dir) / LEGACY_STORE
+    target = Path(data_dir) / f"memories.{namespace}.json"
+    try:
+        if namespace != DEFAULT_ENV:
+            return {
+                "ok": False,
+                "error": f"{LEGACY_STORE} holds home facts and may only move to memories.{DEFAULT_ENV}.json; "
+                f"memories.{namespace}.json must start empty (docs/environments.md hard rule 1)",
+                "legacy": str(legacy),
+                "target": str(target),
+            }
+        if not legacy.is_file():
+            return {"ok": True, "action": "nothing_to_migrate", "legacy": str(legacy)}
+        if target.exists():
+            return {
+                "ok": True,
+                "action": "skipped",
+                "reason": "target already exists, nothing overwritten",
+                "legacy": str(legacy),
+                "target": str(target),
+            }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(legacy, target)
+        # Read the copy back through the real loader: facts == 0 here means the
+        # legacy file was unreadable, and MemoryStore has already warned about it.
+        facts = len(MemoryStore(target).all())
+        return {
+            "ok": True,
+            "action": "copied",
+            "legacy": str(legacy),
+            "target": str(target),
+            "facts": facts,
+            "warning": f"{legacy} is untouched and still open in any running shell; "
+            "stop the shell before starting it on the namespaced file",
+        }
+    except Exception as e:  # operators get a report, not a traceback
+        log.warning("memory migration %s -> %s failed: %r", legacy, target, e)
+        return {"ok": False, "error": str(e), "legacy": str(legacy), "target": str(target)}
 
 
 MEMORY_TOOLS: list[dict] = [

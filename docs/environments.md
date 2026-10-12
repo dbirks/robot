@@ -57,6 +57,14 @@ audio:
 Unknown keys are ignored (forward-compatible), a missing file is a hard startup error,
 and `python -m shell --print-env` dumps the resolved config for the dashboard/ADR trail.
 
+As implemented (Phase A): the keys above plus `motion.hz` and `conversation:
+{compact_after_s, reset_after_s, max_turn_s}`, each with the `REACHY_*` process
+variable already used by `shell/config.py` as its override. `REACHY_TOOLS_INCLUDE` /
+`REACHY_TOOLS_EXCLUDE` (comma-separated) and `REACHY_MEMORY_NAMESPACE` are new.
+An explicit `null`/`""` in a file means "no opinion", not "clear the value", so
+`audio.mic: null` never fights `REACHY_MIC`. LLM/s2s endpoints deliberately stay
+in `.env`: `reachy-s2s` reads the same values and one fact must have one source.
+
 ## Hard rules
 
 1. **No private home facts in a public room.** Memory + faces are namespaced per env; the
@@ -75,13 +83,32 @@ and `python -m shell --print-env` dumps the resolved config for the dashboard/AD
 
 ### Phase A — environment layer (no behaviour change)
 
-- [ ] A1 `shell/env.py`: load `envs/<name>.yaml`, layer into `ShellConfig` (defaults < file < env vars)
-- [ ] A2 `envs/home.yaml` = today's `.env` values, byte-equivalent behaviour; `.env` keeps working as an override
-- [ ] A3 `envs/hackday.yaml` with the `event` attention profile + attendee-safe persona
-- [ ] A4 Journal + dashboard carry `env` on every event; `--print-env` flag
-- [ ] A5 `MemoryStore` namespaces (`memories.home.json` / `memories.hackday.json`); migrate current `data/memories.json` → home
-- [ ] A6 systemd: `Environment=REACHY_ENV=home` in `deploy/systemd/reachy-shell.service`, event swap documented in `deploy/README.md`
-- [ ] A7 Tests: precedence, unknown-key tolerance, home parity (resolved instructions match today's)
+- [x] A1 `shell/env.py`: load `envs/<name>.yaml`, layer into `ShellConfig` (defaults < file < env vars)
+- [x] A2 `envs/home.yaml` = today's `.env` values, byte-equivalent behaviour; `.env` keeps working as an override
+      — **correction**: the table above says home runs `home_tv`. It does not: the live `.env` never set
+      `REACHY_PROFILE`, so today's resolved profile is `quiet` and `envs/home.yaml` says `quiet`. Parity beat
+      the table; switching to `home_tv` is a behaviour change and one line away when someone wants it.
+      Also note `.env` sits *above* the env file in the precedence, so a leftover `REACHY_INSTRUCTIONS` in
+      `.env` silently outranks the attendee-safe persona — `deploy/README.md` says to comment it out for the event.
+- [x] A3 `envs/hackday.yaml` with the `event` attention profile + attendee-safe persona
+      — excludes are applied at assembly (`apply_tool_policy`), so both the schema and the handler go away.
+      Faces are the hole: `identify_face`/`learn_face` still route to `app/face_tracker.py`, which hardcodes
+      `data/known_faces.json`. Namespacing them is B1 (it cannot be done from `shell/` without touching `app/`),
+      so until B1 lands, consider excluding the face tools from `hackday` too.
+- [x] A4 Journal carries `env` on every event; `python -m shell --print-env` prints the resolved config.
+      Not done: the dashboard badge — it never reads the new layer, tracked as #38
+      — every `Journal` row now gets `env` in its payload (explicit payload keys still win). The dashboard has
+      no journal reader yet at all (it still shows the legacy `data/sessions.db`), so there was nothing to filter;
+      the stamp is in the DB and the UI work lands with whoever wires the Inspect page up to ADR 0007.
+- [x] A5 `MemoryStore` namespaces (`memories.home.json` / `memories.hackday.json`); migrate current `data/memories.json` → home
+      — namespace defaults to the env name, so an env can never inherit another's facts by omission. The migration
+      (`python -m shell --migrate-memory`) copies, never deletes, never overwrites, and refuses to write anywhere
+      but `memories.home.json`. **It has not been run on this box**: the live shell still reads/writes
+      `data/memories.json`, so it runs after the shell is stopped (`deploy/README.md`).
+- [x] A6 systemd: `Environment=REACHY_ENV=home` in `deploy/systemd/reachy-shell.service`, event swap documented in `deploy/README.md`
+- [x] A7 Tests: precedence, unknown-key tolerance, home parity (resolved instructions match today's)
+      — `tests/test_env.py` (21 tests: precedence both ways, null, unknown keys, missing file, `--print-env`
+      purity, namespaces, migration, tool policy) plus two journal stamp tests.
 - [ ] A8 CI drift: `uvx ruff format --check .` currently flags
       `experiments/2026-10-03-voice-design/design.py` and `experiments/2026-10-04-llm-bakeoff/toolbench.py`
       with the latest ruff (the repo has no ruff pin). Pin the lint toolchain or format the files.

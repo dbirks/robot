@@ -16,6 +16,24 @@ def test_roundtrip_and_query(tmp_path: Path):
     j.closed()
 
 
+def test_env_is_stamped_on_every_event(tmp_path: Path):
+    """docs/environments.md A4: "what happened at the event" is one WHERE clause."""
+    j = Journal(tmp_path / "e.db", env="hackday")
+    j.write(J.TOOL_STARTED, tool="nod")
+    j.write(J.ATTENTION_DECISION, env="home")  # an explicit payload still wins
+    assert [r["payload"]["env"] for r in j.recent(10)] == ["hackday", "home"]
+    j.closed()
+
+
+def test_without_an_env_payloads_are_untouched(tmp_path: Path):
+    """Rows written before the environment layer carry no env; neither does a
+    Journal built without one (tests, scripts, dashboard probes)."""
+    j = Journal(tmp_path / "e.db")
+    j.write(J.AUDIO_HEALTH, rms=1.0)
+    assert j.recent(1)[0]["payload"] == {"rms": 1.0}
+    j.closed()
+
+
 def test_write_never_raises_on_bad_payload(tmp_path: Path):
     j = Journal(tmp_path / "e.db")
 

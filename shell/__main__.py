@@ -13,7 +13,9 @@ no robot connected (EPIC "run without a robot").
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import json
 import logging
 import signal
 import sys
@@ -31,15 +33,16 @@ from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
 from .config import ShellConfig
 from .conversation import ConversationMemory, llm_extract_facts, llm_summarize
+from .env import EnvError, config_to_dict, load_config
 from .intents import is_bare_wake, wants_sleep
 from .journal import Journal
-from .memories import MemoryStore
+from .memories import MemoryStore, migrate_legacy_memories
 from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
 from .robot import RobotLink
 from .robot_tools import build_handlers, load_sdk_sound
-from .tools import ToolRouter
+from .tools import ToolRouter, apply_tool_policy
 
 log = logging.getLogger("shell")
 
@@ -50,9 +53,8 @@ REPLY_WAIT_S = 30.0  # longest we keep attention waiting on one reply
 WAKE_ACK_WAIT_S = 1.5  # quiet after a bare wake word before the "yes?"
 
 
-async def amain() -> None:
-    cfg = ShellConfig()
-    journal = Journal(cfg.journal_path)
+async def amain(cfg: ShellConfig) -> None:
+    journal = Journal(cfg.journal_path, env=cfg.env)  # env on every event (A4)
     profile = load_profile(cfg.attention_profile)
     lease = AttentionLease(profile, journal)
     resolver = ParticipantResolver(profile, journal)
@@ -75,10 +77,11 @@ async def amain() -> None:
         if sounds[name] is not None:
             speaker.enqueue(speaker.generation, "sound", sounds[name])
 
-    memories = MemoryStore(cfg.data_dir / "memories.json")
+    memories = MemoryStore(cfg.memories_path)  # per-environment store (A5)
     tools, handlers = build_handlers(
         robot, camera, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound, memories=memories
     )
+    tools, handlers = apply_tool_policy(tools, handlers, include=cfg.tools_include, exclude=cfg.tools_exclude)
     router = ToolRouter(
         tools,
         handlers,
@@ -263,7 +266,7 @@ async def amain() -> None:
     speaker.open()
     if motion.start():  # no-op without a robot
         doa.start()
-    log.info("shell up: profile=%s tools=%d lease=%s", profile.name, len(tools), lease.holder)
+    log.info("shell up: env=%s profile=%s tools=%d lease=%s", cfg.env, profile.name, len(tools), lease.holder)
 
     rt = asyncio.create_task(client.run(), name="realtime")
 
@@ -308,13 +311,56 @@ async def amain() -> None:
         journal.closed()
 
 
-def main() -> None:
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m shell",
+        description="Reachy Mini realtime shell: audio owners, attention, tools (docs/environments.md).",
+    )
+    parser.add_argument(
+        "--print-env",
+        action="store_true",
+        help="print the resolved deployment environment as JSON and exit; "
+        "opens no audio device, connects to no robot, touches no network",
+    )
+    parser.add_argument(
+        "--migrate-memory",
+        action="store_true",
+        help="copy the pre-namespaces data/memories.json into this env's store and exit "
+        "(stop reachy-shell first: the running shell still writes the old file)",
+    )
+    return parser
+
+
+def _resolved_config() -> ShellConfig:
+    """load_config() with an operator-readable failure. A missing env file is a
+    hard startup error; it is not a traceback at 9am in an office."""
+    try:
+        return load_config()
+    except EnvError as e:
+        print(f"shell: {e}", file=sys.stderr)
+        raise SystemExit(2) from e
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
+    # These two flags resolve config and leave. They run before logging is set up
+    # and before anything is constructed: no audio device, no robot, no journal,
+    # no network. --print-env has to work on a machine where the shell cannot.
+    if args.print_env:
+        print(json.dumps(config_to_dict(_resolved_config()), indent=2, sort_keys=True))
+        return
+    if args.migrate_memory:
+        cfg = _resolved_config()
+        report = migrate_legacy_memories(cfg.data_dir, cfg.memory_namespace)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        raise SystemExit(0 if report["ok"] else 1)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)-18s %(levelname)-5s %(message)s",
     )
     try:
-        asyncio.run(amain())
+        asyncio.run(amain(_resolved_config()))
     except KeyboardInterrupt:
         sys.exit(0)
 

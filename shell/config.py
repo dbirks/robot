@@ -1,5 +1,11 @@
 """Configuration for the realtime shell. Deliberately env-only and minimal;
-attention tuning lives in versioned profiles, model identity in docs/pins.yaml."""
+attention tuning lives in versioned profiles, model identity in docs/pins.yaml.
+
+Every value below resolves from code defaults + the process environment only.
+The deployment-environment layer (docs/environments.md) sits on top of this in
+shell/env.py: `envs/<env>.yaml` fills in what the process environment leaves
+alone, so nothing here changes for anyone who only has a `.env`.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +16,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# docs/environments.md: REACHY_ENV picks the room. Always read from the real
+# process environment - an env file can never select itself.
+REACHY_ENV_VAR = "REACHY_ENV"
+DEFAULT_ENV = "home"
 
 DEFAULT_INSTRUCTIONS = (
     "You are Reachy, a small desk robot. Reply in one or two short spoken "
@@ -49,16 +60,57 @@ TOOLS_NOTE = (
     " result, say one short sentence about what happened or what you found."
 )
 
+# Appended to every persona, in every deployment environment.
+SHELL_NOTES = TOOLS_NOTE + TIME_NOTE
+
+
+def persona_instructions(persona: str) -> str:
+    """The one place a persona becomes system instructions.
+
+    SHELL_NOTES is behaviour contract, not persona, so it appends to every persona
+    in every environment (docs/environments.md schema v1: "TOOLS_NOTE/TIME_NOTE
+    still append"). Name mis-hearings (Richie/Ricci) are fixed in
+    shell/llm_proxy.py, not here: prompting the 4B model about them made it keep
+    bringing it up.
+    """
+    return persona.rstrip() + SHELL_NOTES
+
+
+def _env_name() -> str:
+    return os.getenv(REACHY_ENV_VAR, "").strip() or DEFAULT_ENV
+
+
+def _memory_namespace() -> str:
+    # Empty = "follow the environment name", resolved in __post_init__ so that
+    # ShellConfig(env="lab") namespaces as "lab" too. A new environment can then
+    # never inherit another one's facts by omission (docs/environments.md rule 1).
+    return os.getenv("REACHY_MEMORY_NAMESPACE", "").strip()
+
+
+def _csv(name: str) -> list[str]:
+    return [part.strip() for part in os.getenv(name, "").split(",") if part.strip()]
+
 
 @dataclass
 class ShellConfig:
+    # Resolved deployment environment (docs/environments.md); stamped on every
+    # journal event. Only shell/env.py writes it, from REACHY_ENV.
+    env: str = field(default_factory=_env_name)
+
     # Realtime service (pinned huggingface/speech-to-speech, ADR 0001)
     s2s_url: str = field(default_factory=lambda: os.getenv("S2S_URL", "ws://127.0.0.1:8765/v1/realtime"))
     instructions: str = field(
-        # Name mis-hearings (Richie/Ricci) are fixed in shell/llm_proxy.py, not
-        # here: prompting the 4B model about them made it keep bringing it up.
-        default_factory=lambda: os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS).rstrip() + TOOLS_NOTE + TIME_NOTE
+        default_factory=lambda: persona_instructions(os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS))
     )
+
+    # Tool subset for this environment (shell/tools.apply_tool_policy): empty
+    # include = everything the shell knows about, exclude always wins.
+    tools_include: list[str] = field(default_factory=lambda: _csv("REACHY_TOOLS_INCLUDE"))
+    tools_exclude: list[str] = field(default_factory=lambda: _csv("REACHY_TOOLS_EXCLUDE"))
+
+    # Which memories.<ns>.json this env reads and writes (shell/env, A5).
+    # "" = follow `env`; __post_init__ resolves it.
+    memory_namespace: str = field(default_factory=_memory_namespace)
 
     # Direct llama.cpp endpoint for side tasks (conversation compaction).
     llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080/v1"))
@@ -100,6 +152,15 @@ class ShellConfig:
     ack_dir: Path = field(default_factory=lambda: Path(os.getenv("REACHY_ACK_DIR", "sounds/acks")))
     kws_model_dir: str = field(default_factory=lambda: os.getenv("KWS_MODEL_DIR", "models/kws"))
 
+    def __post_init__(self) -> None:
+        if not self.memory_namespace:
+            self.memory_namespace = self.env
+
     @property
     def journal_path(self) -> Path:
         return self.data_dir / "events.db"
+
+    @property
+    def memories_path(self) -> Path:
+        """data/memories.<namespace>.json - one store per environment (A5)."""
+        return self.data_dir / f"memories.{self.memory_namespace}.json"

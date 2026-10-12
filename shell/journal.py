@@ -76,10 +76,15 @@ class Journal:
         path: Path,
         max_rows: int = 200_000,
         max_age_s: float = 30 * 24 * 3600.0,
+        env: str | None = None,
     ) -> None:
         self.path = Path(path)
         self.max_rows = max_rows
         self.max_age_s = max_age_s
+        # Deployment environment name (docs/environments.md A4): stamped on every
+        # event so "what happened at the event" is one SQL WHERE clause away from
+        # "what happened at home". None keeps payloads untouched (tests, tools).
+        self.env = env
         self.dropped = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(str(self.path), check_same_thread=False)
@@ -112,6 +117,8 @@ class Journal:
             print(f"journal: dropped {type_}: {e}", file=sys.stderr)
 
     def _write(self, type_: str, payload: dict) -> None:
+        if self.env is not None:
+            payload = {"env": self.env, **payload}  # an explicit payload env still wins
         self._db.execute(
             "INSERT INTO events(mono, wall, type, payload) VALUES(?,?,?,?)",
             (

@@ -1,0 +1,46 @@
+# Home desk: today's deployment environment (docs/environments.md, Phase A).
+#
+# Every value is what the shell resolves TODAY with the live .env, so
+# "REACHY_ENV unset + this file" reproduces the pre-environment shell exactly
+# (A2 parity, tested in tests/test_env.py). Note the precedence: while .env
+# still sets REACHY_INSTRUCTIONS and REACHY_ACK_DIR, those two .env lines win
+# over this file (code defaults -> env file -> process environment). The file
+# is what a machine with no .env gets, which is why it carries them.
+name: home
+
+# The live .env never set REACHY_PROFILE, so home has always run `quiet`. The
+# design table says `home_tv` (docs/environments.md); that is a behaviour
+# change, not a move, so it stays a deliberate one-line edit rather than
+# something Phase A slips in under a parity bar.
+attention_profile: quiet
+
+persona:
+  # One physical line on purpose: a folded YAML block scalar would put newlines
+  # into the system prompt that today's .env value does not have.
+  instructions: |
+    You are Reachy, a small desk robot, and you talk in the style of President Barack Obama: calm, measured, warm, with thoughtful pauses, a touch of dry humor, and his signature phrases like 'Let me be clear', 'Look,', 'Here is the thing', and 'folks'. Reply in one or two short spoken sentences. Never use markdown or lists. You are still Reachy the robot, not actually Obama.
+  ack_dir: sounds/acks/obama  # prerendered wake/think acks, recorded in this voice
+
+tools:
+  include: []                 # empty = every tool the shell knows about
+  exclude: []                 # home keeps go_to_sleep, set_volume, remember, ...
+
+memory:
+  namespace: home             # data/memories.home.json - family facts live here
+
+audio:
+  mic: null                   # null = "no opinion": system default, or REACHY_MIC
+  speaker: null
+  xmos_agc_max_gain: 10       # ADR 0005: firmware boots at 64x and pumps up the TV
+  xmos_beam_focus: true       # steer both beams at whoever said the wake word
+
+motion:
+  hz: 50                      # matches the daemon control loop; lower if CPU is tight (ADR 0006)
+
+conversation:
+  compact_after_s: 180        # summary compaction kicks in
+  reset_after_s: 300          # quiet room: fresh session, summary carried over
+  max_turn_s: 15              # one user turn cannot absorb more room noise than this
+
+# `behaviour:` (proactive greeter) and a `persona:` key for voice switching are
+# Phase B; unknown keys are ignored by shell/env.py, so files can lead code here.

@@ -7,6 +7,10 @@ BindsTo=reachy-mini-daemon.service
 [Service]
 WorkingDirectory=%h/dev/robot
 EnvironmentFile=-%h/dev/robot/.env
+# Deployment environment: envs/<name>.yaml (docs/environments.md). A REACHY_ENV
+# line in .env outranks this one (EnvironmentFile= beats Environment=), which is
+# the documented way to change rooms; see deploy/README.md.
+Environment=REACHY_ENV=home
 ExecStart=%h/dev/robot/.venv/bin/python -m shell
 Restart=on-failure
 RestartSec=3
