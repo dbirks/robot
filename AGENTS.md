@@ -6,6 +6,12 @@ This file provides context for AI coding agents (Claude Code, Copilot, Cursor, e
 
 A fully local, realtime, voice-driven social agent for the [Reachy Mini](https://www.reachy-mini.org/) desk robot. No cloud inference — everything runs on a single machine with an NVIDIA GPU. The canonical spec for where this is heading is [`docs/epic-realtime-rebuild.md`](docs/epic-realtime-rebuild.md).
 
+## Deployment environments
+
+`REACHY_ENV` picks a room: `home` (default) or `hackday` (office demo). Each env is a bundle of
+attention profile + persona prompt + tool subset + namespaced memories/faces, in `envs/<name>.yaml`.
+Design and work list: [`docs/environments.md`](docs/environments.md). Event work happens on `main`.
+
 ## Two stacks coexist right now
 
 **New stack (`shell/`, the future — Phases 1+3 of the EPIC are on main):**
