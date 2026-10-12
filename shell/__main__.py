@@ -17,9 +17,11 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import signal
 import sys
 import time
+from collections.abc import Awaitable, Callable
 
 from .attention import (
     AttentionLease,
@@ -31,8 +33,8 @@ from .audio import MicOwner, SpeakerOwner
 from .audio.xmos_tuning import XmosTuner
 from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber
-from .config import ShellConfig
-from .conversation import ConversationMemory, llm_extract_facts, llm_summarize
+from .config import REACHY_ENV_VAR, ShellConfig
+from .conversation import ConversationMemory, Turn, llm_extract_facts, llm_summarize
 from .env import EnvError, config_to_dict, load_config
 from .intents import is_bare_wake, wants_sleep
 from .journal import Journal
@@ -51,6 +53,31 @@ log = logging.getLogger("shell")
 FORCED_END_SILENCE_S = 1.5
 REPLY_WAIT_S = 30.0  # longest we keep attention waiting on one reply
 WAKE_ACK_WAIT_S = 1.5  # quiet after a bare wake word before the "yes?"
+
+FactExtractor = Callable[[list[Turn]], Awaitable[list[str]]]
+FactSaver = Callable[[str], None]
+
+
+def fact_mining(cfg: ShellConfig, memories: MemoryStore) -> tuple[FactExtractor | None, FactSaver | None]:
+    """(extract_facts, save_fact) for ConversationMemory, or (None, None).
+
+    Auto extraction writes through `save_fact` with no attention gate and no
+    ask, straight into this environment's store, which `prompt_block` then hands
+    to the next session as "what you know about the user". In a booth with one
+    shared store that says attendee A's business to attendee B, so
+    `behaviour.learn_facts: false` (envs/hackday.yaml) turns the miner off; the
+    explicit `remember` tool keeps working either way (docs/environments.md rule 1).
+    """
+    if not cfg.learn_facts:
+        return None, None
+
+    def save(fact: str) -> None:
+        memories.add(fact, source="auto")
+
+    return (
+        lambda turns: llm_extract_facts(cfg.llm_base_url, cfg.llm_model, turns, [m["text"] for m in memories.all()]),
+        save,
+    )
 
 
 async def amain(cfg: ShellConfig) -> None:
@@ -78,6 +105,7 @@ async def amain(cfg: ShellConfig) -> None:
             speaker.enqueue(speaker.generation, "sound", sounds[name])
 
     memories = MemoryStore(cfg.memories_path)  # per-environment store (A5)
+    extract_facts, save_fact = fact_mining(cfg, memories)  # off in a shared booth
     tools, handlers = build_handlers(
         robot, camera, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound, memories=memories
     )
@@ -143,10 +171,8 @@ async def amain(cfg: ShellConfig) -> None:
         lambda prior, turns: llm_summarize(cfg.llm_base_url, cfg.llm_model, prior, turns),
         compact_after_s=cfg.compact_after_s,
         reset_after_s=cfg.reset_after_s,
-        extract_facts=lambda turns: llm_extract_facts(
-            cfg.llm_base_url, cfg.llm_model, turns, [m["text"] for m in memories.all()]
-        ),
-        save_fact=lambda fact: memories.add(fact, source="auto"),
+        extract_facts=extract_facts,
+        save_fact=save_fact,
     )
 
     awaiting_reply = [0.0]  # monotonic time of the last transcript not yet answered
@@ -359,8 +385,19 @@ def main(argv: list[str] | None = None) -> None:
         level=logging.INFO,
         format="%(asctime)s %(name)-18s %(levelname)-5s %(message)s",
     )
+    cfg = _resolved_config()
+    if not os.environ.get(REACHY_ENV_VAR, "").strip():
+        # Nobody said which room this is, so it is the desk one - with family
+        # facts and the whole tool list. At an event that is the leak, and the
+        # only way to notice is to have asked (docs/environments.md hard rule 1).
+        log.warning(
+            "%s was never set: running deployment environment %r (the default). "
+            "Set it in .env before this machine is in a public room; verify with --print-env",
+            REACHY_ENV_VAR,
+            cfg.env,
+        )
     try:
-        asyncio.run(amain(_resolved_config()))
+        asyncio.run(amain(cfg))
     except KeyboardInterrupt:
         sys.exit(0)
 

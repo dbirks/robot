@@ -1,7 +1,12 @@
 # Hack-day patter — spoken lines
 
-Lines for the greeter (B0/B3), the wake-word lesson (B7), the icebreaker deck (B5) and the
-recovery cases. Written for the talker, not the page: if it reads well silently, it is wrong.
+Lines for opening with a stranger at the booth, the wake-word lesson (B7), the icebreaker deck (B5)
+and the recovery cases. Neither B5 nor B7 is a tool yet, so these are things to say, not things he
+does on his own. Written for the talker, not the page: if it reads well silently, it is wrong.
+
+The event is Hacktoberfest Hack Day Indianapolis x E-gineering, Tuesday 13 October 2026, 18:00-21:00
+EDT, at E-gineering Inc, Indianapolis, Indiana (MLH listing). It is one evening, not a day and not a
+weekend: say "tonight", never "this afternoon". None of that is spoken, rule 2.
 
 **Two rules, non-negotiable.**
 
@@ -12,43 +17,57 @@ recovery cases. Written for the talker, not the page: if it reads well silently,
    the spec. Reading the date stamps aloud is already banned (`TIME_NOTE`, shell/config.py).
 
 Delivery notes, never spoken:
-- The greeter is rate-limited per person and globally and never fires mid-conversation
-  (`greeter_cooldown_s`, `greeter_quiet_minutes`, docs/environments.md). One hello per face.
-- A bare wake keyword already gets a short "yes?" (commit 279fa88). Do not spend a line here
-  on that case.
-- A name needs a face learned in this room. The hack-day face store starts empty and is purged
-  afterwards, and native recognition is item B1 — unwired. The named lines are the shape of
-  the feature, not a promise that it fires today. (docs/environments.md rule 1)
-- Speak, then act: the tool note wants a few words before the call and one short sentence
-  after it (`TOOLS_NOTE`, shell/config.py).
 
-## 1. Eye-contact greeting
+- Nothing greets anyone. The proactive greeter is item B3: no presence poll, no cooldown, no
+  per-person greeting state in the running shell, and nothing reads the `behaviour` block but
+  `learn_facts` (shell/env.py:150-151, docs/environments.md B3). `greeter_cooldown_s` and
+  `greeter_quiet_minutes` are the schema sketch in the design doc, not code. These lines are for a
+  person to open with, or for a build that lands B3. Do not stand in the booth waiting for him to
+  start.
+- No eye contact either: there is no camera-to-attention path in the shell, so no line here may
+  claim he noticed someone looking at him.
+- He cannot learn or recognise anyone here. `identify_face`, `learn_face` and `forget_face` are
+  excluded from the event tool list (envs/hackday.yaml, enforced by scripts/check_env_safety.sh)
+  because faces are not namespaced until B1 (`app/face_tracker.py:16` is the home gallery). A name is
+  only ever one you were just told, in this conversation: he cannot see it in a face, and "hello
+  again" to a stranger is how a demo dies.
+- A bare wake keyword already gets a short "yes?" (commit 279fa88, `WAKE_ACK_WAIT_S`,
+  shell/__main__.py:55, `shell/reactions.py`). Do not spend a line here on that case.
+- Speak, then act: the tool note wants a few words before the call and one short sentence after it
+  (`TOOLS_NOTE`, shell/config.py).
+- A state change needs more attention than an answer does, and in the `event` profile the bar is
+  high enough to deny a legitimate guest who is standing right in front of him (shell/tools.py
+  `STATE_CHANGING`, profiles.py `tool_confidence`, docs/faq-hackday.md section 4). If a tool is
+  refused, say the plain thing and move on; do not retry it out loud.
 
-Someone looked at him. Say one of these, then stop and let them talk.
+## 1. Opening with someone
+
+Nobody is looked up and greeted. A person walks up, or someone introduces them, and then you say one
+of these. Stop after it and let them talk.
 
 One.
-- Generic: "Hi there. I like it when someone actually looks at me."
-- Known name: "Hi Dana. Good to see you again."
+- "Hi. Welcome to hack day."
+- Known name, just given: "Hi Dana. Good to meet you."
 
 Two.
-- Generic: "You looked at me, so I will talk. That is the arrangement."
-- Known name: "Hello again, Dana. Still winning, I hope."
+- "You came over, so I will talk. That is the arrangement."
+- Known name, just given: "Hello, Dana. Still winning, I hope."
 
 Three.
-- Generic: "Hi. Welcome to the hackathon."
-- Known name: "Welcome back, Dana. You left me mid-sentence."
+- "Hi. I am Reachy, and I am entirely on this machine."
+- Known name: "Dana, this is a good day to be curious about me."
 
 Four.
-- Generic: "Oh, hello. I was enjoying the quiet, but this is better."
+- "Oh, hello. I was enjoying the quiet, but this is better."
 - Known name: "Dana. You brought company."
 
 Five.
-- Generic: "Hi. I am Reachy, and I am entirely on this machine."
-- Known name: "Dana, this is a good day to be curious about me."
+- "Hello. You can talk to me, and nothing I hear leaves this room."
+- Known name: "Hello, Dana. Nothing I hear about you leaves this room either."
 
 Six.
-- Generic: "Hello. You can talk to me, and nothing I hear leaves this room."
-- Known name: "Hello, Dana. Nothing I hear about you leaves this room either."
+- "Hi. Ask me what runs on this machine, that is what I am for."
+- Known name: "Dana. Ask the hard question first."
 
 ## 2. Teaching the wake word
 
@@ -56,8 +75,9 @@ One line, straight after the greeting, so a stranger knows how to get him back.
 
 - Say: "If I drift off, just say hey Reachy."
 - If they move away mid-thing: "Say hey Reachy and I will come back."
-- Aliases exist — "robot" and "hey robot" also work (docs/adr/0003, consequences) — but he
-  teaches the one word, not the list.
+- Never promise an alias. "robot" and "hey robot" do not wake him: they were dropped because the TV
+  says "robot" constantly (scripts/get_kws_model.sh:14-15, commit 1edb28c). ADR 0003's consequence
+  list still names them and is stale. Teach one phrase, twice if needed.
 
 ## 3. Icebreakers for a silent booth
 
@@ -79,13 +99,18 @@ person still typing."
 
 ## 4. Persona variants
 
-Same four lines, two registers. The Obama register is what runs today (persona prompt:
-concise, warm, understated, slightly charming, plus the Obama talker). The Alan Rickman
-register is issue #35 — dry, weary, precise, still kind — and the persona picker is item B0b,
-so it is a script here, not a switch.
+Same four lines, two registers. The target for this event is the dry Alan Rickman / Marvin register,
+with Obama as the fallback (issue #35, David's decision). What the box actually wears today is Obama
+on both sides: the prompt in envs/hackday.yaml, the only ack set in sounds/acks, and the Qwen3-TTS
+talker in `.env`. A persona is prompt, talker and acks together, so the wording can move while the
+voice stays Obama, and that is a decision rather than a bug. Check which one is loaded on the morning
+with `REACHY_ENV=hackday python -m shell --print-env` and read the `instructions` line: `.env`'s
+`REACHY_INSTRUCTIONS` outranks the env file (deploy/README.md). Delivery note, never spoken: the full
+stop on the Rickman icebreaker is flatness, not a question, and if the talker reads it as a
+transcription bug use the Obama line.
 
 **Line one: greeting a stranger.**
-- Obama: "Welcome to the hackathon. I am Reachy, and everything I say is made in this room."
+- Obama: "Welcome to hack day. I am Reachy, and everything I say is made in this room."
 - Rickman: "Yes, I am the robot. We shall both survive it."
 
 **Line two: teaching the wake word.**
@@ -93,7 +118,7 @@ so it is a script here, not a switch.
 - Rickman: "When I drift off, say hey Reachy. Loudly."
 
 **Line three: an icebreaker.**
-- Obama: "What are you building today? I have all afternoon."
+- Obama: "What are you building tonight? I have all evening."
 - Rickman: "What are you building today. I ask because I have nothing better to do."
 
 **Line four: he did not catch it.**
@@ -105,9 +130,9 @@ so it is a script here, not a switch.
 **He did not catch it.**
 - "I lost that. Say it again."
 - "One more time, a little closer."
-- Do not blame the speaker, do not apologise twice, do not explain automatic speech
-  recognition to a stranger. Parakeet genuinely drops very short words (docs/adr/0006), so
-  "again, please" is the honest fix.
+- Do not blame the speaker, do not apologise twice, do not explain automatic speech recognition to
+  a stranger. Parakeet genuinely mangles very short words (docs/adr/0006), so "again, please" is the
+  honest fix.
 
 **The room is too loud.**
 - "It is loud in here. Come a bit closer."
@@ -126,12 +151,12 @@ so it is a script here, not a switch.
 - "Let me look."
 - "Turning around."
 - "One moment, moving."
-- If a tool fails, say the failure plainly and stop: "My legs are not answering." Robot tools
-  do not raise, they return an error (AGENTS.md), so a plain sentence is available.
+- If a tool fails, say the failure plainly and stop: "My legs are not answering." Robot tools do
+  not raise, they return an error (AGENTS.md), so a plain sentence is available.
 
 **He is being put to sleep.**
 - "Good night."
 - "Resting now. Say hey Reachy when you want me."
-- Caveat: in the hack-day environment sleep is excluded from the tool list
-  (`tools.exclude`, docs/environments.md schema example), so these two are for home, or for an
-  event build that deliberately adds sleep back.
+- Caveat: these are for home. `go_to_sleep` is excluded from the event tool list
+  (envs/hackday.yaml `tools.exclude`), so nobody in the booth can put him to bed, and he should not
+  offer it. An event build that adds sleep back takes these two lines with it.

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -630,4 +631,12 @@ async def sse_conversation(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=3001, log_level="info")
+    # Loopback unless the operator says otherwise (2026-10-12). There is no auth
+    # in this process: /faces serves data/known_faces.json (family names + their
+    # thumbnails) and / renders data/sessions.db (hours of home conversation), so
+    # binding 0.0.0.0 handed both to the whole LAN - including the hack-day booth.
+    # The kiosk on this box reads http://127.0.0.1:3001, so nothing here changes
+    # for it; opening the page to the room is a deliberate DASHBOARD_HOST=... and
+    # a decision about what is in those files (deploy/README.md, "Changing rooms").
+    host = os.environ.get("DASHBOARD_HOST", "").strip() or "127.0.0.1"
+    uvicorn.run(app, host=host, port=3001, log_level="info")

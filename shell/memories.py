@@ -190,7 +190,7 @@ MEMORY_TOOLS: list[dict] = [
             "name": "remember",
             "description": "Save a fact to long-term memory when the user asks you to remember something "
             "(a name, a preference, a date, where something is). Write one short sentence about the user in "
-            "the third person, never 'my' or 'you', e.g. 'The user's wife is named Sarah.' or "
+            "the third person, never 'my' or 'you', e.g. 'The user's sister is named Willow.' or "
             "'The user's favorite color is green.'",
             "parameters": {
                 "type": "object",

@@ -7,10 +7,14 @@ BindsTo=reachy-mini-daemon.service
 [Service]
 WorkingDirectory=%h/dev/robot
 EnvironmentFile=-%h/dev/robot/.env
-# Deployment environment: envs/<name>.yaml (docs/environments.md). A REACHY_ENV
-# line in .env outranks this one (EnvironmentFile= beats Environment=), which is
-# the documented way to change rooms; see deploy/README.md.
-Environment=REACHY_ENV=home
+# Deployment environment: envs/<name>.yaml (docs/environments.md). Deliberately
+# not pinned here: shell/config.py already defaults to `home`, so an
+# Environment=REACHY_ENV=home line was only a second source for the room, while the
+# runbook edit is a .env line. Measured on this box 2026-10-12 with a throwaway user
+# unit: EnvironmentFile= beats Environment= (the file is applied after), so the pin
+# would have lost anyway - and had it won, `echo REACHY_ENV=hackday >> .env` would
+# have booted the home persona with the family memories in a public room, silently.
+# See deploy/README.md, "Changing rooms".
 ExecStart=%h/dev/robot/.venv/bin/python -m shell
 Restart=on-failure
 RestartSec=3

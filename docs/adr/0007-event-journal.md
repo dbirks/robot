@@ -26,6 +26,12 @@ smart-turn score), `response.*` (created/first_text/first_audio/cancelled/comple
 `tool.*`, `tts.*`, `context.compacted` (before/after tokens + latency),
 `memory.updated`, `model.loaded/unloaded`, `system.resource_sample`.
 
+`env` is a **reserved payload key**: `shell/env.py` resolves a deployment environment
+and `Journal(..., env=cfg.env)` stamps it on every row (docs/environments.md A4), so one
+DB holds both rooms and "what happened at the event" is a `json_extract` filter. Writers
+must not use `env` for anything else - the stamp is applied first and an explicit payload
+key of the same name wins, so a payload can override it but never add it implicitly.
+
 Latency acceptance metrics (EPIC "Benchmark plan") are computed as deltas over these
 events — if a metric cannot be computed from the journal, the journal is wrong.
 

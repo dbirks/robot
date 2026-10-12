@@ -147,25 +147,30 @@ def render_turns(turns: list[Turn]) -> str:
     )
 
 
+# Model-facing prompts, module-level so tests/test_env.py can scan exactly what
+# gets sent. These go out in every deployment environment - a hack-day booth has
+# no family in it - so they carry no real names and no household framing.
+SUMMARY_PROMPT = (
+    "Summarize this conversation between a user and Reachy, a small desk robot, in at most 2 short "
+    "sentences of plain prose. Call the speaker 'the user' unless they clearly gave their own name "
+    "(the speech recognizer mangles names, so ignore names it gave the user that they did not state). "
+    "Keep only lasting facts: people's names and things they said about themselves or their "
+    "preferences. Do NOT list topics, unanswered questions, failed replies or "
+    "promises to follow up - that conversation is over."
+)
+
+
 async def llm_summarize(base_url: str, model: str, prior: str | None, turns: list[Turn]) -> str:
     """Summarize via the local llama.cpp chat endpoint (thinking off)."""
     import httpx
 
-    prompt = (
-        "Summarize this conversation between a user and Reachy, a small desk robot, in at most 2 short "
-        "sentences of plain prose. Call the speaker 'the user' unless they clearly gave their own name "
-        "(the speech recognizer mangles names, so ignore names it gave the user that they did not state). "
-        "Keep only lasting facts: people's names and things they said about themselves or their "
-        "preferences. Do NOT list topics, unanswered questions, failed replies or "
-        "promises to follow up - that conversation is over."
-    )
     body = (f"Summary of what came before:\n{prior}\n\n" if prior else "") + "Conversation:\n" + render_turns(turns)
     async with httpx.AsyncClient(timeout=120.0) as client:
         r = await client.post(
             f"{base_url.rstrip('/')}/chat/completions",
             json={
                 "model": model,
-                "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": body}],
+                "messages": [{"role": "system", "content": SUMMARY_PROMPT}, {"role": "user", "content": body}],
                 "max_tokens": 200,
                 "temperature": 0.2,
                 "chat_template_kwargs": {"enable_thinking": False},
@@ -175,16 +180,20 @@ async def llm_summarize(base_url: str, model: str, prior: str | None, turns: lis
         return r.json()["choices"][0]["message"]["content"] or ""
 
 
-_FACT_PROMPT = (
-    "You maintain the long-term memory of Reachy, a small desk robot in a family home. Below is a "
-    "transcript of what people said near it; background TV and talk between family members is mixed in, and "
+# The example has to keep showing the shape of a fact `grounded()` can check
+# ("The user's ..." + a name the transcript actually says), so it stays a name -
+# just an invented one. "Rachel" was a real name on this desk (2026-10-12).
+FACT_PROMPT = (
+    "You maintain the long-term memory of Reachy, a small desk robot. Below is a "
+    "transcript of what people said near it; background TV and talk between other people is mixed in, and "
     "the speech recognizer garbles words. List the LASTING personal facts the user told Reachy about "
-    "themselves or their household: their own name, family members' names and relationships, ages, pets, "
-    "where they live, routines, strong preferences. Rules: only facts stated with 'my', 'our' or 'I' about "
-    "people or places, never things from TV or stories; skip questions, jokes, requests, moods and anything "
+    "themselves or the people and places they named: their own name, other people's names and "
+    "relationships, ages, pets, where they live, routines, strong preferences. Rules: only facts stated "
+    "with 'my', 'our' or 'I' about people or places, never things from TV or stories; skip questions, "
+    "jokes, requests, moods and anything "
     "temporary; never invent or correct names (if a name is unclear, skip it); the robot's own name Reachy is "
     "not the user's. Write each fact as one short sentence in the third person starting 'The user' or "
-    "'The user's', e.g. \"The user's wife is named Rachel.\" At most 8 facts. Answer with a JSON array of "
+    "'The user's', e.g. \"The user's sister is named Willow.\" At most 8 facts. Answer with a JSON array of "
     "strings only, [] if there is nothing."
 )
 
@@ -209,7 +218,7 @@ _NOT_NAMES = {"the", "user", "user's", "users", "reachy"}
 
 def grounded(facts: list[str], transcript: str) -> list[str]:
     """Drop facts naming anyone/anywhere the transcript never says (a 3B model
-    invented 'wife named Rachel' from a Bible reading, 2026-10-11)."""
+    invented a whole spouse - name and all - from a Bible reading, 2026-10-11)."""
     heard = {w.lower() for w in re.findall(r"[A-Za-z0-9']+", transcript)}
     keep = []
     for f in facts:
@@ -237,7 +246,7 @@ async def llm_extract_facts(base_url: str, model: str, turns: list[Turn], known:
             f"{base_url.rstrip('/')}/chat/completions",
             json={
                 "model": model,
-                "messages": [{"role": "system", "content": _FACT_PROMPT}, {"role": "user", "content": body}],
+                "messages": [{"role": "system", "content": FACT_PROMPT}, {"role": "user", "content": body}],
                 "max_tokens": 300,
                 "temperature": 0.1,
                 "chat_template_kwargs": {"enable_thinking": False},

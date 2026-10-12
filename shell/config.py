@@ -64,6 +64,14 @@ TOOLS_NOTE = (
 SHELL_NOTES = TOOLS_NOTE + TIME_NOTE
 
 
+def without_shell_notes(persona: str) -> str:
+    """Undo persona_instructions(): drop a trailing SHELL_NOTES if one is there."""
+    text = persona.rstrip()
+    if text.endswith(SHELL_NOTES):
+        return text[: -len(SHELL_NOTES)].rstrip()
+    return text
+
+
 def persona_instructions(persona: str) -> str:
     """The one place a persona becomes system instructions.
 
@@ -72,8 +80,13 @@ def persona_instructions(persona: str) -> str:
     still append"). Name mis-hearings (Richie/Ricci) are fixed in
     shell/llm_proxy.py, not here: prompting the 4B model about them made it keep
     bringing it up.
+
+    Appending is idempotent on purpose: `--print-env` prints *resolved*
+    instructions, so the documented verify-then-paste flow hands back a string that
+    already carries the notes, and TOOLS_NOTE + TIME_NOTE must not land in the
+    system prompt twice.
     """
-    return persona.rstrip() + SHELL_NOTES
+    return without_shell_notes(persona) + SHELL_NOTES
 
 
 def _env_name() -> str:
@@ -91,6 +104,30 @@ def _csv(name: str) -> list[str]:
     return [part.strip() for part in os.getenv(name, "").split(",") if part.strip()]
 
 
+def _bool_env(name: str, default: str = "1") -> bool:
+    """A boolean process variable that understands the same words as the env file.
+
+    shell/env.py casts file booleans with `_flag` (0/false/no/off). Reading the
+    process variable as `!= "0"` meant `REACHY_LEARN_FACTS=false` in `.env` or a
+    drop-in resolved to **True** on top of `envs/hackday.yaml`'s `false` - the
+    operator's privacy keystroke turned the opposite way, silently (2026-10-12
+    review F-3, hard rule 5). Empty stays True, exactly as before the fix.
+    """
+    return os.getenv(name, default).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env(name: str, default: str) -> str:
+    """One rule for the whole config: present-but-empty means "no opinion".
+
+    shell/env.py treats an empty `REACHY_X=` in .env (an uncommented template line,
+    a systemd `Environment=REACHY_X=` drop-in) as the variable being unset, so the
+    code defaults have to read it the same way: `float("")` used to crash the shell
+    on a blank REACHY_MOTION_HZ, and a blank REACHY_INSTRUCTIONS used to leave
+    SHELL_NOTES as the whole persona.
+    """
+    return os.environ.get(name, "").strip() or default
+
+
 @dataclass
 class ShellConfig:
     # Resolved deployment environment (docs/environments.md); stamped on every
@@ -98,9 +135,9 @@ class ShellConfig:
     env: str = field(default_factory=_env_name)
 
     # Realtime service (pinned huggingface/speech-to-speech, ADR 0001)
-    s2s_url: str = field(default_factory=lambda: os.getenv("S2S_URL", "ws://127.0.0.1:8765/v1/realtime"))
+    s2s_url: str = field(default_factory=lambda: _env("S2S_URL", "ws://127.0.0.1:8765/v1/realtime"))
     instructions: str = field(
-        default_factory=lambda: persona_instructions(os.getenv("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS))
+        default_factory=lambda: persona_instructions(_env("REACHY_INSTRUCTIONS", DEFAULT_INSTRUCTIONS))
     )
 
     # Tool subset for this environment (shell/tools.apply_tool_policy): empty
@@ -112,45 +149,54 @@ class ShellConfig:
     # "" = follow `env`; __post_init__ resolves it.
     memory_namespace: str = field(default_factory=_memory_namespace)
 
+    # Auto fact extraction (behaviour.learn_facts, shell/conversation.py): mine
+    # the transcript for lasting personal facts on every compaction and write
+    # them into this env's store unasked. Off in a room with one shared store:
+    # `prompt_block` labels those facts "what you know about the user", so with
+    # one memories.hackday.json attendee A's name gets said to attendee B as
+    # B's own data (docs/environments.md hard rule 1). The explicit `remember`
+    # tool is NOT gated by this - a guest who asks to be remembered is answered.
+    learn_facts: bool = field(default_factory=lambda: _bool_env("REACHY_LEARN_FACTS"))
+
     # Direct llama.cpp endpoint for side tasks (conversation compaction).
-    llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "http://127.0.0.1:8080/v1"))
-    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "local"))
-    compact_after_s: float = field(default_factory=lambda: float(os.getenv("REACHY_COMPACT_AFTER_S", "180")))
-    reset_after_s: float = field(default_factory=lambda: float(os.getenv("REACHY_RESET_AFTER_S", "300")))
+    llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "http://127.0.0.1:8080/v1"))
+    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "local"))
+    compact_after_s: float = field(default_factory=lambda: float(_env("REACHY_COMPACT_AFTER_S", "180")))
+    reset_after_s: float = field(default_factory=lambda: float(_env("REACHY_RESET_AFTER_S", "300")))
 
     # A user turn still open after this many seconds is cut by feeding the
     # service a moment of silence - the only endpoint it accepts from a
     # client (input_audio_buffer.commit is a no-op upstream). Bounds how much
     # background speech can pile into one turn.
-    max_turn_s: float = field(default_factory=lambda: float(os.getenv("REACHY_MAX_TURN_S", "15")))
+    max_turn_s: float = field(default_factory=lambda: float(_env("REACHY_MAX_TURN_S", "15")))
 
     # XVF3800 tuning (shell/audio/xmos_tuning.py): AGC gain ceiling (firmware
     # boots at 64x and pumps the TV up whenever the room goes quiet; 0 turns
     # AGC off) and steering both fixed beams at whoever said the wake word.
-    xmos_agc_max_gain: float = field(default_factory=lambda: float(os.getenv("REACHY_XMOS_AGC_MAX_GAIN", "10")))
-    xmos_beam_focus: bool = field(default_factory=lambda: os.getenv("REACHY_XMOS_BEAM_FOCUS", "1") != "0")
+    xmos_agc_max_gain: float = field(default_factory=lambda: float(_env("REACHY_XMOS_AGC_MAX_GAIN", "10")))
+    xmos_beam_focus: bool = field(default_factory=lambda: _bool_env("REACHY_XMOS_BEAM_FOCUS"))
 
     # Attention
-    attention_profile: str = field(default_factory=lambda: os.getenv("REACHY_PROFILE", "quiet"))
+    attention_profile: str = field(default_factory=lambda: _env("REACHY_PROFILE", "quiet"))
 
     # Audio (s2s PIPELINE_SAMPLE_RATE, both directions)
     sample_rate: int = 16000
     block_size: int = 512  # 32 ms at 16k
     channels: int = 1
     preroll_seconds: float = 1.0
-    mic_device: str | None = field(default_factory=lambda: os.getenv("REACHY_MIC") or None)
-    speaker_device: str | None = field(default_factory=lambda: os.getenv("REACHY_SPEAKER") or None)
+    mic_device: str | None = field(default_factory=lambda: _env("REACHY_MIC", "") or None)
+    speaker_device: str | None = field(default_factory=lambda: _env("REACHY_SPEAKER", "") or None)
 
     # Motion (shell/motion): one control loop; 50 Hz matches the daemon's
     # own control loop. Lower it if CPU is tight (ADR 0006).
-    motion_hz: float = field(default_factory=lambda: float(os.getenv("REACHY_MOTION_HZ", "50")))
+    motion_hz: float = field(default_factory=lambda: float(_env("REACHY_MOTION_HZ", "50")))
 
     # Paths
-    data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "data")))
+    data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", "data")))
     # Prerendered acknowledgements: <ack_dir>/wake/*.wav and <ack_dir>/think/*.wav,
     # recorded in the active voice (e.g. sounds/acks/obama).
-    ack_dir: Path = field(default_factory=lambda: Path(os.getenv("REACHY_ACK_DIR", "sounds/acks")))
-    kws_model_dir: str = field(default_factory=lambda: os.getenv("KWS_MODEL_DIR", "models/kws"))
+    ack_dir: Path = field(default_factory=lambda: Path(_env("REACHY_ACK_DIR", "sounds/acks")))
+    kws_model_dir: str = field(default_factory=lambda: _env("KWS_MODEL_DIR", "models/kws"))
 
     def __post_init__(self) -> None:
         if not self.memory_namespace:

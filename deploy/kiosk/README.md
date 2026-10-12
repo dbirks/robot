@@ -70,6 +70,11 @@ headless inference box. Cost: one device and one HDMI-or-no-cable. If the kiosk
 is still misbehaving on the morning of the demo, take the tablet and stop
 sacrificing the evening.
 
+(LAN access is not the default: `dashboard/server.py` binds `127.0.0.1` because the
+page serves `data/known_faces.json` and `data/sessions.db` with no auth, so a tablet
+needs `DASHBOARD_HOST=0.0.0.0` on the dashboard and a decision about what is in those
+files first — `deploy/README.md`, "The dashboard is loopback by default".)
+
 ## Not here
 
 Persona switching in the UI and the system-prompt / tool-list views are #38, and

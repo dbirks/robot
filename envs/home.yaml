@@ -28,6 +28,11 @@ tools:
 memory:
   namespace: home             # data/memories.home.json - family facts live here
 
+behaviour:
+  learn_facts: true           # auto fact extraction (shell/conversation.py); this is
+                              # today's behaviour, and the code default. Off in
+                              # envs/hackday.yaml: one shared booth store.
+
 audio:
   mic: null                   # null = "no opinion": system default, or REACHY_MIC
   speaker: null
@@ -42,5 +47,6 @@ conversation:
   reset_after_s: 300          # quiet room: fresh session, summary carried over
   max_turn_s: 15              # one user turn cannot absorb more room noise than this
 
-# `behaviour:` (proactive greeter) and a `persona:` key for voice switching are
-# Phase B; unknown keys are ignored by shell/env.py, so files can lead code here.
+# The rest of `behaviour:` (proactive greeter) and a `persona:` key for voice
+# switching are Phase B; unknown keys are ignored by shell/env.py, so files can
+# lead code here.

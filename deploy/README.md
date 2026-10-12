@@ -34,8 +34,16 @@ the design is `docs/environments.md`. A missing file is a hard startup error, an
 
 Precedence, lowest to highest: **code defaults → `envs/<env>.yaml` → process
 environment**. `.env` is loaded into the process environment, so it outranks the
-environment file, and `systemd.service(5)` applies `EnvironmentFile=` over
-`Environment=` — meaning the two lines in `.env` beat both the unit and `envs/`.
+environment file. An *empty* value counts as unset on both sides: `REACHY_INSTRUCTIONS=`
+in `.env` does not silence the env file, and neither does an explicit `null` in the file.
+
+The unit deliberately does not pin `REACHY_ENV`; `shell/config.py` defaults to `home`, so
+`.env` is the one source for the room. Measured on this box 2026-10-12 with a throwaway
+user unit: **`EnvironmentFile=` overrides `Environment=`** (systemd applies the file after
+the inline list), so a `Environment=REACHY_ENV=home` line would have lost to the `.env`
+line below — and if that precedence had been the other way round, the documented room
+swap would have silently booted the home persona and the family memories in public.
+Remove the pin and the question cannot come back.
 
 One line moves the robot to the event and back:
 
@@ -43,21 +51,67 @@ One line moves the robot to the event and back:
 echo 'REACHY_ENV=hackday' >> .env        # office demo; delete the line to come home
 ```
 
-**Then comment these two lines out of `.env` as well**, or the home persona wins
-over the attendee-safe one — hard rule 1 of the design doc:
+**Empty the booth store on purpose.** Auto fact extraction is off in `hackday`, but an
+explicit "remember my name" still writes the one shared `data/memories.hackday.json`, and
+the next session is handed its last facts as "what you know about the user". Before the
+doors open and between demos:
+
+```bash
+rm -f data/memories.hackday.json
+```
+
+**The dashboard binds loopback by default** (`DASHBOARD_HOST`), and the kiosk uses
+`http://127.0.0.1:3001`, so it is unaffected. Opening it to the room is a deliberate act,
+not a default — `/faces` and `/` serve *home* data (family names, legacy transcripts):
+
+```bash
+systemctl --user set-environment DASHBOARD_HOST=0.0.0.0 && systemctl --user restart reachy-dashboard
+```
+
+**Then check `.env` for the variables that outrank the env file.** Comment these two
+out, or the home persona wins over the attendee-safe one — hard rule 1 of the design
+doc:
 
 ```bash
 # REACHY_INSTRUCTIONS=...   # Obama family assistant, home facts and all
 # REACHY_ACK_DIR=...        # sounds/acks/obama
 ```
 
+And confirm none of these is set at all, in `.env` or in a `systemctl --user edit`
+drop-in — each one silently makes its `envs/hackday.yaml` key dead:
+`REACHY_PROFILE` (must not be `quiet` at the event), `REACHY_TOOLS_EXCLUDE`,
+`REACHY_TOOLS_INCLUDE`, `REACHY_MEMORY_NAMESPACE`, `REACHY_LEARN_FACTS`.
+
 Verify before restarting anything — `--print-env` prints the resolved config as
 JSON and exits without opening audio, connecting to the robot, or touching the
-network (it works with the whole stack down):
+network (it works with the whole stack down). Read the `instructions` line too, not
+just the names:
 
 ```bash
-.venv/bin/python -m shell --print-env | grep -E '"(env|attention_profile|tools_exclude|memories_path)"'
+.venv/bin/python -m shell --print-env | grep -E '"(env|attention_profile|tools_exclude|tools_include|memory_namespace|memories_path|learn_facts|instructions)"'
 ```
+
+If `REACHY_ENV` was never set the shell logs a WARN naming the environment it fell
+back to (`home`), so a machine that wandered into the office on the desk persona is
+visible in the journal-less first seconds of the log.
+
+### The dashboard is loopback by default
+
+`dashboard/server.py` serves `data/known_faces.json` (the family's face names and
+thumbnails) on `/faces` and hours of home conversation from `data/sessions.db` on `/`,
+with no auth in front of any of it. It binds `127.0.0.1` unless you say otherwise, so
+the kiosk on this box (`http://127.0.0.1:3001/conversation`) is unaffected while
+strangers on the office LAN no longer get the family album. To open it deliberately —
+set the host in the unit or the environment and restart `reachy-dashboard`:
+
+```bash
+systemctl --user set-environment DASHBOARD_HOST=0.0.0.0   # or a drop-in: Environment=DASHBOARD_HOST=0.0.0.0
+systemctl --user restart reachy-dashboard
+```
+
+Do not do that from the booth unless you have also cleared `data/known_faces.json`
+and `data/sessions.db` out of the way (Phase C3 purge): the faces are still one shared
+file until B1 lands.
 
 ### Moving the memories into the `home` namespace (once, per machine)
 
@@ -80,6 +134,9 @@ systemctl --user start reachy-shell
 `data/memories.json` is left in place; archive it by hand once
 `data/memories.home.json` reads right. The hack-day store is deliberately not
 created here — it starts empty on first use and gets purged after the event.
+
+Ran on this box 2026-10-12 (`{"action": "copied", "facts": 6}`); the legacy
+`data/memories.json` is still sitting next to the namespaced one, unarchived.
 
 ## Prereqs on a fresh machine
 

@@ -17,6 +17,14 @@ rather than an edit to a tracked file under time pressure. Two consequences wort
 - An explicit `null` in the file is "no opinion", not "clear the value": the code
   default (or the process env) stands. `audio.mic: null` says "whatever this box
   defaults to"; it does not fight `REACHY_MIC`.
+- An *empty* process env var is "no opinion" too (`REACHY_INSTRUCTIONS=` in `.env`
+  does not silence the file): the file's silence is honoured as no opinion, so the
+  environment's silence has to be, or one stray `KEY=` drops the attendee-safe
+  persona and the booth tool excludes without an error.
+
+Resolution itself can fail closed: a non-`home` environment that lands on the
+`home` memory namespace is a hard `EnvError` (`guard_memory_namespace`), because
+that is family facts in a public room.
 
 A missing `envs/<env>.yaml` is a hard startup error: booting in a public room with
 a half-known persona is the failure this layer exists to prevent. Unknown keys are
@@ -103,6 +111,8 @@ def _text(value: Any) -> str:
 
 
 def _instructions(value: Any) -> str:
+    # persona_instructions() strips a trailing SHELL_NOTES first, so a value copied
+    # out of `--print-env` (resolved instructions) does not double-append.
     return persona_instructions(str(value))
 
 
@@ -137,8 +147,8 @@ class _Layer:
 
 
 # The v1 schema (docs/environments.md) plus the A2 tuning values. Keys outside
-# this table — `name:`, `behaviour:`, anything a later phase adds — are ignored
-# on purpose, which is what makes an older shell forward-compatible.
+# this table — `name:`, `behaviour.greeter`, anything a later phase adds — are
+# ignored on purpose, which is what makes an older shell forward-compatible.
 LAYERS: tuple[_Layer, ...] = (
     _Layer("attention_profile", "attention_profile", "REACHY_PROFILE"),
     _Layer("persona.instructions", "instructions", "REACHY_INSTRUCTIONS", _instructions),
@@ -146,6 +156,7 @@ LAYERS: tuple[_Layer, ...] = (
     _Layer("tools.include", "tools_include", "REACHY_TOOLS_INCLUDE", _names),
     _Layer("tools.exclude", "tools_exclude", "REACHY_TOOLS_EXCLUDE", _names),
     _Layer("memory.namespace", "memory_namespace", "REACHY_MEMORY_NAMESPACE"),
+    _Layer("behaviour.learn_facts", "learn_facts", "REACHY_LEARN_FACTS", _flag),
     _Layer("audio.mic", "mic_device", "REACHY_MIC"),
     _Layer("audio.speaker", "speaker_device", "REACHY_SPEAKER"),
     _Layer("audio.xmos_agc_max_gain", "xmos_agc_max_gain", "REACHY_XMOS_AGC_MAX_GAIN", _number),
@@ -159,26 +170,57 @@ LAYERS: tuple[_Layer, ...] = (
 
 def layer_env_file(cfg: ShellConfig, doc: dict) -> ShellConfig:
     """Layer the file underneath the process environment: a field whose variable
-    is in os.environ — `.env` included, see the module docstring — is left alone."""
+    is set non-empty in os.environ — `.env` included, see the module docstring —
+    is left alone.
+
+    Present-but-empty is "no opinion" here too, exactly as `null`/`""` is in the
+    file. `REACHY_INSTRUCTIONS=` or `REACHY_TOOLS_EXCLUDE=` in `.env` (a commented
+    template line, a `Environment=REACHY_X=` drop-in) used to delete the
+    attendee-safe persona / the tool excludes with exit 0, which is the one place
+    the layer weakened ADR 0003's fail-closed intent.
+    """
     for layer in LAYERS:
         value = _lookup(doc, layer.key)
-        # absent, explicit "no opinion" (null / "") — or the process already set it
+        # absent, or explicit "no opinion" (null / "") in the file
         if value is _MISSING or value is None or value == "":
             continue
-        if layer.env_var and layer.env_var in os.environ:
-            continue
+        if layer.env_var and (os.environ.get(layer.env_var) or "").strip():
+            continue  # the process env said something; the file stays quiet
         setattr(cfg, layer.field, layer.cast(value))
     return cfg
+
+
+def guard_memory_namespace(cfg: ShellConfig) -> None:
+    """Hard rule 1 (docs/environments.md): a room that is not `home` may never
+    land on the home memory store.
+
+    `memory.namespace` defaults to the env name, so this only fires when someone
+    sets `REACHY_MEMORY_NAMESPACE=home` (or writes `namespace: home` into a
+    non-home file) — e.g. "let me keep my memories at the demo". That is a
+    family-facts leak into a public room, so it is a hard startup error rather
+    than something to notice in `--print-env`. `migrate_legacy_memories` already
+    refuses the same shape on the write side (shell/memories.py).
+    """
+    if cfg.env != DEFAULT_ENV and cfg.memory_namespace == DEFAULT_ENV:
+        raise EnvError(
+            f"deployment environment {cfg.env!r} resolves to the home memory namespace: "
+            f"{cfg.memories_path} holds family facts and must not be loaded outside `home`. "
+            f"Leave memory.namespace/REACHY_MEMORY_NAMESPACE unset (it defaults to {cfg.env!r}) "
+            "or name a store of its own (docs/environments.md hard rule 1)."
+        )
 
 
 def load_config(env: str | None = None, *, envs_dir: Path | None = None) -> ShellConfig:
     """Resolve the config for `env` (default: REACHY_ENV, then `home`).
 
-    Raises EnvError — startup must not continue — when the file is missing.
+    Raises EnvError — startup must not continue — when the file is missing or
+    when the result would load another room's memories.
     """
     name = resolve_env_name(env)
     doc = load_env_doc(name, envs_dir)
-    return layer_env_file(ShellConfig(env=name), doc)
+    cfg = layer_env_file(ShellConfig(env=name), doc)
+    guard_memory_namespace(cfg)
+    return cfg
 
 
 def config_to_dict(cfg: ShellConfig) -> dict:
