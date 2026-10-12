@@ -1,0 +1,14 @@
+[Unit]
+Description=Start/stop the Reachy kiosk when a screen is plugged in (issue #37)
+Documentation=file://%h/dev/robot/deploy/kiosk/README.md
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env bash %h/dev/robot/deploy/kiosk/watch_hotplug.sh
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=default.target

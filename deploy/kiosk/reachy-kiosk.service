@@ -1,0 +1,25 @@
+[Unit]
+Description=Reachy Mini dashboard kiosk (issue #37)
+Documentation=file://%h/dev/robot/deploy/kiosk/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# One X server on VT1, one Chromium, nothing else. Started and stopped by
+# reachy-kiosk-watch.service according to whether a screen is plugged in, so an
+# unattended headless box does not carry a display stack around.
+#
+# --disable-gpu lives in kiosk.xinitrc, not here: the GTX 1070 is at ~7.8/8 GB
+# with llama.cpp and Qwen3-TTS (docs/pins.yaml), and a compositor asking for GL
+# is exactly the kind of thing that takes the demo down.
+#
+# -keeptty keeps X attached to the VT so Ctrl+Alt+F2 still escapes for us.
+ExecStart=/usr/bin/xinit %h/dev/robot/deploy/kiosk/kiosk.xinitrc -- :0 vt1 -keeptty -background none
+Restart=on-failure
+RestartSec=3
+# The kiosk is decoration. It must never take the voice stack with it.
+StopPropagationOfFailedJobsFromThisUnitFile=true
+
+[Install]
+WantedBy=default.target
