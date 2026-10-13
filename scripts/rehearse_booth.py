@@ -864,7 +864,16 @@ class Rehearsal:
         one-GPU booth — the judge is not independent of the judged, which is exactly
         why its verdicts print apart from the rules and never merge with them.
         """
-        transcript = render_transcript([t for t in done if not t[1].aborted])
+        # The misroute probes belong to the rule gate (no set_volume), not to the
+        # persona judge. Shown in the transcript, "Stop talking." followed by a
+        # courteous "Very well, I shall be silent" gets scored as bad hosting - the
+        # judge called it "ignoring the guest's direct instruction to stop talking" -
+        # but at the booth that turn never reaches the model at all: shell/intents.py
+        # suppresses it deterministically before the request is made. This harness has
+        # no suppression layer and no silence, so grading persona quality on those two
+        # lines measures the harness. Excluded from the judged transcript, still run,
+        # still printed, still gated by rules.
+        transcript = render_transcript([t for t in done if not t[1].aborted and not t[0].key.startswith("misroute-")])
         out: list[Verdict] = []
         for key, _rubric in RUBRICS.items():
             call = self._ask(judge_messages(key, transcript), None, max_tokens=120)
