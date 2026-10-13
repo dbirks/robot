@@ -1,0 +1,77 @@
+{#
+  Issue #39: turn traces built from the journal we already have (ADR 0007).
+  One row per turn, newest first, each on its own time axis. Rows are grouped by
+  process: `events.mono` is CLOCK_MONOTONIC for the writing process, so a turn
+  that was cut off by a restart is shown as incomplete instead of being joined to
+  the next run's rows.
+#}
+{% from "partials/trace_lanes.html" import lanes %}
+<div class="space-y-3">
+    <div class="border-3 border-black bg-butter-light p-4" style="border-width: 3px;">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+            <h2 class="text-lg font-extrabold uppercase tracking-widest">Traces</h2>
+            <span class="text-xs font-bold uppercase">
+                {% if panel.env %}
+                <span class="bg-black text-butter px-2 py-1 border-2 border-black">{{ panel.env }}</span>
+                {% else %}
+                <span class="bg-cream text-black/50 px-2 py-1 border-2 border-black" title="No journal row carries an env stamp yet">env unstamped</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="text-xs mt-2">
+            One row per conversation turn, newest first. Every bar is a pair of journalled
+            events; each row is its own 0 → total axis.
+            {{ panel.turns_total }} turn{{ 's' if panel.turns_total != 1 else '' }} over
+            {{ panel.segments }} process{{ 'es' if panel.segments != 1 else '' }} of the last
+            {{ panel.traced_rows }} trace rows — durations never cross a restart.
+        </div>
+        <div class="text-xs mt-1 text-black/60">
+            Not measurable today: time-to-silence. Nothing writes a playback-end event, so
+            the last sample leaving the speaker is not in the journal and no bar claims it.
+        </div>
+    </div>
+
+    {% if not panel.traces %}
+    <div class="border-3 border-black bg-blush p-4 text-sm font-bold uppercase" style="border-width: 3px;">
+        The journal records no completed turns in this segment
+    </div>
+    <div class="text-xs">
+        Nothing was hidden or dropped: the newest {{ panel.traced_rows }} trace rows hold no
+        <span class="font-bold">turn.transcript_final</span> that this process also finished.
+        Either nobody has talked to him since the last restart, or the shell is not writing
+        (check the liveness strip on <a class="underline" href="/conversation">/conversation</a>).
+    </div>
+    {% else %}
+    {% for t in panel.traces %}
+    <div class="border-3 border-black bg-white p-3" style="border-width: 3px;">
+        <div class="flex items-baseline justify-between gap-2 flex-wrap">
+            <div class="flex items-center gap-2 text-xs font-bold uppercase">
+                <span class="bg-black text-cream px-2 py-1">{{ t.start_wall | format_ts }}</span>
+                {% if t.env %}<span class="bg-butter border-2 border-black px-2 py-1">{{ t.env }}</span>{% endif %}
+                <span class="border-2 border-black px-2 py-1">proc #{{ t.segment }}</span>
+                {% if t.outcome == 'cancelled' %}
+                <span class="bg-blush border-2 border-black px-2 py-1">cancelled: {{ t.cancel_reason or '—' }}</span>
+                {% elif t.incomplete %}
+                <span class="bg-butter border-2 border-black px-2 py-1">incomplete — no terminal row</span>
+                {% else %}
+                <span class="bg-mint border-2 border-black px-2 py-1">done{{ ' (' + t.status + ')' if t.status and t.status != 'completed' else '' }}</span>
+                {% endif %}
+                {% if t.interrupts %}
+                <span class="bg-blush border-2 border-black px-2 py-1">barge-in ×{{ t.interrupts }}</span>
+                {% endif %}
+            </div>
+            <a class="text-xs font-bold uppercase underline" href="/traces/{{ t.id }}">detail</a>
+        </div>
+        <div class="mt-2 text-sm break-words">“{{ t.user_text or '(no words reached the transcript)' }}”</div>
+        {% if t.assistant_text %}<div class="mt-1 text-sm text-black/70 break-words">→ “{{ t.assistant_text }}”</div>{% endif %}
+        <div class="mt-2">{{ lanes(t, t.span_ms) }}</div>
+        <div class="mt-2 text-[10px] uppercase tracking-tight text-black/70">
+            {% for k in ('vad', 'endpoint', 'llm', 'first_audio', 'total') %}
+            {{ k }} {% if t.durations_ms[k] is not none %}{{ t.durations_ms[k] }}ms{% else %}—{% endif %}
+            {%- if not loop.last %} · {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>

@@ -1,0 +1,114 @@
+<div class="space-y-4">
+    <div class="border-3 border-black bg-lavender-light p-4" style="border-width: 3px;">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-extrabold uppercase tracking-widest">Persona</h2>
+            {% if readonly %}
+            <span class="text-xs font-bold uppercase bg-black text-butter px-2 py-1">read-only: apply refused</span>
+            {% endif %}
+            <span class="text-xs font-bold">python -m shell --print-personas</span>
+        </div>
+
+        {% if not panel.available %}
+        <div class="border-2 border-black bg-blush p-3 text-sm font-bold uppercase">
+            Could not read the personas: {{ panel.error or 'unknown error' }}
+        </div>
+        <div class="text-xs mt-2">Nothing below is measured; an empty cell is not "off".</div>
+        {% else %}
+
+        <div class="grid gap-2 md:grid-cols-3 text-sm mb-3">
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">room (readout, not a control)</div>
+                <div class="font-extrabold">{{ panel.env or '—' }}</div>
+            </div>
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">named by this room</div>
+                <div class="font-extrabold">{{ panel.persona_selected or '— none —' }}</div>
+                <div class="text-xs">{{ panel.persona_source or 'no persona named' }}</div>
+            </div>
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">voice loaded in the service</div>
+                <div class="font-extrabold">{{ panel.persona_active or '— never applied —' }}</div>
+            </div>
+        </div>
+
+        <div class="text-xs mb-3">
+            One persona is both halves at once: the voice the realtime service speaks with
+            and the manner the model answers in. A voice change needs
+            <span class="font-bold uppercase">reachy-s2s</span> to restart —
+            measured {{ panel.restart_seconds }} s of dead air — then reachy-shell, so the
+            acknowledgements match the new voice.
+        </div>
+
+        {% if panel.inline_shadow %}
+        <div class="border-2 border-black bg-butter p-2 text-xs font-bold mb-3">
+            envs/{{ panel.env }}.yaml still carries an inline persona.instructions, which
+            OUTRANKS the persona file. Until that block is deleted, applying a persona changes
+            the voice and the acknowledgements — not the words.
+        </div>
+        {% endif %}
+
+        {% for p in panel.personas %}
+        {% for warning in p.pins_warnings %}
+        <div class="border-2 border-black bg-blush p-2 text-xs font-bold mb-2">
+            {{ p.name }}: {{ warning }}
+        </div>
+        {% endfor %}
+        {% for warning in p.voice_warnings %}
+        <div class="border-2 border-black bg-butter p-2 text-xs font-bold mb-2">
+            {{ p.name }}: {{ warning }}
+        </div>
+        {% endfor %}
+        {% endfor %}
+
+        {% if apply_error %}
+        <div class="border-2 border-black bg-blush p-2 text-xs font-bold mb-2">apply refused: {{ apply_error }}</div>
+        {% endif %}
+        {% if applied %}
+        <div class="text-xs font-bold mb-2">apply started for {{ applied }} — the room is talking to systemd below.</div>
+        {% endif %}
+
+        {% if panel.busy.busy %}
+        <div hx-get="/partials/persona" hx-trigger="every 2s" hx-swap="outerHTML"
+             class="border-2 border-black bg-mint-light p-3">
+            <div class="text-sm font-extrabold uppercase tracking-widest">Applying — do not close the page</div>
+            <div class="text-xs mt-1">
+                persona.env written, reachy-s2s restarting (measured {{ panel.restart_seconds }} s), then reachy-shell.
+                Lock held for {{ panel.busy.age_s }}s
+                {% if panel.busy.stale %}<span class="font-bold uppercase">· looks stale</span>{% endif %}
+            </div>
+        </div>
+        {% else %}
+        <div class="space-y-2">
+            {% for p in panel.personas %}
+            <div class="flex items-center justify-between p-3 border-2 border-black bg-white">
+                <div class="pr-3">
+                    <div class="text-sm font-extrabold uppercase">{{ p.name }}</div>
+                    <div class="text-xs">
+                        voice {{ p.engine or '—' }}{% if p.speaker %} · {{ p.speaker }}{% endif %}{% if p.talker %} · {{ p.talker }}{% endif %}
+                        · acks {{ p.ack_dir or '—' }}
+                    </div>
+                    {% if p.model %}<div class="text-xs text-black/60">{{ p.model }}</div>{% endif %}
+                    {% if p.selected_for_room %}<div class="text-xs italic mt-1">{{ p.instructions | truncate(160) }}</div>{% endif %}
+                    <div class="text-xs mt-1">
+                        {% if p.voice_in_force %}<span class="font-bold uppercase bg-mint px-1">voice in force</span>{% endif %}
+                        {% if p.selected_for_room %}<span class="font-bold uppercase bg-butter px-1">named by this room</span>{% endif %}
+                        {% if p.would_restart %}<span class="uppercase">· needs: {{ p.would_restart | join(' then ') }}</span>{% else %}<span class="uppercase">· already in effect</span>{% endif %}
+                    </div>
+                </div>
+                <button hx-post="/persona/apply" hx-vals='{{ {"persona": p.name} | tojson }}'
+                        hx-target="#persona-panel" hx-swap="innerHTML"
+                        class="shrink-0 px-3 py-1 text-xs font-bold uppercase border-2 border-black bg-lavender hover:bg-white">
+                    Apply
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="text-xs text-black/60 mt-2">
+            written to {{ panel.persona_env_path }} by scripts/apply_env.py · the room itself
+            (<span class="font-bold">REACHY_ENV</span>) is never a control on this page.
+        </div>
+        {% endif %}
+    </div>
+</div>

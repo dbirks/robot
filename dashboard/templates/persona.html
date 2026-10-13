@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Persona{% endblock %}
+
+{% block content %}
+<div id="persona-panel"
+     hx-get="/partials/persona"
+     hx-trigger="every 15s"
+     hx-swap="innerHTML">
+    {% include "partials/persona.html" %}
+</div>
+{% endblock %}

@@ -69,12 +69,14 @@ def shell_running() -> bool:
 
 def default_devices() -> tuple[str, str]:
     out = subprocess.run(["wpctl", "status"], capture_output=True, text=True).stdout
+
     def one(section: str) -> str:
         lines = out.split(f"{section}\n", 1)[-1].splitlines() if section in out else []
         for ln in lines:
             if ln.strip().startswith("*"):
                 return ln.strip().lstrip("* ").strip()
         return "(none)"
+
     return one("Sinks:"), one("Sources:")
 
 
@@ -121,10 +123,14 @@ def tone(seconds: float) -> np.ndarray:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--person", action="store_true", help="include step 2 (you speak over the robot)")
-    ap.add_argument("--speech-file", default="sounds/acks/obama", help="wav file or dir of wavs to play as 'his' speech")
+    ap.add_argument(
+        "--speech-file", default="sounds/acks/obama", help="wav file or dir of wavs to play as 'his' speech"
+    )
     ap.add_argument("--tone-seconds", type=float, default=4.0)
     ap.add_argument("--out", default="", help="write the numbers as JSON here")
-    ap.add_argument("--force", action="store_true", help="run anyway with reachy-shell active (numbers are then meaningless)")
+    ap.add_argument(
+        "--force", action="store_true", help="run anyway with reachy-shell active (numbers are then meaningless)"
+    )
     args = ap.parse_args()
 
     print("== step 0: audio route ==")
@@ -179,7 +185,7 @@ def main() -> int:
                 over_r = [rms(over[:, i : i + 1]) for i in range(over.shape[1])]
                 print(f"  capture while he speaks  L={over_r[0]:.5f}")
                 stats["over_playback_rms"] = over_r
-                _save(Path(args.out or "/tmp/bench-aec") , "over_playback", over)
+                _save(Path(args.out or "/tmp/bench-aec"), "over_playback", over)
                 print("  now say the SAME sentence with him silent:")
                 input("  press enter to record 5 s of silence-free capture...")
                 cap.drain()
@@ -211,8 +217,17 @@ def main() -> int:
         print("  Without this the AEC question stays open: the RMS numbers above show")
         print("  echo surviving, but not whether the chip thinks it is cancelling.")
     else:
-        for k in ("VERSION", "AEC_AECCONVERGED", "AEC_NUM_FARENDS", "AEC_RT60", "AUDIO_MGR_SYS_DELAY",
-                  "PP_ECHOONOFF", "PP_DTSENSITIVE", "PP_MIN_NS", "AEC_FIXEDBEAMSONOFF"):
+        for k in (
+            "VERSION",
+            "AEC_AECCONVERGED",
+            "AEC_NUM_FARENDS",
+            "AEC_RT60",
+            "AUDIO_MGR_SYS_DELAY",
+            "PP_ECHOONOFF",
+            "PP_DTSENSITIVE",
+            "PP_MIN_NS",
+            "AEC_FIXEDBEAMSONOFF",
+        ):
             print(f"  {k:24s} {params.get(k)}")
         conv = str(params.get("AEC_AECCONVERGED"))
         far = str(params.get("AEC_NUM_FARENDS"))
@@ -244,7 +259,9 @@ def _save(base: Path, name: str, data: np.ndarray) -> None:
         out.parent.mkdir(parents=True, exist_ok=True)
         pcm = (np.clip(data, -1, 1) * 32767).astype("<i2")
         with wave.open(str(out), "wb") as w:
-            w.setnchannels(pcm.shape[1]); w.setsampwidth(2); w.setframerate(SR)
+            w.setnchannels(pcm.shape[1])
+            w.setsampwidth(2)
+            w.setframerate(SR)
             w.writeframes(pcm.tobytes())
         print(f"  saved {out} (listen: this is what the mic actually got)")
     except Exception as e:  # noqa: BLE001

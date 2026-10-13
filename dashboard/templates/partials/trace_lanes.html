@@ -1,0 +1,35 @@
+{#
+  One turn's spans as a horizontal timeline, drawn with widths and offsets only.
+  No JavaScript and nothing off-box: the whole point of this page is that it is
+  readable in a room with no network, and every duration on it is already in the
+  journal (issue #39). Each row owns its own 0 → total axis, `scale` = span_ms.
+#}
+{% macro lanes(trace, scale) -%}
+{%- set colors = {
+    'vad': 'bg-mint', 'stt': 'bg-lavender', 'llm': 'bg-butter',
+    'audio': 'bg-blush', 'tool': 'bg-lavender', 'denied': 'bg-blush',
+    'done': 'bg-black', 'cancelled': 'bg-blush'
+} -%}
+<div class="space-y-[3px]">
+    {%- for s in trace.spans %}
+    <div class="flex items-center gap-2">
+        <span class="w-28 shrink-0 truncate text-[10px] uppercase tracking-tight">{{ s.label }}</span>
+        <div class="relative h-3 flex-1 bg-white" style="border: 2px solid #000;">
+            {%- if s.t0_ms is not none and scale %}
+            {%- set left = (s.t0_ms / scale * 100) | round(2) %}
+            {%- set width = ((s.dur_ms or 0) / scale * 100) | round(2) %}
+            <div class="absolute top-0 bottom-0 {{ colors.get(s.kind, 'bg-cream') }}"
+                 style="left: {{ left }}%; min-width: 3px; width: {{ [width, 0.8] | max }}%;{% if s.kind != 'done' %} border-right: 2px solid #000;{% endif %}"></div>
+            {%- elif s.t0_ms is not none %}
+            <div class="absolute top-0 bottom-0 bg-cream" style="min-width: 3px; width: 0.8%; border-right: 2px solid #000;"></div>
+            {%- else %}
+            <div class="absolute inset-0 px-1 text-[9px] leading-3 uppercase text-black/40">not in the journal</div>
+            {%- endif %}
+        </div>
+        <span class="w-20 shrink-0 text-right text-[10px]">
+            {%- if s.dur_ms is not none %}{{ s.dur_ms }} ms{% else %}—{% endif -%}
+        </span>
+    </div>
+    {%- endfor %}
+</div>
+{%- endmacro %}

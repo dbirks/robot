@@ -7,6 +7,16 @@ Wants=llama-server.service reachy-llm-proxy.service
 [Service]
 WorkingDirectory=%h/dev/robot
 EnvironmentFile=-%h/dev/robot/.env
+# The active persona's voice (personas/<name>.yaml rendered by scripts/apply_env.py).
+# Listed AFTER .env deliberately: measured on this box 2026-10-12 with a throwaway user
+# unit, systemd applies EnvironmentFile= lines in listed order with the LAST one winning
+# per key, and every EnvironmentFile= beats Environment=. So the persona outranks a stray
+# S2S_QWEN3_* line in .env instead of losing to it, and a key only .env sets still
+# survives (persona.env writes every voice key it has an opinion about, empty included,
+# which is how switching to kokoro clears the Obama talker GGUF). A voice change only
+# becomes audible when this unit restarts: the flags are read once at startup
+# (measured 20-46 s). It never sets REACHY_INSTRUCTIONS - see deploy/README.md.
+EnvironmentFile=-%h/dev/robot/deploy/generated/persona.env
 Environment=HF_HUB_OFFLINE=1
 ExecStart=%h/dev/robot/scripts/run_s2s.sh
 Restart=on-failure

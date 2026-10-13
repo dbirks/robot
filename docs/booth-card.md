@@ -40,6 +40,7 @@ He answers whoever is talking to him, and deliberately ignores the rest of the r
 | "What's on your GPU?" | The dashboard's GPU panel — model + voice occupying nearly all 8 GB |
 | "What tools do you have?" | The live tool list on screen, including which ones need proof you're talking to him |
 | "How did you hear me over the noise?" | The attention lease: he only listens when you have his attention |
+| "Show me what that took" | The **Traces** page — one row per turn: listen, transcribe, think, first audio, tools, in milliseconds, read back off the journal |
 | "What's running right now?" | `http://localhost:3001` on the booth machine — services, conversation, environment |
 
 ## If he stops responding

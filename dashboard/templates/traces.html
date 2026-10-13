@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Traces{% endblock %}
+
+{% block content %}
+<div id="traces-panel"
+     hx-get="/partials/traces"
+     hx-trigger="every 10s"
+     hx-swap="innerHTML">
+    {% include "partials/traces.html" %}
+</div>
+{% endblock %}

@@ -43,6 +43,9 @@ SERVICE_UNITS: tuple[str, ...] = (
 # is one line — `REACHY_DASHBOARD_READONLY=1` — and this process has no auth, so a room
 # that ever serves this page beyond the kiosk wants it on. Same shape as DASHBOARD_HOST.
 READONLY_VAR = "REACHY_DASHBOARD_READONLY"
+# The ceiling the room was tuned to (b5cca5c): 1.7 was painful at a desk, the tool
+# path caps at 1.2, and a kiosk slider must not outrank the operator's ceiling.
+VOLUME_MAX_DEFAULT = 1.2
 TRUTHY = {"1", "true", "yes", "on"}
 
 # `--print-env` resolves config from disk; that is milliseconds of work but it is
@@ -58,6 +61,46 @@ _MEMORY_LIST = "MEMORY_TOOLS"
 _POLICY_SOURCE = "shell/tools.py"
 _POLICY_SET = "STATE_CHANGING"
 _PROFILES_SOURCE = "shell/attention/profiles.py"
+
+
+def voice_in_force(dotenv: dict[str, str], persona_env: dict[str, str]) -> dict:
+    """What the robot actually sounds like, not what `.env` used to say.
+
+    `get_env_settings()` used to render `TTS_ENGINE=kokoro / KOKORO_VOICE=bm_daniel`
+    while the loaded voice was the Obama Qwen3 talker: those keys belong to the
+    retired synchronous loop, and the live pipeline takes S2S_TTS plus the persona
+    file. Showing them as "the voice" is a lie a visitor can hear within one
+    sentence, so the panel gets the resolved truth and the legacy keys are named as
+    legacy (#38 provenance review).
+    """
+    merged = {**dotenv, **persona_env}  # persona.env outranks .env (measured systemd order)
+    engine = (merged.get("S2S_TTS") or "kokoro").strip().lower()
+    if engine in {"qwen3", "qwen3_tts", "qwen"}:
+        talker = merged.get("S2S_QWEN3_TALKER_GGUF", "")
+        label = Path(talker).stem if talker else merged.get("S2S_QWEN3_MODEL", "qwen3")
+        voice = f"{label} (speaker {merged.get('S2S_QWEN3_SPEAKER', '?')})"
+    else:
+        voice = merged.get("KOKORO_VOICE", "bm_daniel")
+    return {
+        "engine": engine,
+        "voice": voice,
+        "source": "persona.env" if (persona_env.get("S2S_TTS") or persona_env.get("S2S_QWEN3_TALKER_GGUF")) else ".env",
+        "legacy": sorted(k for k in ("TTS_ENGINE", "KOKORO_VOICE", "VOLUME_BOOST", "WHISPER_MODEL") if k in dotenv),
+    }
+
+
+def clamp_volume(level: float, cap: float | None = None) -> float:
+    """Keep the page inside the ceiling the room was tuned to.
+
+    `/settings/volume` clamped at 5.0 and the slider went to 300%, while the tool
+    path has capped at 1.2 since the 2026-10-12 retune (b5cca5c: 1.7 was painful at
+    a desk). A kiosk slider that can outrank the operator's ceiling is how a demo
+    ends in distortion - or worse, a robot too loud to talk over.
+    """
+    ceiling = VOLUME_MAX_DEFAULT if cap is None else cap
+    if isinstance(level, float) and level != level:  # NaN guard: no math.isfinite import needed here
+        return 0.0
+    return max(0.0, min(float(ceiling), float(level)))
 
 
 def readonly_enabled(env: dict[str, str] | None = None) -> bool:

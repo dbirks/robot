@@ -444,3 +444,36 @@ def test_the_read_only_gate_is_armable_but_not_engaged():
 def test_a_refusal_is_returned_as_an_html_405():
     src = SERVER_SRC.read_text()
     assert "status_code=verdict[" in src and "readonly_reject(" in src
+
+
+def test_the_kiosk_cannot_outrank_the_room_ceiling():
+    """`/settings/volume` used to clamp at 5.0 with a slider to 300% while the tool
+    path has capped at 1.2 since the desk retune (b5cca5c): a visitor with a slider
+    should not be able to make him louder than the operator decided."""
+    from dashboard.env_panel import VOLUME_MAX_DEFAULT, clamp_volume
+
+    assert clamp_volume(3.0) == VOLUME_MAX_DEFAULT
+    assert clamp_volume(-1) == 0.0
+    assert clamp_volume(0.85) == 0.85
+    assert clamp_volume(float("nan")) == 0.0
+    assert VOLUME_MAX_DEFAULT <= 1.2, "raising the page ceiling means raising the tool ceiling too"
+
+
+def test_settings_shows_the_voice_that_is_actually_loaded():
+    from dashboard.env_panel import voice_in_force
+
+    dotenv = {
+        "S2S_TTS": "qwen3",
+        "S2S_QWEN3_TALKER_GGUF": "/x/qwen-talker-1.7b-obama-Q8_0.gguf",
+        "S2S_QWEN3_SPEAKER": "laxmikant",
+        "TTS_ENGINE": "kokoro",
+        "KOKORO_VOICE": "bm_daniel",
+    }
+    view = voice_in_force(dotenv, {})
+    assert view["engine"] == "qwen3" and "obama" in view["voice"], view
+    assert "TTS_ENGINE" in view["legacy"], "the legacy key must be named, not silently dropped"
+    # the persona file outranks .env, exactly as systemd orders the EnvironmentFiles
+    forced = voice_in_force(
+        dotenv, {"S2S_QWEN3_TALKER_GGUF": "/x/kokoro-is-not-this.bin", "S2S_TTS": "kokoro", "KOKORO_VOICE": "bm_george"}
+    )
+    assert forced["engine"] == "kokoro" and forced["voice"] == "bm_george" and forced["source"] == "persona.env"

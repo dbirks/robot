@@ -7,6 +7,15 @@ BindsTo=reachy-mini-daemon.service
 [Service]
 WorkingDirectory=%h/dev/robot
 EnvironmentFile=-%h/dev/robot/.env
+# The active persona (scripts/apply_env.py renders personas/<name>.yaml into this file):
+# REACHY_PERSONA + REACHY_ACK_DIR, so the acknowledgement pool follows the voice that was
+# recorded for it. Same measured ordering as reachy-s2s.service — a later EnvironmentFile=
+# beats an earlier one and both beat Environment= (throwaway user unit, 2026-10-12) — but
+# note what this does to precedence inside shell/env.py: everything in persona.env arrives
+# as a process variable, so it outranks envs/<env>.yaml. That is why the file carries no
+# REACHY_INSTRUCTIONS: one global file must not be able to put the home persona into a
+# public room (docs/environments.md hard rule 1). The room keeps its words.
+EnvironmentFile=-%h/dev/robot/deploy/generated/persona.env
 # Deployment environment: envs/<name>.yaml (docs/environments.md). Deliberately
 # not pinned here: shell/config.py already defaults to `home`, so an
 # Environment=REACHY_ENV=home line was only a second source for the room, while the

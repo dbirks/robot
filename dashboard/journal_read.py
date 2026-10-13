@@ -29,6 +29,12 @@ TOOL_STARTED = "tool.started"
 TOOL_COMPLETED = "tool.completed"
 TOOL_FAILED = "tool.failed"
 AUDIO_HEALTH = "audio.health"
+AUDIO_SPEECH_STARTED = "audio.speech_started"
+AUDIO_SPEECH_STOPPED = "audio.speech_stopped"
+RESPONSE_CREATED = "response.created"
+RESPONSE_FIRST_AUDIO = "response.first_audio"
+RESPONSE_COMPLETED = "response.completed"
+ATTENTION_TOOL_DENIED = "attention.tool_denied"
 
 # The rows a conversation is made of. `audio.health`, `robot.connection` and the
 # rest of the watchdog traffic are 4 orders of magnitude more frequent than these,
@@ -41,6 +47,25 @@ CONVERSATION_TYPES = (
     TOOL_STARTED,
     TOOL_COMPLETED,
     TOOL_FAILED,
+)
+
+# The rows a trace is built from (issue #39). Everything here is written by the
+# shell with the same `mono` clock, which is what makes the segment split below
+# possible; `turn.transcript_partial` and the lease traffic are excluded because
+# they multiply the window without adding a span.
+TRACE_TYPES = (
+    AUDIO_SPEECH_STARTED,
+    AUDIO_SPEECH_STOPPED,
+    TURN_TRANSCRIPT_FINAL,
+    RESPONSE_CREATED,
+    RESPONSE_FIRST_AUDIO,
+    RESPONSE_COMPLETED,
+    RESPONSE_CANCELLED,
+    RESPONSE_TRANSCRIPT_FINAL,
+    TOOL_STARTED,
+    TOOL_COMPLETED,
+    TOOL_FAILED,
+    ATTENTION_TOOL_DENIED,
 )
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -239,6 +264,302 @@ def env_badge(events: list[dict[str, Any]]) -> str | None:
         if isinstance(env, str) and env:
             return env
     return None
+
+
+def split_segments(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Cut the stream wherever `mono` goes backwards — i.e. a new process.
+
+    `events.mono` is CLOCK_MONOTONIC relative to the *writing process* (see
+    `Journal._t0` in shell/journal.py), so it is only comparable inside one run of
+    `python -m shell`, and the shell restarts a dozen times a day. Across a restart
+    the values are unrelated: a nearest-neighbour join over the whole table happily
+    pairs a transcript from Tuesday with a response from Wednesday and reports a
+    4000-second turn. A regression is therefore a segment boundary, and no duration
+    is ever computed across one.
+
+    The split is deliberately conservative in the safe direction: extra boundaries
+    lose durations, they cannot invent them. There is no pid or boot row in the
+    journal, so a regression is the only signal available — a restart whose very
+    first traced event lands before the previous run's last one is indistinguishable
+    from a long-lived process, and that shows up as one implausibly long turn, which
+    is why `total_ms` is only reported for turns with a terminal row.
+    """
+    segments: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    last: float | None = None
+    for ev in events:
+        mono = ev.get("mono")
+        numeric = isinstance(mono, (int, float)) and not isinstance(mono, bool)
+        if current and numeric and last is not None and mono < last:  # type: ignore[operator]
+            segments.append(current)
+            current = []
+        current.append(ev)
+        if numeric:
+            last = float(mono)  # type: ignore[arg-type]
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _ms(a: float | None, b: float | None) -> int | None:
+    """b - a in milliseconds, clamped at zero (rows from the audio callback thread
+    can land one commit out of order), None if either side is missing."""
+    if a is None or b is None:
+        return None
+    return max(0, round((b - a) * 1000))
+
+
+def _span(label: str, kind: str, t0_ms: int | None, dur_ms: int | None, detail: str = "") -> dict[str, Any]:
+    return {"label": label, "kind": kind, "t0_ms": t0_ms, "dur_ms": dur_ms, "detail": detail}
+
+
+def _mono(ev: dict[str, Any]) -> float | None:
+    m = ev.get("mono")
+    return float(m) if isinstance(m, (int, float)) and not isinstance(m, bool) else None
+
+
+def _tool_verdict(result: Any) -> str:
+    """One word about a tool result. Not the payload: `recall` returns saved memories
+    and this page faces a room, so the trace says a lookup happened, not what it said."""
+    if isinstance(result, dict):
+        return "ok" if result.get("ok") else "not ok"
+    return "done" if result else "empty"
+
+
+def _turn_env(events: list[dict[str, Any]]) -> str | None:
+    for ev in events:
+        env = ev.get("payload", {}).get("env")
+        if isinstance(env, str) and env:
+            return env
+    return None
+
+
+def build_traces(events: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+    """Journal rows -> one dict per conversation turn, oldest first.
+
+    A *trace* is one turn of conversation: everything from the moment the shell
+    started listening to the utterance that produced this reply, through the
+    terminal `response.completed` / `response.cancelled` row. A *span* is one step
+    inside it, drawn from the two events that bracket that step:
+
+      vad           audio.speech_started -> audio.speech_stopped
+      endpoint      audio.speech_stopped -> turn.transcript_final   (STT + endpointing)
+      llm           turn.transcript_final -> response.created       (queue + prefill)
+      first audio   response.created     -> response.first_audio   (time to first audio)
+      done          response.created     -> response.completed / response.cancelled
+      tool:<name>   tool.started         -> tool.completed / tool.failed
+      denied        attention.tool_denied (marker, zero-length: it never runs)
+
+    Every duration is a difference of two `mono` values *inside one segment* (see
+    `split_segments`); `t0_ms` is the offset from the turn's own start so the page
+    can lay spans out on one axis. Turns with no terminal row are flagged
+    `incomplete` rather than given a made-up length — and note what no arithmetic
+    can recover here: there is no playback-end event (`tts.flushed` reports a queue
+    flush with `had_audio`, not the last sample out of the speaker), so
+    time-to-silence is not measurable today and no span claims to be it.
+
+    `limit` keeps the newest N turns, still in chronological order.
+    """
+    traces: list[dict[str, Any]] = []
+    for index, segment in enumerate(split_segments(events)):
+        traces.extend(_traces_in_segment(segment, index))
+    if limit is not None and limit > 0:
+        traces = traces[-int(limit) :]
+    return traces
+
+
+def _traces_in_segment(segment: list[dict[str, Any]], segment_index: int) -> list[dict[str, Any]]:
+    traces: list[dict[str, Any]] = []
+    cur: dict[str, Any] | None = None
+    open_tools: dict[str, list[Any]] = {}
+    run_start: float | None = None
+    run_stop: float | None = None
+
+    for ev in segment:
+        t = ev["type"]
+        mono = _mono(ev)
+        payload = ev.get("payload") or {}
+
+        if t == TURN_TRANSCRIPT_FINAL:
+            cur = _begin_turn(ev, mono, run_start, run_stop, segment_index, len(traces) + 1)
+            open_tools = {}
+            run_start = run_stop = None
+            traces.append(cur)
+            continue
+        if t == AUDIO_SPEECH_STARTED:
+            run_start, run_stop = mono, None
+            if cur is not None and payload.get("cut_playback"):
+                cur["interrupts"] += 1  # he was still talking: a real barge-in
+            continue
+        if t == AUDIO_SPEECH_STOPPED:
+            run_stop = mono
+            continue
+        if cur is None:
+            continue  # rows before this segment's first transcript have no turn to hang on
+
+        cur["events"].append(ev)
+        if t == RESPONSE_CREATED:
+            if cur["created_mono"] is None:
+                cur["created_mono"] = mono
+                cur["response_id"] = str(payload.get("response_id") or "")
+            cur["n_created"] += 1
+        elif t == RESPONSE_FIRST_AUDIO and cur["first_audio_mono"] is None:
+            if not cur["response_id"] or str(payload.get("response_id") or "") in ("", cur["response_id"]):
+                cur["first_audio_mono"] = mono
+        elif t == RESPONSE_COMPLETED and cur["terminal_mono"] is None:
+            cur["terminal_mono"], cur["outcome"] = mono, "done"
+            cur["status"] = str(payload.get("status") or "")
+        elif t == RESPONSE_CANCELLED and cur["terminal_mono"] is None:
+            cur["terminal_mono"], cur["outcome"] = mono, "cancelled"
+            cur["cancel_reason"] = str(payload.get("reason") or "")
+        elif t == RESPONSE_TRANSCRIPT_FINAL and not cur["assistant_text"]:
+            cur["assistant_text"] = str(payload.get("text") or "")
+        elif t == TOOL_STARTED:
+            name = str(payload.get("tool") or "unknown")
+            args = json.dumps(payload.get("args") or {}, default=str)[:160]
+            open_tools.setdefault(name, []).append((mono, args))
+        elif t in (TOOL_COMPLETED, TOOL_FAILED):
+            name = str(payload.get("tool") or "unknown")
+            pending = open_tools.get(name) or []
+            started, args = pending.pop(0) if pending else (None, "")
+            note = payload.get("error") if t == TOOL_FAILED else payload.get("result")
+            verdict = (str(note)[:160] if t == TOOL_FAILED else _tool_verdict(note))[:160]
+            cur["tool_spans"].append(
+                (name, started, mono, "failed" if t == TOOL_FAILED else "ok", f"{args} -> {verdict}")
+            )
+        elif t == ATTENTION_TOOL_DENIED:
+            cur["denied"].append(
+                (mono, str(payload.get("tool") or ""), payload.get("confidence"), payload.get("threshold"))
+            )
+
+    for trace in traces:
+        _finish_turn(trace)
+    return traces
+
+
+def _begin_turn(
+    ev: dict[str, Any],
+    mono: float | None,
+    run_start: float | None,
+    run_stop: float | None,
+    segment_index: int,
+    seq: int,
+) -> dict[str, Any]:
+    base = run_start if run_start is not None else (run_stop if run_stop is not None else mono)
+    return {
+        "id": int(ev.get("id") or 0),
+        "seq": seq,
+        "segment": segment_index,
+        "env": None,
+        "start_wall": ev.get("wall"),
+        "base_mono": base,
+        "transcript_mono": mono,
+        "user_text": str((ev.get("payload") or {}).get("text") or ""),
+        "assistant_text": "",
+        "response_id": "",
+        "vad_start_mono": run_start,
+        "vad_stop_mono": run_stop,
+        "created_mono": None,
+        "first_audio_mono": None,
+        "terminal_mono": None,
+        "outcome": None,
+        "status": "",
+        "cancel_reason": "",
+        "n_created": 0,
+        "interrupts": 0,
+        "tool_spans": [],
+        "denied": [],
+        "events": [ev],
+    }
+
+
+def _finish_turn(cur: dict[str, Any]) -> dict[str, Any]:
+    base = cur["base_mono"]
+    transcript = cur["transcript_mono"]
+    spans: list[dict[str, Any]] = []
+    if cur["vad_start_mono"] is not None and cur["vad_stop_mono"] is not None:
+        spans.append(
+            _span("vad", "vad", _ms(base, cur["vad_start_mono"]), _ms(cur["vad_start_mono"], cur["vad_stop_mono"]))
+        )
+        endpoint_t0 = _ms(base, cur["vad_stop_mono"])
+    else:
+        endpoint_t0 = _ms(base, transcript)
+    spans.append(
+        _span(
+            "endpoint + stt",
+            "stt",
+            endpoint_t0,
+            _ms(cur["vad_stop_mono"] if cur["vad_stop_mono"] is not None else base, transcript),
+            "no vad rows in this segment" if cur["vad_start_mono"] is None else "",
+        )
+    )
+    spans.append(_span("llm", "llm", _ms(base, transcript), _ms(transcript, cur["created_mono"])))
+    spans.append(
+        _span("first audio", "audio", _ms(base, cur["created_mono"]), _ms(cur["created_mono"], cur["first_audio_mono"]))
+    )
+    for name, started, ended, status, detail in cur["tool_spans"]:
+        spans.append(_span(f"tool:{name}", "tool", _ms(base, started), _ms(started, ended), f"{status} · {detail}"))
+    for mono_at, tool, conf, thresh in cur["denied"]:
+        spans.append(_span(f"denied:{tool}", "denied", _ms(base, mono_at), 0, f"confidence {conf} < {thresh}"))
+    terminal_label = "cancelled" if cur["outcome"] == "cancelled" else "done"
+    spans.append(
+        _span(
+            terminal_label,
+            "cancelled" if cur["outcome"] == "cancelled" else "done",
+            _ms(base, cur["created_mono"] if cur["created_mono"] is not None else transcript),
+            _ms(cur["created_mono"], cur["terminal_mono"]),
+            cur["cancel_reason"] or cur["status"],
+        )
+    )
+
+    ends = [s["t0_ms"] + s["dur_ms"] for s in spans if s["t0_ms"] is not None and s["dur_ms"] is not None]
+    cur["spans"] = spans
+    cur["env"] = cur["env"] or _turn_env(cur["events"])
+    cur["durations_ms"] = {
+        "vad": next((s["dur_ms"] for s in spans if s["kind"] == "vad"), None),
+        "endpoint": next((s["dur_ms"] for s in spans if s["kind"] == "stt"), None),
+        "llm": next((s["dur_ms"] for s in spans if s["kind"] == "llm"), None),
+        "first_audio": next((s["dur_ms"] for s in spans if s["kind"] == "audio"), None),
+        "total": _ms(base, cur["terminal_mono"]),
+    }
+    cur["total_ms"] = cur["durations_ms"]["total"]
+    cur["span_ms"] = max(ends) if ends else 0
+    cur["incomplete"] = cur["terminal_mono"] is None
+    cur["wall_end"] = max((e.get("wall") or 0) for e in cur["events"]) or cur["start_wall"]
+    for key in (
+        "vad_start_mono",
+        "vad_stop_mono",
+        "created_mono",
+        "first_audio_mono",
+        "terminal_mono",
+        "base_mono",
+        "events",
+    ):
+        cur.pop(key, None)
+    return cur
+
+
+def trace_window(
+    conn: sqlite3.Connection, window: int = 2000, limit: int = 12, turn_id: int | None = None
+) -> dict[str, Any]:
+    """The newest turns as traces, plus what the reader had to give up on.
+
+    `window` traced rows are enough to see the last few processes: the trace types
+    are ~5k of the journal's ~90k rows, and the segment split needs the regression
+    itself to be inside the window to be seen (which it is, because a restart writes
+    its low `mono` values before it writes the next transcript).
+    """
+    events = latest_events(conn, limit=window, types=TRACE_TYPES)
+    traces = build_traces(events)
+    newest = traces[-limit:] if limit > 0 else traces
+    return {
+        "traces": list(reversed(newest)),
+        "turns_total": len(traces),
+        "segments": len(split_segments(events)),
+        "env": env_badge(events),
+        "traced_rows": len(events),
+        "turn": next((t for t in traces if turn_id is not None and t["id"] == int(turn_id)), None),
+    }
 
 
 def liveness(conn: sqlite3.Connection, now: float | None = None) -> dict[str, Any]:

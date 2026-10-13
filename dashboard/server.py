@@ -19,10 +19,11 @@ from sse_starlette.sse import EventSourceResponse
 # root (tests, ad-hoc) and `python server.py` with WorkingDirectory=dashboard (the
 # systemd unit). The relative import is the first one; the flat one is the unit.
 try:
-    from . import env_panel, journal_read
+    from . import env_panel, journal_read, persona_panel
 except ImportError:  # pragma: no cover - systemd path
     import env_panel  # type: ignore[no-redef]
     import journal_read  # type: ignore[no-redef]
+    import persona_panel  # type: ignore[no-redef]
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("dashboard")
@@ -182,11 +183,31 @@ def set_pipewire_volume(level: float):
 
 
 def get_env_settings() -> dict:
-    """Read settings from .env file."""
+    """What the box will actually do, resolved from .env + the persona in force.
+
+    This used to read the legacy keys straight off `.env` and print `kokoro /
+    bm_daniel` while the loaded voice was the Obama Qwen3 talker - a claim anyone
+    in the room could hear is wrong inside one sentence (#38 provenance review).
+    The legacy keys are reported as legacy rather than hidden, because the file
+    still contains them and an operator reading `.env` will wonder where they went.
+    """
     vals = dotenv_values(ENV_PATH)
+    try:
+        persona_env = persona_panel.read_persona_env()
+    except Exception:  # noqa: BLE001 - an absent/generated file is the normal home state
+        persona_env = {}
+    voice = env_panel.voice_in_force({k: str(v) for k, v in vals.items() if v is not None}, persona_env)
+    try:
+        sink = get_pipewire_volume()
+    except Exception:  # noqa: BLE001
+        sink = 0.0
     return {
-        "VOLUME_BOOST": get_pipewire_volume(),
-        "TTS_ENGINE": vals.get("TTS_ENGINE", "kokoro"),
+        "VOLUME_BOOST": sink,
+        "VOLUME_MAX": env_panel.VOLUME_MAX_DEFAULT,
+        "TTS_ENGINE": voice["engine"],
+        "VOICE": voice["voice"],
+        "VOICE_SOURCE": voice["source"],
+        "LEGACY_KEYS": voice["legacy"],
         "KOKORO_VOICE": vals.get("KOKORO_VOICE", "bm_daniel"),
         "WHISPER_MODEL": vals.get("WHISPER_MODEL", "small.en"),
     }
@@ -449,6 +470,65 @@ async def conversation_page(request: Request):
     )
 
 
+@app.get("/traces", response_class=HTMLResponse)
+async def traces_page(request: Request):
+    return render(
+        request,
+        "traces.html",
+        panel=trace_panel(),
+        readonly=READONLY,
+        active_page="traces",
+    )
+
+
+@app.get("/traces/{turn_id}", response_class=HTMLResponse)
+async def trace_detail(request: Request, turn_id: int):
+    # A wider window for a deep link: the row the visitor clicked is the thing they
+    # want to see, and a miss is shown as a miss rather than a different turn.
+    panel = trace_panel(window=8000, limit=12, turn_id=turn_id)
+    return render(
+        request,
+        "trace.html",
+        panel=panel,
+        turn=panel["turn"],
+        unknown_id=turn_id,
+        readonly=READONLY,
+        active_page="traces",
+    )
+
+
+@app.get("/partials/traces", response_class=HTMLResponse)
+async def partial_traces(request: Request):
+    return render(request, "partials/traces.html", panel=trace_panel(), readonly=READONLY)
+
+
+def trace_panel(window: int = 2000, limit: int = 12, turn_id: int | None = None) -> dict:
+    """Traces for the page, from the same journal the conversation panel reads.
+
+    A missing or locked journal is an empty panel with `journal_error` set — the
+    template says so in words, because an empty list of traces and a journal that
+    cannot be opened look identical otherwise (issue #38 review P1).
+    """
+    blank = {"traces": [], "turns_total": 0, "segments": 0, "env": None, "traced_rows": 0, "turn": None}
+    path = journal_path()
+    if not path.exists():
+        return {**blank, "journal_error": f"journal not found: {path}"}
+    try:
+        conn = journal_read.open_ro(path)
+    except Exception as e:  # noqa: BLE001 - the page must still render the failure
+        log.error("cannot open %s: %s", path, e)
+        return {**blank, "journal_error": str(e)}
+    try:
+        panel = journal_read.trace_window(conn, window=window, limit=limit, turn_id=turn_id)
+        panel["journal_error"] = None
+        return panel
+    except Exception as e:  # noqa: BLE001
+        log.error("trace read failed on %s: %s", path, e)
+        return {**blank, "journal_error": str(e)}
+    finally:
+        conn.close()
+
+
 @app.get("/environment", response_class=HTMLResponse)
 async def environment_page(request: Request):
     return render(
@@ -458,6 +538,78 @@ async def environment_page(request: Request):
         readonly=READONLY,
         active_page="environment",
     )
+
+
+# ---------------------------------------------------------------------------
+# Persona picker (issue #35): one control for how he sounds AND how he behaves.
+# The room (home vs hackday) stays a readout, exactly as on /environment; this
+# page picks a persona, never a room.
+# ---------------------------------------------------------------------------
+
+APPLY_ENV = ROBOT_DIR / "scripts" / "apply_env.py"
+
+
+def persona_panel_data() -> dict:
+    """The picker's data. pins.yaml is read here, not inside the panel module, so
+    dashboard/persona_panel.py stays a pure function of its arguments."""
+    try:
+        pins_text = (ROBOT_DIR / "docs" / "pins.yaml").read_text()
+    except OSError:
+        pins_text = ""
+    return persona_panel.build_panel(pins_text=pins_text)
+
+
+@app.get("/persona", response_class=HTMLResponse)
+async def persona_page(request: Request):
+    return render(request, "persona.html", panel=persona_panel_data(), active_page="persona")
+
+
+@app.get("/partials/persona", response_class=HTMLResponse)
+async def partial_persona(request: Request):
+    return render(request, "partials/persona.html", panel=persona_panel_data(), readonly=READONLY)
+
+
+@app.post("/persona/apply", response_class=HTMLResponse)
+async def persona_apply(request: Request, persona: str = Form(...)):
+    """Render + restart in a detached child, once at a time.
+
+    The work goes to `scripts/apply_env.py --restart` rather than to a handler loop:
+    the s2s restart is 20-46 s of GPU work, so a request that waited for it would
+    time out in the browser, and a web process with no business owning systemd must
+    not be the thing that dies halfway. The lock is taken HERE, before the child
+    launches, so a second click cannot slip into the launch window; the child
+    inherits it with `--lock-held` and releases it when the units are back. The page
+    polls the partial and shows an in-progress state instead of a spinner that may be
+    lying about what it is waiting for.
+    """
+    refused = refuse_mutation(request)
+    if refused is not None:
+        return refused
+    panel = persona_panel_data()
+    if persona not in {row["name"] for row in panel["personas"]}:
+        return HTMLResponse(f"Unknown persona {persona!r}", status_code=400)
+    if not panel["available"]:
+        return render(
+            request, "partials/persona.html", panel=panel, apply_error=panel["error"] or "personas unreadable"
+        )
+    if panel["busy"]["busy"]:
+        return render(request, "partials/persona.html", panel=panel, apply_error="another apply is running")
+    if not persona_panel.try_acquire_lock():
+        return render(
+            request, "partials/persona.html", panel=persona_panel_data(), apply_error="another apply is running"
+        )
+    try:
+        subprocess.Popen(
+            [persona_panel.interpreter(), str(APPLY_ENV), "--persona", persona, "--restart", "--lock-held"],
+            cwd=str(ROBOT_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as e:
+        persona_panel.release_lock()
+        return render(request, "partials/persona.html", panel=persona_panel_data(), apply_error=f"launch failed: {e}")
+    return render(request, "partials/persona.html", panel=persona_panel_data(), applied=persona)
 
 
 @app.get("/services", response_class=HTMLResponse)
@@ -588,9 +740,9 @@ async def set_volume(request: Request, volume_boost: str = Form(...)):
         return refused
     try:
         level = float(volume_boost)
-        level = max(0.0, min(5.0, level))
+        level = env_panel.clamp_volume(float(volume_boost))
         set_pipewire_volume(level)
-        write_env_setting("VOLUME_BOOST", volume_boost)
+        write_env_setting("VOLUME_BOOST", f"{level:.2f}")
     except (ValueError, subprocess.SubprocessError) as e:
         log.error("Failed to set volume: %s", e)
     return HTMLResponse(volume_boost)
@@ -608,10 +760,10 @@ async def save_settings(
         return refused
     # Apply volume to pipewire immediately
     try:
-        set_pipewire_volume(float(volume_boost))
+        set_pipewire_volume(env_panel.clamp_volume(float(volume_boost)))
     except (ValueError, subprocess.SubprocessError):
         pass
-    write_env_setting("VOLUME_BOOST", volume_boost)
+    write_env_setting("VOLUME_BOOST", f"{env_panel.clamp_volume(float(volume_boost)):.2f}")
     write_env_setting("TTS_ENGINE", tts_engine)
     write_env_setting("KOKORO_VOICE", kokoro_voice)
     # There is no "apply & restart" route any more (issue #38): the only unit it ever

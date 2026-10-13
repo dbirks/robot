@@ -98,6 +98,61 @@ One line moves the robot to the event and back:
 echo 'REACHY_ENV=hackday' >> .env        # office demo; delete the line to come home
 ```
 
+## Personas (voice + manner, one knob)
+
+A persona is one thing: how Reachy **sounds** (the TTS voice the pinned realtime service
+loads) and how he **behaves** (the spoken manner in the system prompt). Both halves live
+in `personas/<name>.yaml` — `instructions`, `ack_dir`, and a `voice:` block (`engine`,
+`model`, `talker_gguf`, `codec_gguf`, `speaker`, `instruct`, `speed`). A room names one:
+`persona: obama`, or `persona: {name: obama, instructions: ...}` to keep its own words.
+
+Tonight's pair: `obama` (the desk — the Obama 1.7B talker GGUF, speaker `laxmikant`, the
+ack pool in `sounds/acks/obama`) and `marvin` (the booth's dry, weary gentleman —
+**behaviour-only**: the voice block is still the Obama talker, because no Marvin model
+exists). Switching to a real second voice means editing `voice:` *and* adding a
+measured `docs/pins.yaml` entry first.
+
+Apply it, then restart (the s2s service reads its `--qwen3_tts_*` flags once at startup,
+so a voice change is not a reload — measured 20-46 s of dead air):
+
+```bash
+uv run python scripts/apply_env.py --check                # what the room's persona renders
+uv run python scripts/apply_env.py --persona marvin        # render only; says what to restart
+uv run python scripts/apply_env.py --persona marvin --restart
+systemctl --user restart reachy-s2s && systemctl --user restart reachy-shell   # by hand
+```
+
+That writes `deploy/generated/persona.env` (gitignored, atomic, previous render kept as
+`persona.env.prev`), which both `reachy-s2s.service` and `reachy-shell.service` load
+**after** `.env`. Measured on this box 2026-10-12 with a throwaway user unit (two files,
+overlapping keys, plus an inline `Environment=`): systemd applies `EnvironmentFile=`
+lines in listed order with the **last one winning per key**, and every
+`EnvironmentFile=` beats `Environment=`; a key only the earlier file sets survives, and
+an *empty* value still counts as set. So the persona outranks a stray `S2S_QWEN3_*` line
+in `.env` instead of losing to it, and switching engine clears the old talker path.
+
+Three consequences to know before the demo:
+
+- **`persona.env` never sets `REACHY_INSTRUCTIONS`.** It is one global file read in both
+  rooms, and a stamped prompt would put the home persona into a public booth the moment
+  someone forgot to move the room back (hard rule 1). The room keeps its words.
+- **An inline `persona.instructions` in `envs/<env>.yaml` outranks the persona file.**
+  Both shipped rooms still carry one (it is the A2 parity bar: home resolves to the same
+  1568 bytes as before the picker existed), so tonight **applying a persona changes the
+  voice and the acknowledgements, not the words**. `apply_env.py` and the dashboard both
+  say this out loud. To hand the words to the persona file, delete the `instructions:`
+  block from that room's env file — `personas/obama.yaml` and `personas/marvin.yaml`
+  already hold byte-identical text.
+- **Pin guard.** If a persona names a talker GGUF or model id that `docs/pins.yaml`
+  does not mention, `apply_env.py` WARNs (and refuses with `--strict`). The Obama
+  1.7B talker *is* currently in that position — its VRAM cost is only quoted inside the
+  `models.llm` entry — so expect the warning until someone gives it its own pins block.
+
+The dashboard's `/persona` page is the same script: one Apply at a time (a lock file
+refuses a second concurrent apply), a detached `apply_env.py --restart` child, and an
+in-progress panel while the units settle. The room itself is **not** a control there —
+`REACHY_ENV` stays `.env`-only, and the page shows it as a readout.
+
 **Empty the booth store on purpose.** Auto fact extraction is off in `hackday`, but an
 explicit "remember my name" still writes the one shared `data/memories.hackday.json`, and
 the next session is handed its last facts as "what you know about the user". Before the

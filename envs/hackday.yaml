@@ -30,6 +30,12 @@ name: hackday
 attention_profile: event
 
 persona:
+  # personas/marvin.yaml. Behaviour-only persona -
+  # the voice block there is still the Obama talker, because no Marvin model exists.
+  # The inline `instructions:` below OUTRANK the persona file (shell/env.py), so the
+  # attendee-safe booth text is guaranteed on screen whatever the picker is set to;
+  # delete the block to hand the words to personas/marvin.yaml (identical text today).
+  name: marvin
   # One physical line, like home's: a folded block scalar would put newlines
   # into the system prompt that the runtime does not expect.
   # David, 2026-10-12: dry, weary Marvin register - deliberately naming no real

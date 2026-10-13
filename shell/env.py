@@ -46,6 +46,18 @@ from .config import DEFAULT_ENV, REACHY_ENV_VAR, ShellConfig, persona_instructio
 # --print-env and the tests must resolve the same files from anywhere.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENVS_DIR = REPO_ROOT / "envs"
+PERSONAS_DIR = REPO_ROOT / "personas"
+
+# `persona:` in an env file is one of two shapes (docs/environments.md, persona
+# picker): a bare name (`persona: marvin`, which means personas/marvin.yaml) or the
+# v1 mapping (`persona: {instructions: ..., ack_dir: ...}`) that both shipped rooms
+# still carry. `persona: {name: marvin, instructions: ...}` is the migration shape -
+# it names the persona for its voice and keeps the room's own words, and the inline
+# instructions OUTRANK the persona file, so the A2 parity bar stayed byte-exact.
+# REACHY_PERSONA (what scripts/apply_env.py stamps into deploy/generated/persona.env)
+# outranks both: the picker moves the voice and the acks, never the words.
+PERSONA_VAR = "REACHY_PERSONA"
+_PERSONA_INLINE = ("instructions", "ack_dir")
 
 
 class EnvError(RuntimeError):
@@ -54,6 +66,11 @@ class EnvError(RuntimeError):
 
 class EnvFileMissing(EnvError):
     """`envs/<env>.yaml` is not there — refuse to start rather than guess a persona."""
+
+
+class PersonaError(EnvError):
+    """`personas/<name>.yaml` is missing or malformed — the same fail-closed bar as a
+    missing env file: a robot that cannot say who it is being stays silent."""
 
 
 def known_envs(envs_dir: Path | None = None) -> list[str]:
@@ -230,7 +247,118 @@ def guard_memory_namespace(cfg: ShellConfig) -> None:
         )
 
 
-def load_config(env: str | None = None, *, envs_dir: Path | None = None) -> ShellConfig:
+def known_personas(personas_dir: Path | None = None) -> list[str]:
+    directory = Path(personas_dir) if personas_dir is not None else PERSONAS_DIR
+    try:
+        return sorted(p.stem for p in directory.glob("*.yaml"))
+    except OSError:
+        return []
+
+
+def persona_file_path(name: str, personas_dir: Path | None = None) -> Path:
+    directory = Path(personas_dir) if personas_dir is not None else PERSONAS_DIR
+    return directory / f"{name}.yaml"
+
+
+def load_persona_doc(name: str, personas_dir: Path | None = None) -> dict:
+    """Read `personas/<name>.yaml`. Missing / unparsable / not-a-mapping are hard errors."""
+    clean = str(name).strip()
+    path = persona_file_path(clean, personas_dir)
+    if not clean:
+        raise PersonaError("persona name is empty")
+    if not path.is_file():
+        raise PersonaError(
+            f"no persona file at {path} (persona={clean!r}); "
+            f"available: {', '.join(known_personas(personas_dir)) or 'none'}"
+        )
+    try:
+        doc = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as e:
+        raise PersonaError(f"persona file {path} does not parse: {e}") from e
+    if not isinstance(doc, dict):
+        raise PersonaError(f"persona file {path} must be a mapping, got {type(doc).__name__}")
+    doc.setdefault("name", clean)
+    return doc
+
+
+def persona_selection(doc: dict) -> tuple[str, str]:
+    """The persona this env file asks for, and which line said so.
+
+    `REACHY_PERSONA` wins: that is the picker, arriving through persona.env as a
+    process variable, so it rides the existing precedence rule instead of a new one.
+    ("", "") means nobody named one, which is exactly today's behaviour - inline-only
+    rooms resolve with no persona file in sight.
+    """
+    stamped = (os.environ.get(PERSONA_VAR) or "").strip()
+    if stamped:
+        return stamped, PERSONA_VAR
+    node = doc.get("persona") if isinstance(doc, dict) else None
+    if isinstance(node, str) and node.strip():
+        return node.strip(), "persona"
+    if isinstance(node, dict):
+        named = str(node.get("name") or "").strip()
+        if named:
+            return named, "persona.name"
+    return "", ""
+
+
+def merge_persona_doc(doc: dict, persona_doc: dict) -> dict:
+    """Fill the persona keys from `personas/<name>.yaml` without ever overwriting what
+    the room's own file says. The result is the shape LAYERS already reads, so the
+    precedence table (`persona.instructions`, process env last) did not change."""
+    merged = dict(doc)
+    node = merged.get("persona")
+    filled = {key: value for key, value in persona_doc.items() if key in _PERSONA_INLINE and value not in (None, "")}
+    if isinstance(node, dict):
+        inline = {key: value for key, value in node.items() if key in _PERSONA_INLINE and value not in (None, "")}
+        filled.update(inline)  # the room's inline block outranks the persona file
+    merged["persona"] = filled
+    return merged
+
+
+def persona_report(env: str | None = None, *, envs_dir: Path | None = None, personas_dir: Path | None = None) -> dict:
+    """`python -m shell --print-personas`: the picker's data, resolved on this box.
+
+    JSON-ready and hardware-free, like --print-env. The dashboard renders it through
+    dashboard/persona_panel.py, which has no yaml of its own (its venv has none).
+    """
+    name = resolve_env_name(env)
+    doc = load_env_doc(name, envs_dir)
+    selected, source = persona_selection(doc)
+    node: Any = doc.get("persona")
+    if selected:
+        merged = merge_persona_doc(doc, load_persona_doc(selected, personas_dir))
+        node = merged.get("persona")
+    directory = Path(personas_dir) if personas_dir is not None else PERSONAS_DIR
+    personas = []
+    for stem in known_personas(personas_dir):
+        item = load_persona_doc(stem, personas_dir)
+        raw_voice = item.get("voice")
+        voice: dict[str, Any] = raw_voice if isinstance(raw_voice, dict) else {}
+        personas.append(
+            {
+                "name": stem,
+                "instructions": str(item.get("instructions") or "").strip(),
+                "ack_dir": str(item.get("ack_dir") or ""),
+                "voice": voice,
+                "file": str(persona_file_path(stem, personas_dir).relative_to(REPO_ROOT)),
+            }
+        )
+    inline_text = str(node.get("instructions") or "") if isinstance(node, dict) else ""
+    return {
+        "env": name,
+        "persona": selected,
+        "persona_source": source,
+        # true while envs/<env>.yaml carries its own `instructions:`: the picker moves
+        # the voice and the acks here, not the words (the A2 parity bar, see README).
+        "inline_instructions": bool(inline_text.strip()),
+        "personas": personas,
+    }
+
+
+def load_config(
+    env: str | None = None, *, envs_dir: Path | None = None, personas_dir: Path | None = None
+) -> ShellConfig:
     """Resolve the config for `env` (default: REACHY_ENV, then `home`).
 
     Raises EnvError — startup must not continue — when the file is missing or
@@ -238,6 +366,11 @@ def load_config(env: str | None = None, *, envs_dir: Path | None = None) -> Shel
     """
     name = resolve_env_name(env)
     doc = load_env_doc(name, envs_dir)
+    selected, _ = persona_selection(doc)
+    if selected:
+        # A named persona with no file is a hard error, never a silent fallback to
+        # whoever else's prompt is loaded next to this voice.
+        doc = merge_persona_doc(doc, load_persona_doc(selected, personas_dir))
     cfg = layer_env_file(ShellConfig(env=name), doc)
     guard_memory_namespace(cfg)
     return cfg

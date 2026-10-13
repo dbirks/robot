@@ -57,6 +57,20 @@ audio:
 Unknown keys are ignored (forward-compatible), a missing file is a hard startup error,
 and `python -m shell --print-env` dumps the resolved config for the dashboard/ADR trail.
 
+### `persona:` — a name, an inline block, or both (issue #35)
+
+`persona:` accepts `persona: marvin` (→ `personas/marvin.yaml`, which carries the spoken
+manner, the ack pool *and* the TTS voice — one persona is one thing), the v1 mapping of
+inline keys above, or the migration shape `persona: {name: marvin, instructions: ...}`.
+Precedence inside the key: **inline `instructions`/`ack_dir` outrank the persona file**
+(it is what keeps the A2 parity bar byte-exact while the picker is new), and
+`REACHY_PERSONA`/`REACHY_ACK_DIR` as process variables outrank the file — which is how
+`scripts/apply_env.py` moves the voice without touching the words: the generated
+`deploy/generated/persona.env` deliberately stamps no `REACHY_INSTRUCTIONS`, because one
+global file read by both rooms must not be able to put the home persona into a public
+booth (hard rule 1). Naming a persona whose file is missing is a hard `PersonaError`,
+like a missing env file. `python -m shell --print-personas` dumps the picker's data.
+
 As implemented (Phase A): the keys above plus `motion.hz` and `conversation:
 {compact_after_s, reset_after_s, max_turn_s}`, each with the `REACHY_*` process
 variable already used by `shell/config.py` as its override. `REACHY_TOOLS_INCLUDE` /

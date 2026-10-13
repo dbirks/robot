@@ -13,7 +13,7 @@
                 Volume
                 <span id="volume-value" class="ml-2 bg-white border-2 border-black px-2 py-0.5 text-xs">{{ settings.VOLUME_BOOST }}</span>
             </label>
-            <input type="range" name="volume_boost" min="0.0" max="3.0" step="0.05"
+            <input type="range" name="volume_boost" min="0.0" max="{{ settings.VOLUME_MAX }}" step="0.05"
                    value="{{ settings.VOLUME_BOOST }}"
                    oninput="document.getElementById('volume-value').textContent = this.value"
                    hx-post="/settings/volume"
@@ -24,9 +24,8 @@
                    class="w-full cursor-pointer">
             <div class="flex justify-between text-xs text-gray-500 mt-1 font-mono">
                 <span>0%</span>
-                <span>100%</span>
-                <span>200%</span>
-                <span>300%</span>
+                <span>60%</span>
+                <span>{{ (settings.VOLUME_MAX * 100) | round(0) | int }}% (room ceiling)</span>
             </div>
         </div>
 

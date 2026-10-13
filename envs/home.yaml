@@ -15,6 +15,13 @@ name: home
 attention_profile: quiet
 
 persona:
+  # personas/<name>.yaml: the voice (rendered into deploy/generated/persona.env by
+  # scripts/apply_env.py), the ack pool and the spoken manner. The inline
+  # `instructions:` below still OUTRANKS it (shell/env.py), which is what keeps the A2
+  # parity bar byte-exact while the picker is new. To make the picker authoritative in
+  # this room, delete the `instructions:` block: personas/obama.yaml already holds the
+  # same text. `REACHY_PERSONA` (from persona.env) outranks this `name:` line.
+  name: obama
   # One physical line on purpose: a folded YAML block scalar would put newlines
   # into the system prompt that today's .env value does not have.
   instructions: |

@@ -35,7 +35,7 @@ from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
 from .camera import CameraGrabber, CameraStream
 from .config import REACHY_ENV_VAR, ShellConfig
 from .conversation import ConversationMemory, Turn, llm_extract_facts, llm_summarize
-from .env import EnvError, config_to_dict, load_config
+from .env import EnvError, config_to_dict, load_config, persona_report
 from .intents import is_bare_wake, wants_sleep
 from .journal import Journal
 from .memories import MemoryStore, migrate_legacy_memories
@@ -467,6 +467,12 @@ def _parser() -> argparse.ArgumentParser:
         "opens no audio device, connects to no robot, touches no network",
     )
     parser.add_argument(
+        "--print-personas",
+        action="store_true",
+        help="print the persona picker's resolved data as JSON and exit "
+        "(personas/*.yaml + which one this room names); opens nothing, like --print-env",
+    )
+    parser.add_argument(
         "--migrate-memory",
         action="store_true",
         help="copy the pre-namespaces data/memories.json into this env's store and exit "
@@ -492,6 +498,15 @@ def main(argv: list[str] | None = None) -> None:
     # no network. --print-env has to work on a machine where the shell cannot.
     if args.print_env:
         print(json.dumps(config_to_dict(_resolved_config()), indent=2, sort_keys=True))
+        return
+    if args.print_personas:
+        # The dashboard's persona panel reads this instead of importing shell.env:
+        # reachy-dashboard runs in its own venv and has no pyyaml (env_panel.py).
+        try:
+            print(json.dumps(persona_report(), indent=2, sort_keys=True))
+        except EnvError as e:
+            print(f"shell: {e}", file=sys.stderr)
+            raise SystemExit(2) from e
         return
     if args.migrate_memory:
         cfg = _resolved_config()
