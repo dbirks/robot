@@ -74,7 +74,15 @@ def make_vision_handlers(
     face_lock = threading.Lock()
 
     def _frame():
-        return camera.grab()  # raises RuntimeError with a speakable reason
+        # Frames come from the one camera owner: when a CameraStream is running for
+        # the greeter, `latest()` is its cached frame and this module never opens
+        # the device (ADR 0002). With no stream, the grabber's open-per-grab path
+        # still applies, and its speakable RuntimeError is the contract.
+        latest = getattr(camera, "latest", None)
+        frame = latest() if callable(latest) else None
+        if frame is not None:
+            return frame
+        return camera.grab()
 
     @_guard
     def take_snapshot(**_kw: Any) -> dict:

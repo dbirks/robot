@@ -5,6 +5,7 @@ import json
 import numpy as np
 
 from shell.realtime import RealtimeClient
+from shell.realtime.client import ORIGIN_GREETER, ORIGIN_USER
 
 
 class FakeWS:
@@ -52,6 +53,62 @@ def make_client(journal, speaker, router=None):
         speaker=speaker,
         journal=journal,
     )
+
+
+def test_greeter_origin_rides_through_to_response_done(journal, speaker):
+    """P1-A marker: who asked for this reply survives until the speaker falls
+    silent, which is when the shell decides whether the lease may exchange."""
+    c = make_client(journal, speaker)
+    c._ws = FakeWS()
+    assert c.response_origin == ORIGIN_USER
+    asyncio.run(c._inject("*(say hello)*", ORIGIN_GREETER))
+    assert c.response_origin == ORIGIN_USER  # only latched once a response exists
+    asyncio.run(c.handle_event({"type": "response.created", "response": {"id": "r1"}}))
+    assert c.response_origin == ORIGIN_GREETER
+    asyncio.run(c.handle_event({"type": "response.done", "response": {"id": "r1", "status": "completed"}}))
+    assert c.response_origin == ORIGIN_GREETER  # survives past done, for the played edge
+    asyncio.run(c.handle_event({"type": "response.created", "response": {"id": "r2"}}))
+    assert c.response_origin == ORIGIN_USER  # a real turn re-latches normally
+
+
+def test_plain_response_origin_is_user(journal, speaker):
+    c = make_client(journal, speaker)
+    asyncio.run(c.handle_event({"type": "response.created", "response": {"id": "r1"}}))
+    assert c.response_origin == ORIGIN_USER
+
+
+def test_tool_followup_keeps_the_origin_that_asked_for_it(journal, speaker):
+    """The residual leak (issue #34 review): a greeting that makes a tool call
+    produced a follow-up reply labelled `user`, which then exchanged the attention
+    lease - so a face in the room could open a mic window through the back door."""
+    from shell.realtime.client import _ToolBatch
+
+    c = make_client(journal, speaker)
+    c._ws = FakeWS()
+    asyncio.run(c._inject("*(say hello)*", ORIGIN_GREETER))
+    asyncio.run(c.handle_event({"type": "response.created", "response": {"id": "r1"}}))
+    assert c.response_origin == ORIGIN_GREETER
+
+    batch = _ToolBatch(c._epoch, c.response_origin)
+
+    async def scenario():
+        # built inside the loop: a Future created outside one has no loop to bind to
+        done = asyncio.get_running_loop().create_future()
+        done.set_result(("call_1", {"ok": True}, True))  # a tool that wants a follow-up
+        batch.tasks.append(done)
+        batch.done.set()
+        before = [m["type"] for m in c._ws.sent].count("response.create")
+        await c._finish_batch("r1", batch)
+        after = [m["type"] for m in c._ws.sent].count("response.create")
+        return before, after
+
+    before, after = asyncio.run(scenario())
+    assert after == before + 1, "the follow-up reply was not asked for"
+    assert c._pending_origin == ORIGIN_GREETER, "follow-up reply would exchange the lease"
+
+    # and the next response.created latches it, not the default
+    asyncio.run(c.handle_event({"type": "response.created", "response": {"id": "r2"}}))
+    assert c.response_origin == ORIGIN_GREETER
 
 
 def test_speech_started_flushes_playback(speaker, journal):

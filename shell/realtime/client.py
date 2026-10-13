@@ -42,12 +42,24 @@ log = logging.getLogger("shell.realtime")
 TOOL_TIMEOUT_S = 12.0  # a hung tool must not hold a reply forever
 BATCH_WAIT_S = 30.0  # longest we wait for response.done before sending results
 
+# Who asked for a reply (ADR 0003 wiring). A greeter-prompted reply is the shell
+# talking to the room, not the room talking to the shell: it must not exchange
+# the attention lease. Anything else (VAD turn, KWS wake, real transcript) does.
+ORIGIN_USER = "user"
+ORIGIN_GREETER = "greeter"
+
 
 class _ToolBatch:
     """Tool calls of one response, answered together after its response.done."""
 
-    def __init__(self, epoch: int) -> None:
+    def __init__(self, epoch: int, origin: str = ORIGIN_USER) -> None:
         self.epoch = epoch  # user-speech counter when the calls started
+        # WHO asked for this reply, carried across the tool round trip. Without it
+        # the follow-up `response.create` below gets latched by the next
+        # `response.created` as ORIGIN_USER, and a greeting that happened to call a
+        # tool ends up exchanging the attention lease exactly like a real turn
+        # (ADR 0003, found in the #36 review).
+        self.origin = origin
         self.tasks: list[asyncio.Task] = []
         self.done = asyncio.Event()
 
@@ -103,12 +115,24 @@ class RealtimeClient:
         self._cur: dict[str, float] = {}  # per-turn latency marks
         self._first_audio: set[str] = set()  # response ids already marked
         self._drop_until = 0.0  # loop time before which the next response is dropped
+        # Who asked for the current (or next) response: see insert_user_transcript.
+        # `response_origin` survives response.done until the NEXT response is
+        # created, because the lease exchange on the played path fires when the
+        # speaker falls silent, which is after the last response.done.
+        self._pending_origin = ORIGIN_USER
+        self._origin = ORIGIN_USER
         self._epoch = 0  # bumped on every user speech start (barge-in)
         self._tool_batches: dict[str, _ToolBatch] = {}
 
     def _instructions(self) -> str:
         # a callable is re-read per session (e.g. to include new memories)
         return self.instructions() if callable(self.instructions) else self.instructions
+
+    @property
+    def response_origin(self) -> str:
+        """Who asked for the reply that just finished (ORIGIN_GREETER | ORIGIN_USER).
+        Read from on_response_done and from the speaker fall-silent edge."""
+        return self._origin
 
     # ---- ingestion (thread-safe: called from the mic callback) ----
 
@@ -131,14 +155,20 @@ class RealtimeClient:
                 pass
             self._in.put_nowait(pcm)
 
-    def insert_user_transcript(self, text: str) -> None:
+    def insert_user_transcript(self, text: str, *, origin: str = ORIGIN_USER) -> None:
         """Inject an already-transcribed (accepted ambient) utterance without
-        re-running STT, then request a response. Must be called on the loop."""
-        asyncio.get_event_loop().create_task(self._inject(text))
+        re-running STT, then request a response. Must be called on the loop.
 
-    async def _inject(self, text: str) -> None:
+        `origin` labels WHO asked for the reply this creates: it rides through to
+        the `response_origin` the shell reads when the reply finishes, so a reply
+        the greeter prompted can never renew the attention lease (ADR 0003 - a
+        face is not a participant). Real dialogue keeps the default."""
+        asyncio.get_event_loop().create_task(self._inject(text, origin))
+
+    async def _inject(self, text: str, origin: str) -> None:
         if self._ws is None:
             return
+        self._pending_origin = origin  # latched by the next response.created
         await self._ws.send(
             json.dumps(
                 {
@@ -166,6 +196,8 @@ class RealtimeClient:
 
         def _do() -> None:
             self._extra_instructions = extra_instructions
+            self._pending_origin = ORIGIN_USER  # a fresh session starts with no owed reply
+            self._origin = ORIGIN_USER
             if self._reset is not None:
                 self._reset.set()
 
@@ -312,6 +344,7 @@ class RealtimeClient:
 
         elif t == "response.created":
             rid = (ev.get("response") or {}).get("id", "")
+            self._origin, self._pending_origin = self._pending_origin, ORIGIN_USER
             self._resp_gen[rid] = self.speaker.begin_generation()
             self._first_audio.clear()  # one response in flight at a time
             self.journal.write(J.RESPONSE_CREATED, response_id=rid)
@@ -370,7 +403,7 @@ class RealtimeClient:
         rid = ev.get("response_id") or ""
         batch = self._tool_batches.get(rid)
         if batch is None:
-            batch = self._tool_batches[rid] = _ToolBatch(self._epoch)
+            batch = self._tool_batches[rid] = _ToolBatch(self._epoch, self._origin)
             asyncio.get_event_loop().create_task(self._finish_batch(rid, batch), name=f"tools-{rid}")
         batch.tasks.append(asyncio.get_event_loop().create_task(self._run_tool(ev), name=f"tool-{ev.get('name')}"))
         if not rid:
@@ -417,6 +450,10 @@ class RealtimeClient:
             # the user spoke while the tool ran: answer them, not the old question
             self.journal.write("tool.followup_skipped", reason="user spoke")
             return
+        # Re-latch the origin this reply belongs to: the next response.created swaps
+        # _pending_origin into _origin, and a default of ORIGIN_USER here would hand
+        # a greeter-prompted follow-up to the lease as if a person had asked.
+        self._pending_origin = batch.origin
         await self._ws.send(json.dumps({"type": "response.create"}))
 
 

@@ -64,8 +64,12 @@ variable already used by `shell/config.py` as its override. `REACHY_TOOLS_INCLUD
 An explicit `null`/`""` in a file means "no opinion", not "clear the value", so
 `audio.mic: null` never fights `REACHY_MIC` — and an *empty* `REACHY_*` in the process
 environment means the same thing (`REACHY_INSTRUCTIONS=` in `.env` does not silence the
-file). Of the `behaviour:` block only `learn_facts` is implemented (default true,
-`REACHY_LEARN_FACTS`); `greeter*` is Phase B and is ignored by the loader.
+file). Of the `behaviour:` block `learn_facts` (default true, `REACHY_LEARN_FACTS`) and the
+greeter are implemented: `greeter`, `greeter_dwell_s`, `greeter_cooldown_s`,
+`greeter_group_cooldown_s`, `greeter_max_per_hour`, `greeter_debug`, `greeter_idle_fps`,
+`greeter_engaged_fps`, `greeter_face_centering` — each with its `REACHY_GREETER_*` process
+override (`shell/env.py` LAYERS). `greeter_quiet_minutes` above is design sketch and is
+ignored by the loader; the shipped global limiter is `greeter_cooldown_s`.
 LLM/s2s endpoints deliberately stay
 in `.env`: `reachy-s2s` reads the same values and one fact must have one source.
 
@@ -146,7 +150,9 @@ in `.env`: `reachy-s2s` reads the same values and one fact must have one source.
       outrank the env file and comments `REACHY_PROFILE` out; `scripts/check_env_safety.sh` is the gate that
       runs on the morning of the demo.
       Deferred on purpose: per-env faces files (B1), `events.<env>.db` instead of one shared journal, the
-      greeter/`tool_confidence` booth calibration, `docs/pins.yaml` for InsightFace, and the migration
+      greeter/`tool_confidence` booth calibration, the bench measurement that completes the
+      `docs/pins.yaml` InsightFace entry (detection-only is measured; the per-sample frame read is
+      UNMEASURED PENDING BENCH), and the migration
       crash-safety (tmp + `os.replace`) called out in the review.
 - [ ] A8 CI drift: `uvx ruff format --check .` currently flags
       `experiments/2026-10-03-voice-design/design.py` and `experiments/2026-10-04-llm-bakeoff/toolbench.py`
@@ -174,9 +180,13 @@ in `.env`: `reachy-s2s` reads the same values and one fact must have one source.
       return "not available" today because `make_handlers` gets no `face_tracker`);
       per-env faces file; measured InsightFace CPU cost in `pins.yaml`
 - [ ] B2 `greet` tool (name-or-generic hello + look at the person + nod) — the model's hands
-- [ ] B3 **Proactive greeter**: low-rate presence poll while idle → un-greeted face in frame →
-      `client.insert_user_transcript()` to prompt a spoken hello (the hook already exists).
-      Cooldowns per person + globally, never while he is mid-conversation, off in `home` at night
+- [x] B3 **Proactive greeter**: shipped 2026-10-12 — detection-only presence poll (2 FPS idle /
+      3 FPS engaged, zero while asleep; `shell/camera.py` + `shell/vision/greeter.py`) → a face
+      dwelling ~2 s looking at him → `client.insert_user_transcript(origin=greeter)` prompts the
+      persona's one-sentence hello, and the greeter origin means that reply can never renew the
+      attention lease (`exchange_for_reply`, 0003). Global spacing 120 s, group notice 300 s,
+      cap 6/h, per-presence once; on in `hackday`, off in `home`. Not included: head centring —
+      gated behind `greeter_face_centering`, default off in both rooms until benched.
 - [ ] B4 `introduce_self` + `about_the_project` Q&A grounded in a short `docs/faq-hackday.md`
       (what he is, what runs locally, what the stack is) — the thing people actually ask a demo
 - [ ] B5 `icebreaker` / conversation-starter deck for silences in the booth

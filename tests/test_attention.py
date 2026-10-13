@@ -257,3 +257,34 @@ def test_speech_start_renewal_bounded_since_wake_or_reply(journal):
     clock[0] += 10.0
     assert lease.renew(None, "speech-start", cap_s=prof.lease_unanswered_s)
     assert lease.remaining_s <= prof.lease_unanswered_s - 10.0 + 1e-9
+
+
+def test_greeter_reply_exchanges_nothing_a_real_reply_still_does(journal):
+    """ADR 0003, the wiring guard (shell/__main__.exchange_for_reply): the reply
+    to a greeter directive must not revive an expired-but-unreaped holder (the
+    reaper is skipped while the greeter's hello plays), while every real reply
+    keeps the existing exchange behaviour exactly."""
+    from shell.__main__ import exchange_for_reply
+    from shell.attention.lease import AttentionLease
+    from shell.attention.profiles import PROFILES
+    from shell.realtime.client import ORIGIN_GREETER, ORIGIN_USER
+
+    clock = [0.0]
+    prof = PROFILES["quiet"]
+    lease = AttentionLease(prof, journal, clock=lambda: clock[0])
+    lease.acquire("p", "kws:Reachy")
+    clock[0] += 40.0  # the window lapsed while his own audio was playing
+    assert not lease.active()
+    before = (lease.holder, lease.remaining_s, lease.last_interaction)
+    rows = len(journal.events) if hasattr(journal, "events") else None
+
+    assert exchange_for_reply(lease, ORIGIN_GREETER, "reply-played") is False
+    assert (lease.holder, lease.remaining_s, lease.last_interaction) == before
+    assert not lease.active()  # the face that walked in handed the stale holder nothing
+    assert exchange_for_reply(lease, ORIGIN_GREETER) is False  # and the done edge neither
+
+    assert exchange_for_reply(lease, ORIGIN_USER, "reply-played") is True  # unchanged
+    assert lease.active() and lease.holder == "p"
+    assert exchange_for_reply(lease, ORIGIN_USER) is True
+    assert lease.remaining_s == pytest.approx(prof.lease_renew_s)
+    assert rows is None or len(journal.events) > rows  # the real exchange journalled

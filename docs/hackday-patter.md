@@ -18,14 +18,17 @@ weekend: say "tonight", never "this afternoon". None of that is spoken, rule 2.
 
 Delivery notes, never spoken:
 
-- Nothing greets anyone. The proactive greeter is item B3: no presence poll, no cooldown, no
-  per-person greeting state in the running shell, and nothing reads the `behaviour` block but
-  `learn_facts` (shell/env.py:150-151, docs/environments.md B3). `greeter_cooldown_s` and
-  `greeter_quiet_minutes` are the schema sketch in the design doc, not code. These lines are for a
-  person to open with, or for a build that lands B3. Do not stand in the booth waiting for him to
-  start.
-- No eye contact either: there is no camera-to-attention path in the shell, so no line here may
-  claim he noticed someone looking at him.
+- He does greet people first, in this room. Stand in front of him, roughly centred, and hold his
+  gaze about two seconds: the hackday persona says a one-sentence hello, usually followed by the
+  wake-word teaching. It is rate-limited so the booth is never nagged — two-minute spacing, five
+  minutes between "a few more people here" notices, at most six greetings an hour
+  (envs/hackday.yaml `behaviour`, shell/vision/greeter.py). Do not promise a greeting per arrival;
+  for the demo effect, be there, look at him, dwell.
+- He will not turn to look you in the eye. The camera triggers the greeting; it does not move his
+  head: centring sits behind `REACHY_GREETER_FACE_CENTERING`, default off in both rooms, never
+  bench-verified, face-vs-DOA precedence unwired. And he is not looking you *up*: detection and
+  gaze only, nobody remembered between visits, a name is only one he was just told. No line may
+  claim he recognised, or turned to, anyone.
 - He cannot learn or recognise anyone here. `identify_face`, `learn_face` and `forget_face` are
   excluded from the event tool list (envs/hackday.yaml, enforced by scripts/check_env_safety.sh)
   because faces are not namespaced until B1 (`app/face_tracker.py:16` is the home gallery). A name is

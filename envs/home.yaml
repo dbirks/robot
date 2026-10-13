@@ -32,6 +32,9 @@ behaviour:
   learn_facts: true           # auto fact extraction (shell/conversation.py); this is
                               # today's behaviour, and the code default. Off in
                               # envs/hackday.yaml: one shared booth store.
+  greeter: false             # B3 stays off at home: the desk is not a booth, and an
+                              # empty living room must not be spoken at. The code
+                              # default is off too, so this line only says it out loud.
   auto_sleep_s: 0             # never lie down by himself: the desk is always ready
                               # (issue #36). 0 in every shipped environment, home
                               # and hackday alike; set REACHY_AUTO_SLEEP_S>0 to
@@ -51,6 +54,5 @@ conversation:
   reset_after_s: 300          # quiet room: fresh session, summary carried over
   max_turn_s: 15              # one user turn cannot absorb more room noise than this
 
-# The rest of `behaviour:` (proactive greeter) and a `persona:` key for voice
-# switching are Phase B; unknown keys are ignored by shell/env.py, so files can
-# lead code here.
+# A `persona:` key for voice switching and the rest of Phase B are still open
+# work; unknown keys are ignored by shell/env.py, so files can lead code here.

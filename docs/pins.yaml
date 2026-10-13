@@ -54,6 +54,44 @@ models:
     runtime: s2s --tts qwen3 ggml backend + qwentts.cpp 6fae929 built for sm_61 (scripts/build_qwentts.sh)
     never: PyPI qwentts wheel (sm_75+ only), BF16 quant (no BF16 on Pascal), torch fp32 (OOM beside llama)
     measured: TTFA 0.25s streaming, RTF 0.31 offline, ~1.2 GB; total GPU 6.7 GB with llama + Parakeet(CPU)
+  face_detection:
+    id: insightface/buffalo_sc        # det_500m.onnx = SCRFD-500MF, 2.5 MB (cached in ~/.insightface)
+    revision: insightface 0.7.3, onnxruntime 1.24.4, cv2 4.13.0 (all in uv.lock; no new deps)
+    # Detection only: FaceAnalysis(allowed_modules=["detection"]) makes the ArcFace
+    # recognizer (w600k_mbf.onnx, 13.6 MB) a no-load ("model ignore: ... recognition"),
+    # so no embedding of anybody is ever computed, held or written (B1 is not this).
+    runtime: onnxruntime CPUExecutionProvider, intra_op_num_threads=2 / inter_op=1 set
+      per session (shell/vision/tracker.py). NEVER OMP_NUM_THREADS -- ADR 0006 plus
+      app/face_tracker.py:24-31: process-global, import-order dependent, lands on torch.
+    measured: i7-6700K beside the live stack, 2 threads, no GPU. Re-run 2026-10-12
+      (same harness as shell/vision/tracker.py, 64 synthetic frames @1280x720 -> det_size
+      320, detection-only): p50 2.87 ms, p95 2.97 ms. Scout run (plans/face-lockon.md,
+      real snapshot): detect-only 3.7 ms @320 (1.2 ms @160, and 160 px lost the desk-range
+      face -> 320 is the floor); full pipeline with recognition 10.5-11.9 ms for one face,
+      ~7-8 ms per extra face (6 faces 46.5 ms). Model load once: ~2.1 s (lazy, first frame).
+      Non-inference parts of the poll, same box: /sys device scan p50 0.07 ms (paid on
+      open only, not per sample since the 2026-10-12 rework); GET /api/media/status p50
+      1.5 ms p95 5.8 ms (cached behind a 10 s TTL, so <= 0.6 ms/s of poll time; the robot
+      was unplugged so the payload is untrusted, the latency is real).
+    duty_cycle: the shipped poll costs ONE cv2 read + ONE inference per sample. Measured
+      inference-only: 2 FPS idle = ~5.7 ms/s and 3 FPS engaged = ~8.9 ms/s of thread time,
+      ~0.6-0.9% of one core (ADR 0006). UNMEASURED PENDING BENCH: the per-sample
+      cap.read() cost at 1280x720 and the UVC warmup amortisation, which need the robot's
+      camera attached; the 0.6-0.9% figure is inference alone and must be re-measured as
+      the full sample on the bench. The 2.4%-of-a-core figure in the plan is the
+      *recognition* pipeline at 2 FPS and is what re-enabling B1 would cost.
+    cadence: 2 FPS on an empty room, 3 FPS while a qualified face is in frame, ZERO while
+      asleep (shell/camera.py CameraStream + shell/vision/greeter.py); one owner, handle
+      held open and released on stop or failure (reopen behind 2-30 s backoff), never while
+      the daemon holds the device (status re-checked per 10 s). Frame grab stays 1280x720;
+      only the detector sees 320 px.
+  face_detection_alt:
+    id: opencv_zoo/face_detection_yunet_2023mar.onnx (230 KB, cv2.FaceDetectorYN, CPU)
+    measured: 3.0-3.1 ms @320 detection-only, flat vs face count
+    rejected: 15-column output = no identity and no landmarks beyond the same 5 points;
+      cheaper than buffalo_sc but it cannot do the per-env face gallery (B1) without a
+      second resident model, which the brief refuses. Kept as the existence-only fallback
+      if the booth ever needs a cheaper idle poll.
   kws:
     id: sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01
     sha256: f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a   # tar.bz2

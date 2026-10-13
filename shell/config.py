@@ -165,6 +165,28 @@ class ShellConfig:
     # Whatever it is, the wake word always wakes him (issue #36).
     auto_sleep_s: float = field(default_factory=lambda: float(_env("REACHY_AUTO_SLEEP_S", "0")))
 
+    # Proactive greeter (docs/environments.md `behaviour.greeter`, plan B0+B3). Off
+    # by default and off in home: an empty living room must not be spoken at. The
+    # gate itself is shell/vision/greeter.py; these are the knobs only.
+    greeter_enabled: bool = field(default_factory=lambda: _bool_env("REACHY_GREETER", "0"))
+    # Log every decision (dwell, angles, bbox share, verdict) without changing any
+    # behaviour — the bench-tuning path for the kps-derived angle gates.
+    greeter_debug: bool = field(default_factory=lambda: _bool_env("REACHY_GREETER_DEBUG", "0"))
+    # Hard ceiling on greetings per hour, on top of the per-presence and global
+    # spacing: the room-rate limit ADR 0003 asks for when the room is full of people.
+    greeter_max_per_hour: int = field(default_factory=lambda: int(_env("REACHY_GREETER_MAX_PER_HOUR", "6")))
+    greeter_dwell_s: float = field(default_factory=lambda: float(_env("REACHY_GREETER_DWELL_S", "2.0")))
+    greeter_min_spacing_s: float = field(default_factory=lambda: float(_env("REACHY_GREETER_MIN_SPACING_S", "120")))
+    greeter_group_min_spacing_s: float = field(
+        default_factory=lambda: float(_env("REACHY_GREETER_GROUP_MIN_SPACING_S", "300"))
+    )
+    # Head-centring targets for a qualified face, through MotionOwner. Off: the
+    # interaction with the DOA wake turn and the speech sway is the one part of B0
+    # that cannot be measured without the robot, so it ships as a hook (see __main__).
+    greeter_face_centering: bool = field(default_factory=lambda: _bool_env("REACHY_GREETER_FACE_CENTERING", "0"))
+    greeter_idle_fps: float = field(default_factory=lambda: float(_env("REACHY_GREETER_IDLE_FPS", "2")))
+    greeter_engaged_fps: float = field(default_factory=lambda: float(_env("REACHY_GREETER_ENGAGED_FPS", "3")))
+
     # Direct llama.cpp endpoint for side tasks (conversation compaction).
     llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "http://127.0.0.1:8080/v1"))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "local"))

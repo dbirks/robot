@@ -73,6 +73,11 @@ MOTION_DOA_AIM = "motion.doa_aim"  # in-conversation re-aim toward the talker
 SLEEP_ENTER = "sleep.enter"  # one state moved: head down AND microphone closed
 SLEEP_EXIT = "sleep.exit"  # reason names what woke him (kws:<word>, tool, ...)
 
+CAMERA_DISABLED = "camera.disabled"  # the one frame owner gave up (no device / daemon holds it)
+FACE_PRESENT = "face.present"  # a qualified, looked-at face exists; no identity, nothing stored
+GREETER_FIRED = "greeter.fired"  # kind=solo|group, dwell, bearing, bbox share
+GREETER_SUPPRESSED = "greeter.suppressed"  # reason= why a dwelled face got no hello
+
 MODEL_LOADED = "model.loaded"
 SYSTEM_RESOURCE_SAMPLE = "system.resource_sample"
 

@@ -32,7 +32,7 @@ from .attention import (
 from .audio import MicOwner, SpeakerOwner
 from .audio.xmos_tuning import XmosTuner
 from .audio.xmos_watchdog import XmosWatchdog, reboot_xmos
-from .camera import CameraGrabber
+from .camera import CameraGrabber, CameraStream
 from .config import REACHY_ENV_VAR, ShellConfig
 from .conversation import ConversationMemory, Turn, llm_extract_facts, llm_summarize
 from .env import EnvError, config_to_dict, load_config
@@ -42,10 +42,12 @@ from .memories import MemoryStore, migrate_legacy_memories
 from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
 from .reactions import WakeReaction
 from .realtime import RealtimeClient
+from .realtime.client import ORIGIN_GREETER
 from .robot import RobotLink
 from .robot_tools import build_handlers, load_sdk_sound
 from .sleep import SleepState, feeds_keyword_spotter, feeds_service, should_auto_sleep
 from .tools import ToolRouter, apply_tool_policy
+from .vision import FaceTracker, Greeter, greet_hook
 
 log = logging.getLogger("shell")
 
@@ -57,6 +59,22 @@ WAKE_ACK_WAIT_S = 1.5  # quiet after a bare wake word before the "yes?"
 
 FactExtractor = Callable[[list[Turn]], Awaitable[list[str]]]
 FactSaver = Callable[[str], None]
+
+
+def exchange_for_reply(lease: AttentionLease, origin: str, evidence: str = "reply-done") -> bool:
+    """Did a REAL exchange just end? Only then does the holder get a fresh window.
+
+    A reply that answered a greeter directive is the shell talking to the room:
+    exchanging here would revive an expired holder (AttentionLease.exchange
+    re-arms a lease that lapsed during the reply, and the reaper is skipped
+    while the speaker plays), i.e. a walking face would hand some stale
+    participant a fresh mic-open window. That is exactly the ambient-speech-
+    into-LLM class ADR 0003 exists to stop, so greeter-originated replies
+    exchange nothing; every other reply keeps the existing behaviour exactly.
+    """
+    if origin == ORIGIN_GREETER:
+        return False
+    return lease.exchange(evidence)
 
 
 def fact_mining(cfg: ShellConfig, memories: MemoryStore) -> tuple[FactExtractor | None, FactSaver | None]:
@@ -95,6 +113,16 @@ async def amain(cfg: ShellConfig) -> None:
     robot = RobotLink(journal)
     await asyncio.to_thread(robot.connect)  # robot absent -> tools say so, shell runs
     camera = CameraGrabber(robot.daemon_url)
+    # One continuous frame owner when the greeter is on (ADR 0002): the poller and
+    # the vision tools both read it, so exactly one thing ever opens the device.
+    # It degrades to `available = False` with no camera and nobody else notices.
+    camera_stream = CameraStream(
+        camera,
+        idle_fps=cfg.greeter_idle_fps,
+        engaged_fps=cfg.greeter_engaged_fps,
+        journal=journal,
+        asleep=lambda: sleep.sleeping,  # napping: the poll is silent, not merely cheap
+    )
     sway = SpeechSway(cfg.sample_rate)
     speaker.tap = sway.feed  # head sways with the samples actually played
     motion = MotionOwner(
@@ -131,7 +159,7 @@ async def amain(cfg: ShellConfig) -> None:
         return 0.0 if sleep.sleeping else manager.tool_confidence(name)
 
     tools, handlers = build_handlers(
-        robot, camera, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound, memories=memories
+        robot, camera_stream, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound, memories=memories
     )
     tools, handlers = apply_tool_policy(tools, handlers, include=cfg.tools_include, exclude=cfg.tools_exclude)
     router = ToolRouter(
@@ -233,7 +261,9 @@ async def amain(cfg: ShellConfig) -> None:
         awaiting_reply[0] = 0.0
         motion.set_thinking(False)
         if status == "completed":
-            lease.exchange()  # Reachy answered: the user gets a fresh window
+            # Reachy answered: the user gets a fresh window - unless the reply
+            # only answered a greeter directive (ADR 0003, exchange_for_reply).
+            exchange_for_reply(lease, client.response_origin)
 
     client = RealtimeClient(
         cfg.s2s_url,
@@ -249,6 +279,38 @@ async def amain(cfg: ShellConfig) -> None:
         on_speech_stopped=on_speech_stopped,
         on_first_audio=lambda: motion.set_thinking(False),
     )
+
+    # B3: the proactive greeter. Only built when the environment turns it on, and
+    # only streams if the camera is there to stream; InsightFace is loaded lazily by
+    # the tracker on the first frame, so an absent camera never costs a model load.
+    greeter = None
+    if cfg.greeter_enabled:
+        greeter = Greeter(
+            source=camera_stream,
+            tracker=FaceTracker(),
+            journal=journal,
+            on_greet=greet_hook(client, loop, journal=journal),
+            motion=motion,
+            face_centering=cfg.greeter_face_centering,
+            # Fail-closed suppressors (ADR 0003): he is never proactive while he is
+            # speaking, asleep, holding a conversation, or owed a reply.
+            is_playing=lambda: speaker.playing or sleep.sleeping,
+            asleep=lambda: sleep.sleeping,
+            lease_active=lease.active,
+            awaiting_reply=lambda: time.monotonic() - awaiting_reply[0] < REPLY_WAIT_S,
+            dwell_s=cfg.greeter_dwell_s,
+            min_spacing_s=cfg.greeter_min_spacing_s,
+            group_min_spacing_s=cfg.greeter_group_min_spacing_s,
+            max_per_hour=cfg.greeter_max_per_hour,
+            idle_fps=cfg.greeter_idle_fps,
+            engaged_fps=cfg.greeter_engaged_fps,
+            debug=cfg.greeter_debug,
+        )
+        camera_stream.start()
+        if not camera_stream.available:
+            log.info("greeter waiting on a camera (daemon holds it, or there is none)")
+        if not cfg.greeter_face_centering:
+            log.info("greeter head-centring off (REACHY_GREETER_FACE_CENTERING=1 to try it)")
 
     kws = None
     try:
@@ -280,7 +342,8 @@ async def amain(cfg: ShellConfig) -> None:
         # reply, zero barge-ins in 356 speech starts).
         speaking = speaker.playing
         if was_speaking[0] and not speaking:
-            lease.exchange("reply-played")  # answer window starts when he stops
+            # answer window starts when he stops - never for a greeter reply
+            exchange_for_reply(lease, client.response_origin, "reply-played")
         was_speaking[0] = speaking
         asleep = sleep.sleeping  # one read per frame: head and mic cannot disagree
         now = time.monotonic()
@@ -327,6 +390,13 @@ async def amain(cfg: ShellConfig) -> None:
     speaker.open()
     if motion.start():  # no-op without a robot
         doa.start()
+    if greeter is not None and greeter.start():
+        log.info(
+            "greeter on: dwell=%.1fs spacing=%.0fs cap=%d/h",
+            cfg.greeter_dwell_s,
+            cfg.greeter_min_spacing_s,
+            cfg.greeter_max_per_hour,
+        )
     log.info("shell up: env=%s profile=%s tools=%d lease=%s", cfg.env, profile.name, len(tools), lease.holder)
 
     rt = asyncio.create_task(client.run(), name="realtime")
@@ -377,6 +447,9 @@ async def amain(cfg: ShellConfig) -> None:
         mic.close()
         speaker.close()
         await asyncio.to_thread(doa.stop)
+        if greeter is not None:
+            await asyncio.to_thread(greeter.stop)
+        await asyncio.to_thread(camera_stream.stop)
         await asyncio.to_thread(motion.stop)
         await asyncio.to_thread(robot.disconnect)
         journal.closed()

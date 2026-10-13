@@ -120,6 +120,10 @@ def _number(value: Any) -> float:
     return float(value)
 
 
+def _int(value: Any) -> int:
+    return int(float(value))
+
+
 def _flag(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -147,8 +151,9 @@ class _Layer:
 
 
 # The v1 schema (docs/environments.md) plus the A2 tuning values. Keys outside
-# this table — `name:`, `behaviour.greeter`, anything a later phase adds — are
-# ignored on purpose, which is what makes an older shell forward-compatible.
+# this table — `name:`, `behaviour.nobody_has_implemented_this`, anything a later
+# phase adds — are ignored on purpose, which is what makes an older shell
+# forward-compatible.
 LAYERS: tuple[_Layer, ...] = (
     _Layer("attention_profile", "attention_profile", "REACHY_PROFILE"),
     _Layer("persona.instructions", "instructions", "REACHY_INSTRUCTIONS", _instructions),
@@ -157,6 +162,20 @@ LAYERS: tuple[_Layer, ...] = (
     _Layer("tools.exclude", "tools_exclude", "REACHY_TOOLS_EXCLUDE", _names),
     _Layer("memory.namespace", "memory_namespace", "REACHY_MEMORY_NAMESPACE"),
     _Layer("behaviour.learn_facts", "learn_facts", "REACHY_LEARN_FACTS", _flag),
+    _Layer("behaviour.greeter", "greeter_enabled", "REACHY_GREETER", _flag),
+    _Layer("behaviour.greeter_max_per_hour", "greeter_max_per_hour", "REACHY_GREETER_MAX_PER_HOUR", _int),
+    _Layer("behaviour.greeter_cooldown_s", "greeter_min_spacing_s", "REACHY_GREETER_MIN_SPACING_S", _number),
+    _Layer(
+        "behaviour.greeter_group_cooldown_s",
+        "greeter_group_min_spacing_s",
+        "REACHY_GREETER_GROUP_MIN_SPACING_S",
+        _number,
+    ),
+    _Layer("behaviour.greeter_dwell_s", "greeter_dwell_s", "REACHY_GREETER_DWELL_S", _number),
+    _Layer("behaviour.greeter_debug", "greeter_debug", "REACHY_GREETER_DEBUG", _flag),
+    _Layer("behaviour.greeter_idle_fps", "greeter_idle_fps", "REACHY_GREETER_IDLE_FPS", _number),
+    _Layer("behaviour.greeter_engaged_fps", "greeter_engaged_fps", "REACHY_GREETER_ENGAGED_FPS", _number),
+    _Layer("behaviour.greeter_face_centering", "greeter_face_centering", "REACHY_GREETER_FACE_CENTERING", _flag),
     _Layer("behaviour.auto_sleep_s", "auto_sleep_s", "REACHY_AUTO_SLEEP_S", _number),
     _Layer("audio.mic", "mic_device", "REACHY_MIC"),
     _Layer("audio.speaker", "speaker_device", "REACHY_SPEAKER"),

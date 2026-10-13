@@ -213,8 +213,6 @@ def test_unknown_keys_are_ignored(tmp_path, clean_env):
 name: lab
 attention_profile: event
 behaviour:
-  greeter: true
-  greeter_cooldown_s: 120
   nobody_has_implemented_this: yes
 brand_new_section:
   - one
@@ -223,7 +221,46 @@ brand_new_section:
     )
     cfg = load_config("lab", envs_dir=envs)
     assert cfg.attention_profile == "event"
-    assert "greeter" not in vars(cfg) and "behaviour" not in vars(cfg)
+    assert "nobody_has_implemented_this" not in vars(cfg) and "behaviour" not in vars(cfg)
+
+
+# B3 — the proactive greeter is a per-room behaviour flag (docs/environments.md)
+
+
+def test_greeter_is_on_in_the_booth_and_off_at_home(clean_env):
+    """A desk in a living room must not start talking to the room; a booth must.
+
+    Both are the code default (off), so the hackday line is what turns it on and a
+    dropped key would silently take the demo feature away, hence asserting True
+    rather than "not False".
+    """
+    assert load_config("hackday", envs_dir=ENVS_DIR).greeter_enabled is True
+    assert load_config("home", envs_dir=ENVS_DIR).greeter_enabled is False
+    day = load_config("hackday", envs_dir=ENVS_DIR)
+    assert day.greeter_dwell_s == 2.0  # David's call: about two seconds of looking
+    assert day.greeter_min_spacing_s == 120.0 and day.greeter_group_min_spacing_s == 300.0
+    assert day.greeter_max_per_hour == 6
+    assert day.greeter_face_centering is False  # the deferred head hook (bench pass)
+
+
+def test_greeter_flags_still_outrank_the_env_file(clean_env, monkeypatch):
+    """The operator's on-site keystroke is the process environment, both ways."""
+    monkeypatch.setenv("REACHY_GREETER", "0")  # kill the booth feature for a minute
+    monkeypatch.setenv("REACHY_GREETER_DEBUG", "1")  # log every decision, change nothing
+    monkeypatch.setenv("REACHY_GREETER_MAX_PER_HOUR", "2")
+    cfg = load_config("hackday", envs_dir=ENVS_DIR)
+    assert cfg.greeter_enabled is False
+    assert cfg.greeter_debug is True
+    assert cfg.greeter_max_per_hour == 2
+
+
+def test_an_empty_greeter_variable_does_not_outrank_the_env_file(clean_env, monkeypatch):
+    """`REACHY_GREETER=` in .env is a commented template line, not a switch."""
+    monkeypatch.setenv("REACHY_GREETER", "")
+    monkeypatch.setenv("REACHY_GREETER_MAX_PER_HOUR", "  ")
+    cfg = load_config("hackday", envs_dir=ENVS_DIR)
+    assert cfg.greeter_enabled is True
+    assert cfg.greeter_max_per_hour == 6
 
 
 def test_missing_env_file_is_a_hard_error(tmp_path, clean_env):
@@ -710,3 +747,52 @@ def test_booting_with_no_REACHY_ENV_says_so_at_WARN(clean_env, caplog, monkeypat
         shell_main.main([])
 
     assert "was never set" not in caplog.text
+
+
+# --------------------------------------------------------------------------
+# P2-D (2026-10-12 review): every greeter knob is room-configurable
+# --------------------------------------------------------------------------
+
+
+def test_greeter_cadence_and_centering_come_from_the_env_file(tmp_path, clean_env):
+    envs = write_env(
+        tmp_path,
+        "lab",
+        """
+attention_profile: event
+behaviour:
+  greeter: true
+  greeter_idle_fps: 1.5
+  greeter_engaged_fps: 2.5
+  greeter_face_centering: true
+""",
+    )
+    cfg = load_config("lab", envs_dir=envs)
+    assert cfg.greeter_idle_fps == 1.5 and cfg.greeter_engaged_fps == 2.5
+    assert cfg.greeter_face_centering is True
+
+
+def test_greeter_cadence_variables_outrank_the_file_and_empty_means_unset(tmp_path, clean_env, monkeypatch):
+    envs = write_env(
+        tmp_path,
+        "lab",
+        """
+attention_profile: event
+behaviour:
+  greeter_idle_fps: 1.5
+  greeter_face_centering: true
+""",
+    )
+    monkeypatch.setenv("REACHY_GREETER_ENGAGED_FPS", "4")
+    assert load_config("lab", envs_dir=envs).greeter_engaged_fps == 4.0
+    monkeypatch.setenv("REACHY_GREETER_IDLE_FPS", "")  # present-but-empty: no opinion
+    monkeypatch.setenv("REACHY_GREETER_FACE_CENTERING", "")
+    cfg = load_config("lab", envs_dir=envs)
+    assert cfg.greeter_idle_fps == 1.5 and cfg.greeter_face_centering is True
+
+
+def test_both_shipped_rooms_keep_the_greeter_defaults(clean_env):
+    for name in ("home", "hackday"):
+        cfg = load_config(name, envs_dir=ENVS_DIR)
+        assert cfg.greeter_idle_fps == 2.0 and cfg.greeter_engaged_fps == 3.0
+        assert cfg.greeter_face_centering is False  # gated off until benched (docs/pins.yaml)

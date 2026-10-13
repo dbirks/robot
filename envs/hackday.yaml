@@ -65,6 +65,21 @@ behaviour:
   # The mechanism stays wired - raise this or set REACHY_AUTO_SLEEP_S=300 on the
   # box if an overnight nap is ever wanted; 0 means he never sleeps by himself.
   auto_sleep_s: 0
+  # B3: he says hello to whoever looks at him for ~2 s, no wake word. Detection
+  # only: no face embeddings, no gallery, nothing that identifies a person is
+  # written by the greeter, and a track dies when they leave the frame (shell/vision/).
+  # What IS written is the decision trail - bearing, dwell, share of frame, verdict -
+  # as `face.present` / `greeter.fired` journal rows under the shared 30-day
+  # retention (docs/adr/0007), so "he remembered me" is not true but "the log says a
+  # face was there" is. A face never grants the attention lease (ADR 0003): it buys a
+  # hello, not a window into the room's speech.
+  # Suppressed while he is speaking, while a conversation owns him, and while the
+  # LLM owes a reply; the one in-conversation exception is the group notice below.
+  greeter: true
+  greeter_dwell_s: 2.0        # David's call: about two seconds of looking
+  greeter_cooldown_s: 120     # global minimum spacing: never nag the room
+  greeter_group_cooldown_s: 300  # "hey, a few more people here" is rarer still
+  greeter_max_per_hour: 6     # hard ceiling on top of both spacing windows
 
 audio:
   mic: null  # null = "no opinion": whatever this box defaults to, or REACHY_MIC.
@@ -80,6 +95,7 @@ conversation:
   reset_after_s: 300
   max_turn_s: 15  # a booth is louder than the home desk; measure before the event
 
-# The rest of `behaviour:` (greeter on, cooldowns) and the rest of Phase B are
-# deliberately absent: shell/env.py ignores unknown keys, so this file lists only
-# what the shell actually does today.
+# What is still deliberately absent: the head-centring target for a greeted face
+# (REACHY_GREETER_FACE_CENTERING=1) ships off, because the way it would share
+# MotionOwner with the DOA wake turn and the speech sway cannot be judged without
+# the robot standing here. Everything else in Phase B is still open work.

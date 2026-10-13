@@ -69,9 +69,13 @@ On a wake keyword the head turns to the direction of arrival and both fixed beam
 mics on one axis, so front and back are ambiguous. (0005, shell/__main__.py:277-283)
 
 **Does he recognise faces?**
-Not here. The three face tools are excluded from this environment (envs/hackday.yaml:37, enforced by
-scripts/check_env_safety.sh) because faces are not namespaced: `app/face_tracker.py:16` is one shared
-home file. Item B1 rewires that; the InsightFace CPU cost is unmeasured. Say "being rewired", never
+Not here. He greets presence, not people: the greeter reads a dwell of about two seconds of
+looking at him and nothing else (shell/vision/greeter.py, envs/hackday.yaml `behaviour`). The
+three face tools are excluded from this environment (envs/hackday.yaml:37, enforced by
+scripts/check_env_safety.sh) because faces are not namespaced: `app/face_tracker.py:16` is one
+shared home file. Item B1 rewires that. The InsightFace cost is measured detection-only — p50
+2.9 ms per frame at 320 px — and the full poll cost is marked UNMEASURED PENDING BENCH
+(docs/pins.yaml `face_detection`), so do not quote a number for it. Say "being rewired", never
 "done". (env rule 1)
 
 **What happens to the recordings afterwards?**
@@ -106,10 +110,13 @@ own venv via scripts/install_s2s.sh, and the cu126 torch pin must not be bumped.
 - No recording offer. Do not say he can save the conversation; audio is not kept. (0007)
 - No attendee face memory, and no face capture either: the three face tools are excluded from this
   environment, and the ones home runs write to the family file. (envs/hackday.yaml, env rule 1)
-- No proactive or eye-contact greeting, today or at this demo. Nothing is greeted on a look, on a
-  timer, or under a rate limit: the greeter is item B3, no presence poll exists, and nothing reads
-  the `behaviour` block but `learn_facts` (shell/env.py:150-151, env B3). There is no
-  camera-to-attention path in the running shell.
+- No eye contact to go with the greeting that does run here: he greets a ~2 s dwell — rate-limited
+  at 2 min spacing, 5 min for group notices, 6 per hour (shell/vision/greeter.py,
+  envs/hackday.yaml `behaviour`) — but he does not turn to look you in the eye: head-centring is
+  gated behind `REACHY_GREETER_FACE_CENTERING`, default off in both rooms, unverifiable without the
+  robot on the bench and the face-vs-DOA precedence unwired. No greeting by identity: detection and
+  gaze only, nothing remembered between visits. And a face is never attention: a reply the greeter
+  prompted cannot renew the mic lease (shell/__main__.py `exchange_for_reply`, 0003).
 - No multi-person or overlapping-speech conversation. Not in this version. (epic)
 - No voice identity as authorization — it is evidence, never a permission check. (0003)
 - No "he saw who came in behind him": linear array, front/back ambiguity. (0003)
