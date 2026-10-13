@@ -3,6 +3,10 @@ Description=Reachy Mini dashboard kiosk (issue #37)
 Documentation=file://%h/dev/robot/deploy/kiosk/README.md
 Wants=network-online.target
 After=network-online.target
+# The page is useless without the panel; see the bounded wait in kiosk.xinitrc, which
+# covers the path that actually runs today (the console-login hook).
+Wants=reachy-dashboard.service
+After=reachy-dashboard.service
 
 [Service]
 Type=simple

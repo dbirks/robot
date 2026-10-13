@@ -10,16 +10,20 @@ device calls stay in the script.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import math
 import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import probe_volume as P  # noqa: E402
+# The idiom the other scripts' tests use (test_bench_aec, test_bench_greeter,
+# test_booth_rehearsal): a path insert plus the targeted suppression, so the import resolves at
+# runtime and ty does not gain a diagnostic for a file that is a script, not a package.
+import probe_volume as P  # noqa: E402  # ty: ignore[unresolved-import]
 
 from shell import volume as V  # noqa: E402
 
