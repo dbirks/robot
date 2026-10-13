@@ -519,3 +519,82 @@ def test_the_pages_ceiling_follows_the_source_not_a_lucky_constant(tmp_path):
     vol.write_text("MAX_GAIN = not_a_number\n")
     assert _volume_ceiling(tmp_path) == 2.0, "a malformed source must fall back, not crash the page"
     assert _volume_ceiling(tmp_path / "nowhere") == 2.0
+
+
+# ---------------------------------------------------------------------------
+# The persona page must print its instructions the way they read (issue #35)
+# ---------------------------------------------------------------------------
+
+PERSONA_PARTIAL = ROOT / "dashboard" / "templates" / "partials" / "persona.html"
+
+
+def test_the_selected_persona_words_render_preformatted():
+    """HTML collapses newlines, so the operator's preview of the room's instructions was
+    one unreadable run-on sentence. The fix is the same utility the resolved prompt on
+    /environment already uses, not a stylesheet and not a <pre> with a second font."""
+    lines = [ln for ln in PERSONA_PARTIAL.read_text().splitlines() if "p.instructions" in ln]
+    assert lines, "the persona partial stopped showing the room's instructions at all"
+    for ln in lines:
+        assert "selected_for_room" in ln, f"instructions render unconditionally: {ln.strip()[:80]}"
+        assert "whitespace-pre-wrap" in ln, f"the newlines are collapsed again: {ln.strip()[:80]}"
+        assert "break-words" in ln, f"a 2500-char instruction line has no line to break: {ln.strip()[:80]}"
+    text = PERSONA_PARTIAL.read_text()
+    for unsafe in ("| safe", "|safe"):
+        assert unsafe not in text, f"{unsafe} lets model-facing prompt text inject markup"
+
+
+def _persona_panel(selected_words: str, other_words: str) -> dict:
+    def row(name: str, selected: bool, words: str) -> dict:
+        return {
+            "name": name,
+            "selected_for_room": selected,
+            "voice_in_force": selected,
+            "engine": "qwen3",
+            "model": "Qwen3-TTS",
+            "speaker": "laxmikant",
+            "talker": "qwen-talker.gguf",
+            "ack_dir": f"sounds/acks/{name}",
+            "instructions": words,
+            "would_restart": ["reachy-s2s", "reachy-shell"],
+            "pins_warnings": [],
+            "voice_warnings": [],
+        }
+
+    return {
+        "available": True,
+        "error": None,
+        "env": "hackday",
+        "persona_selected": "obama",
+        "persona_active": "obama",
+        "persona_source": "envs/hackday.yaml",
+        "inline_shadow": False,
+        "personas": [row("obama", True, selected_words), row("tars", False, other_words)],
+        "restart_seconds": 9,
+        "busy": {"busy": False, "age_s": 0, "stale": False},
+        "persona_env_path": "deploy/generated/persona.env",
+    }
+
+
+def test_the_persona_preview_keeps_newlines_and_escapes_markup():
+    """Rendered for real, because both halves of this are invisible in the source: the
+    utility class that survives into the emitted tag, and the escaping of a prompt that
+    contains markup. autoescape=True mirrors starlette's Jinja2Templates, which server.py
+    builds without overriding it."""
+    pytest.importorskip("jinja2")
+    from jinja2 import Environment, FileSystemLoader
+
+    env = Environment(loader=FileSystemLoader(str(ROOT / "dashboard" / "templates")), autoescape=True)
+    words = "You are Reachy.\n\nRules:\n- never raise\n- <b>bold</b> claim"
+    html = env.get_template("partials/persona.html").render(
+        panel=_persona_panel(words, "TARS words that must stay off the screen."),
+        readonly=False,
+    )
+
+    assert "You are Reachy.\n\nRules:\n- never raise" in html, "the newlines were flattened before the template"
+    start = html.index("You are Reachy.")
+    opening = html[html.rindex("<", 0, start) : start]
+    assert "whitespace-pre-wrap" in opening, f"the preview element drops the preformatted class: {opening}"
+
+    assert "&lt;b&gt;bold&lt;/b&gt;" in html, "the prompt text reached the page unescaped"
+    assert "<b>" not in html, "an instruction block can open a tag it does not close"
+    assert "TARS words that must stay off the screen." not in html, "#34: only the room's own words print"

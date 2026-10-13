@@ -1,5 +1,5 @@
-<div style="height: calc(100vh - 7rem);">
-    <div class="flex items-center justify-between mb-4">
+<div class="flex flex-col" style="height: calc(100vh - 7rem);">
+    <div class="shrink-0 flex items-center justify-between mb-4">
         <h2 class="text-lg font-extrabold uppercase tracking-widest">Conversation</h2>
         <div class="flex items-center gap-2 text-xs font-bold">
             {% if live_env %}
@@ -18,17 +18,21 @@
         </div>
     </div>
 
-    <p class="text-xs text-black/60 mb-3 -mt-2">
+    <p class="shrink-0 text-xs text-black/60 mb-3 -mt-2">
         Captions are automatic speech recognition running on this machine, so the occasional word is creative.
     </p>
 
     <!-- Conversation messages. The SSE payload is the rendered body (see
          /sse/conversation): the journal collapses partials into finals and an
          assistant bubble can gain a tool block late, so the whole window is
-         re-rendered rather than appended turn by turn. -->
+         re-rendered rather than appended turn by turn.
+
+         The pane owns its own height (flex-1 + min-h-0) instead of a
+         `calc(100% - 3rem)` guess, so the journal line below it cannot spill out
+         of the wrapper and sit against the physical bottom edge. The bottom
+         clearance is the .conversation-scroll rule in base.html. -->
     <div id="conversation-scroll"
-         class="overflow-y-auto space-y-3 scroll-area"
-         style="height: calc(100% - 3rem);"
+         class="conversation-scroll scroll-area overflow-y-auto space-y-3 flex-1 min-h-0"
          hx-ext="sse"
          sse-connect="/sse/conversation"
          sse-swap="refresh"
@@ -37,14 +41,45 @@
     </div>
 
     {% if live and live.journal %}
-    <div class="mt-2 text-xs">journal: {{ live.journal }}{% if live.journal_error %} — {{ live.journal_error }}{% endif %}</div>
+    <div class="shrink-0 pt-2 text-xs">journal: {{ live.journal }}{% if live.journal_error %} — {{ live.journal_error }}{% endif %}</div>
     {% endif %}
 </div>
 
 <script>
-// Keep the newest turn in view after an SSE re-render.
-document.body.addEventListener('htmx:afterSwap', function (event) {
-    const el = event.detail && event.detail.target;
-    if (el && el.id === 'conversation-scroll') el.scrollTop = el.scrollHeight;
-});
+// Track the newest caption, but never yank a reader who has scrolled up into history.
+//
+// Why the previous handler did nothing: this page updates over SSE, and the vendored
+// htmx 2.0.4 sse extension swaps through the internal api.swap(), which fires
+// htmx:afterSwap with detail.elt set and detail.target ABSENT (htmx-ext-sse.js ->
+// swap() passes no contextElement, so htmx's swap() triggers afterSwap with an empty
+// eventInfo; `he()` only adds elt). The old handler tested event.detail.target, so it
+// silently never matched - the view stopped following at exactly the moment new rows
+// arrived. detail.elt is the swapped target on both the SSE and the ajax path.
+(function () {
+    if (document.body.dataset.conversationFollowBound) return;
+    document.body.dataset.conversationFollowBound = 'true';
+
+    // Slack that still counts as pinned to the bottom, in CSS px between the last
+    // row and the bottom edge of the pane: about a row of captions, so an audience
+    // member reading three rows back is left where they are.
+    var PIN_SLACK_PX = 100;
+    function pane() { return document.getElementById('conversation-scroll'); }
+    function gap(el) { return el.scrollHeight - el.scrollTop - el.clientHeight; }
+
+    // scroll does not bubble out of an element; capture is what reaches us here.
+    document.addEventListener('scroll', function (event) {
+        var el = pane();
+        if (!el || event.target !== el) return;
+        el.dataset.pinnedToBottom = gap(el) <= PIN_SLACK_PX ? 'true' : 'false';
+    }, true);
+
+    document.body.addEventListener('htmx:afterSwap', function (event) {
+        var el = pane();
+        if (!el || !event.detail) return;
+        if (event.detail.elt !== el && event.detail.target !== el) return;  // mic button swaps, etc.
+        if (el.dataset.pinnedToBottom === 'false') return;  // reading history: leave it alone
+        el.scrollTop = el.scrollHeight;  // newest row, still above the pane's bottom padding
+        el.dataset.pinnedToBottom = 'true';  // scrolling back down re-pins on the next swap
+    });
+})();
 </script>

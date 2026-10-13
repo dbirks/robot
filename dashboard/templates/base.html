@@ -42,6 +42,31 @@
         .scroll-area::-webkit-scrollbar-track { background: #f5f0eb; border-left: 2px solid #000; }
         .scroll-area::-webkit-scrollbar-thumb { background: #000; }
 
+        /* Adaptive size: the page scales with the display it is on, so the operator never
+           sets a zoom number. Measured, not assumed - the booth panel is a Samsung
+           LS27A800U, 3840x2160 PHYSICAL, chromium --kiosk --force-device-scale-factor=2,
+           and a probe of this box's chromium 154 at that same (innerWidth, devicePixelRatio)
+           pair returned dpr=2, innerWidth=1920, (min-width: 2560px)=false,
+           (min-resolution: 2dppx)=true, (min-width: 1600px)=true. The layout canvas is
+           therefore 1920x1080 CSS px and a 2560px query CANNOT fire on it: the panel is
+           invisible to width alone. Big-panel sizing needs both features, resolution and
+           width, and the pair is what excludes a 1440x900@1x laptop and a 3840x2160@1x
+           monitor. Root font-size is the only knob - every Tailwind text/padding utility on
+           these pages is rem-based (v3.4.17, and its preflight sets no html font-size, both
+           checked against the vendored copy), so one line rescales the whole layout. */
+        html { font-size: clamp(1rem, 0.9375rem + 0.2vw, 1.125rem); }
+        @media (min-resolution: 2dppx) and (min-width: 1600px) {
+            html { font-size: clamp(1rem, 0.875rem + 0.35vw, 1.25rem); }
+        }
+
+        /* Bottom clearance for the attendee caption pane. #conversation-scroll used to end
+           flush: the last row sat on the pane's own bottom edge, with only main's pb-8
+           below it, which is how the newest message ended up inside the lowest 120 device
+           pixels of the panel (measured 2.16% ink in that band). The padding belongs on the
+           scroll pane rather than on the page, so it travels with the content and holds at
+           any scroll position. */
+        .conversation-scroll { padding-bottom: 3rem; }
+
         /* HTMX loading indicator */
         .htmx-request .htmx-indicator { display: inline-block; }
         .htmx-indicator { display: none; }
