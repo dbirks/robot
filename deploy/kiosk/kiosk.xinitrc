@@ -11,6 +11,16 @@
 DASH="${REACHY_DASHBOARD_URL:-http://127.0.0.1:3001/conversation}"
 PROFILE="${REACHY_KIOSK_PROFILE:-$HOME/.reachy-kiosk}"
 
+# Device pixel ratio for the panel. The booth display is a Samsung LS27A800U - 27" at
+# 3840x2160, which X correctly negotiates (log: "Virtual screen size determined to be
+# 3840 x 2160") - but a dashboard authored in CSS pixels then paints 1:1 on a 163 PPI panel
+# and every word is a thumbnail. Measured on the live screen: 8.3M pixels, 1.59% dark text,
+# i.e. a postage stamp in the middle of a 4K monitor. 2 makes the layout canvas a logical
+# 1920x1080 and rasterises text at 2x, which is big enough to read from across a table and
+# still crisp, because a device-scale-factor is a DPR - not a zoomed screenshot.
+# Set REACHY_KIOSK_SCALE=2.5 if the room is loud enough that nobody gets within a metre.
+SCALE="${REACHY_KIOSK_SCALE:-2}"
+
 # Wait for the dashboard before navigating. Everything here starts at boot as a peer user
 # unit with no ordering against this one, and chromium --kiosk has no retry: win the race
 # by a second and the panel shows "This site can't be reached" for the rest of the night
@@ -51,6 +61,7 @@ exec chromium \
   --disable-gpu \
   --disable-software-rasterizer \
   --disable-dev-shm-usage \
+  --force-device-scale-factor="$SCALE" \
   --disable-session-crashed-bubble \
   --disable-infobars \
   --noerrdialogs \

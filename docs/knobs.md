@@ -94,6 +94,9 @@ file key that fills the same field when the process variable is unset or empty.
 | `scripts/measure_tts.py --device cuda\|cpu --config <json> [--lines N] [--list-speakers] [--force]` | yes (`scripts/measure_tts.py`) — the ADR 0006 gate: renders fixed lines to WAV files (never the speaker), reports RTF / peak VRAM / file sizes, refuses 76-byte LFS stubs, and refuses to load unless nvidia-smi shows room. TTFA is reported as n/a, not inferred |
 | `scripts/booth_recovery.sh:40` | where the recovery script asks `/api/media/status` | `shell/camera.py:86` hardcodes `http://localhost:8000`; the shell does **not** read this variable |
 | `REACHY_INSTRUCTIONS` (drop-in caution) | see §1 | `deploy/generated/persona.env` deliberately never sets it | one global file read by both rooms |
+| `REACHY_DASHBOARD_URL` | `deploy/kiosk/kiosk.xinitrc:14` | the page the kiosk opens | default `http://127.0.0.1:3001/conversation`. The session waits up to 30 s for it to answer before navigating, because `chromium --kiosk` has no retry and a lost boot race leaves "This site can't be reached" on a booth screen with no keyboard to fix it |
+| `REACHY_KIOSK_SCALE` | `deploy/kiosk/kiosk.xinitrc:22` → chromium `--force-device-scale-factor` | device pixel ratio of the attendee panel | **default 2**, new 2026-10-13. The booth panel is a Samsung LS27A800U, 27" at 3840x2160, and X negotiates it correctly - so an unscaled CSS-pixel dashboard paints 1:1 at 163 PPI and reads as a postage stamp (measured on the live screen: 8.3M px, 1.59% dark text). 2 makes the canvas a logical 1920x1080 and rasterises text at 2x. Raise to 2.5 if the room keeps people more than a metre back |
+| `REACHY_KIOSK_PROFILE` | `deploy/kiosk/kiosk.xinitrc:15` → chromium `--user-data-dir` | throwaway profile dir | deliberately not `--incognito`: keeps a crash bubble or a "restore pages" dialog from gating the demo while leaving page state alone |
 
 ## 3. Units an operator will be told to touch
 
