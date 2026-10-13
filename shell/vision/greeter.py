@@ -51,8 +51,22 @@ GROUP_CUE = (
     'like "hey, I noticed there are a few more people here", then carry on)*'
 )
 
-REAIM_HOLD_S = 3.0  # face-centring target lifetime, when the motion hook is enabled
+REAIM_HOLD_S = 3.0  # lock-on target lifetime, refreshed every poll while a face is live
 TRACK_LOST_S = 1.5  # unseen this long and the presence is over (identity evaporates)
+
+# Lock-on gains, ported from the legacy loop rather than invented here. Both were
+# bench-numbered in `app/face_tracker.py` / `app/movement_manager.py`, which is the
+# code the operator remembers as "locking on":
+#   FACE_FOLLOW_GAIN      = OVERSHOOT_SCALE (app/face_tracker.py:13, used at :153) —
+#     aim 60% of the way to the face, so the re-aim converges instead of overshooting
+#     into a wobble, and the per-poll head move stays inside `TRACK_MATCH_AZIMUTH`.
+#   FACE_FOLLOW_DEADBAND  = FACE_DEAD_ZONE (app/movement_manager.py:20, 2.5 deg) —
+#     inside 2.5 deg of the aim there is nothing to correct: refresh the hold, do not
+#     twitch. At 3 FPS an undamped follow never stops nudging (0.6^n of the original
+#     offset, forever) and the servos pay for every sub-degree of it (ADR 0006).
+FACE_FOLLOW_GAIN = 0.6
+FACE_FOLLOW_DEADBAND_DEG = 2.5
+FACE_SOURCE = "face"  # MotionOwner gaze_source for the lock-on (knobs.md names it)
 
 # The idle search sweep (`REACHY_GREETER_SCAN`, default OFF). The servos have had
 # about one minute of powered time in their life, so every number here is the
@@ -68,10 +82,19 @@ TRACK_GRACE_S = 0.6  # one dropped poll must not reset a dwell (2 FPS is 0.5 s a
 TRACK_MATCH_AZIMUTH = 18.0  # deg: coarse, because a person leans
 TRACK_MATCH_SHARE = 0.75  # multiplicative tolerance on bbox size
 
+# The gaze sources the lock-on may take the head from. Anything else — "wake"/"doa"
+# from shell/motion/doa.py, "tool" from shell/robot_tools.py — is somebody already
+# being answered with the head, and `MotionOwner.look_at` has no priority argument,
+# so yielding is the only way not to fight them (the rule `SCAN_SOURCE` already lives
+# by; see `_center`).
+FOLLOW_SOURCES = ("home", SCAN_SOURCE, FACE_SOURCE)
+
 
 @dataclass(frozen=True)
 class GreetCue:
-    """What the greeter hands the shell. `yaw_deg` is only for the head hook."""
+    """What the greeter hands the shell. `yaw_deg` is the head-relative bearing the
+    track was matched on — telemetry for the bench console, not an aim: the head is
+    already on this person by the time the cue is built (`_center`)."""
 
     text: str
     kind: str  # "solo" | "group"
@@ -113,9 +136,10 @@ class Track:
 
 @dataclass
 class Greeter:
-    """Dwell gate + rate limiter + (off by default) the idle search sweep. `sample(now)`
-    is the whole policy, callable from a test with a fake clock; `start()` only calls it
-    on a thread."""
+    """Dwell gate + rate limiter + the head lock-on + (off by default) the idle search
+    sweep, in that order of dependency: the sweep finds a face, `_center` keeps the head
+    on it, the dwell decides whether to speak. `sample(now)` is the whole policy, callable
+    from a test with a fake clock; `start()` only calls it on a thread."""
 
     # The collaborators are duck-typed on purpose: the greeter must be assemblable
     # without a camera, a model or a robot (see the degrade tests), and shell/camera.py
@@ -126,7 +150,7 @@ class Greeter:
     on_greet: Callable[[GreetCue], None] | None = None
     motion: Any = None  # shell.motion.MotionOwner; only ever asked to look_at
     enabled: bool = True
-    face_centering: bool = False  # head centring, off until it is bench-tested (see __main__)
+    face_centering: bool = False  # lock-on: keep the head aimed at a face (see `_center`)
     scan: bool = False  # the idle search sweep, off until it has been watched on the bench
     is_playing: Callable[[], bool] = lambda: False
     asleep: Callable[[], bool] = lambda: False  # while napping: no frames, no inference at all
@@ -183,16 +207,25 @@ class Greeter:
         # (docs/pins.yaml `face_detection`: 3.7 ms/frame detect-only either way).
         self._set_engaged(any(t.qualified for t in self.tracks.values()))
         cand = self._candidate(now)
-        if cand is None:
+        # Lock-on runs on what is in frame *this poll*, before the dwell gate closes:
+        # turning toward a face is what brings it inside the centre band, and the
+        # dwell gate decides who gets spoken to, not who gets looked at.
+        aim = self._aim_target(live) if self.face_centering else None
+        if cand is None and aim is None:
             if self.debug:
                 self._log_faces(self.tracks.values())
             self._scan(now)  # the only caller: an empty room is the only thing to search
             return self._quiet("nobody-looking")
         self._end_scan()  # a face owns the head from this instant, so the sweep stands down
         if self.debug:
-            self._log_faces([cand])
-        if self.face_centering:
-            self._center(cand)
+            self._log_faces([cand] if cand is not None else [aim])
+        if aim is not None:
+            self._center(aim)
+        if cand is None:
+            # Lock-on, no dwell yet. The verdict string is the *greeting* verdict and
+            # part of the bench contract (`scripts/smoke_greeter.py`, `LOG_ONLY_REASONS`
+            # in `scripts/bench_greeter.py`), so it stays what it has always been here.
+            return self._quiet("nobody-looking")
         verdict = self._verdict(now, cand, live)
         if verdict == "fire:solo" or verdict == "fire:group":
             self._fire(now, cand, live, kind=verdict.split(":", 1)[1])
@@ -334,6 +367,41 @@ class Greeter:
             return None
         return max(ready, key=lambda t: (t.dwell_s, t.share))
 
+    def _aim_target(self, live: list[Track]) -> Track | None:
+        """Who gets the head this poll — the lock-on half of the chain, and deliberately
+        not the dwell gate.
+
+        `live` is the tracks seen on this sample, because the aim is a thing you do to a
+        face you can currently see (a track in its `TRACK_LOST_S` grace still has a dwell,
+        but there is nothing in frame to aim at). Prefer a qualified presence, largest
+        dwell first. With nobody qualified, aim at the biggest face that is *real and near
+        enough to greet* — every part of `gaze.looking_at_me` except the angles and the
+        centre band, i.e. exactly the parts turning the head cannot fix. That pull-in is
+        the cheapest legacy mechanism (`app/face_tracker.py` aimed at the largest detection
+        and nothing else), and it is what makes a peripheral person reachable at all:
+        `centre_band` refuses any face more than ~24° off dead ahead, and the journal cannot
+        say how many those are — `face.present` is only written for a face that already
+        passed that band, so the whole population outside it is invisible by construction.
+        It is also what stops the search dead-ing on somebody he can see but cannot read:
+        `_scan` stands down while any track lives, so with no aim for an unqualified face
+        there is neither a turn nor a sweep until that person moves.
+        """
+        ready = [t for t in live if t.qualified]
+        if ready:
+            return max(ready, key=lambda t: (t.dwell_s, t.share))
+        near = [t for t in live if self._worth_turning_toward(t)]
+        return max(near, key=lambda t: t.share) if near else None
+
+    def _worth_turning_toward(self, track: Track) -> bool:
+        """A real face at greeting distance, judged on the parts of the gate the head
+        cannot fix: detection confidence and size. The area floor is the most relaxed
+        one the gate will ever apply (`Gate.relaxed`), so a face too small to be
+        qualified is never chased across the room."""
+        return (
+            track.margins.get("det_score", 0.0) >= self.gate.min_det_score
+            and self.gate.min_area_share * self.gate.hysteresis <= track.share <= self.gate.max_area_share
+        )
+
     # ---- frames ----
 
     def _read(self) -> Any:
@@ -371,25 +439,73 @@ class Greeter:
         self._tracker_failures = 0
         return faces
 
-    def _center(self, cand: Track) -> None:
-        """The head hook (B0 'look them in the eye'): MotionOwner only, at poll
-        rate, never over an exclusive move or the nap, so it cannot fight the DOA
-        wake turn or the speech sway. Off behind `face_centering` until it has been
-        watched on the bench (it is the one piece of this that cannot be tested here)."""
+    def _center(self, track: Track) -> None:
+        """Lock on: keep the head aimed at a face, at poll rate, from the first sample
+        that sees it until it leaves the frame (B0 'look them in the eye').
+
+        The aim is *not* `track.azimuth_deg`. That number is head-relative — the camera
+        is head-mounted, so it already contains our own turn — and commanding it is
+        positive feedback: turning toward a face moves the bearing we match identity on
+        (`TRACK_MATCH_AZIMUTH`), which is the chase `_scan` was written to avoid, and it is
+        also the wrong sign. `MotionOwner.look_at` takes a raw yaw in the owner's own
+        convention (positive = the robot's left: `shell/robot_tools.py` `look_left` sends
+        +LOOK_ANGLE_DEG, `look_right` sends -), while `gaze.azimuth_deg` is positive to
+        the *right of the image*. So the correction is negative of the reading, and it is
+        added to where the head already points, which is the head-pose compensation the
+        legacy loop got for free from `look_at_image` (`app/face_tracker.py:141`) and the
+        reason dropping it made the follow chase instead of converge:
+
+            aim = gaze_yaw_deg - FACE_FOLLOW_GAIN * azimuth_deg      [deg, owner convention]
+
+        With a fixed person at body-relative bearing w, the measurement is
+        `azimuth_deg = w + gaze_yaw`, so the aim converges on `-w` geometrically (ratio
+        1 - GAIN per poll) and the face settles at image centre instead of oscillating
+        around it. `MotionOwner.gaze_yaw_deg` is the smoothed gaze, i.e. our best model of
+        where the camera was when the frame was exposed; an owner that will not say (a
+        duck-typed stand-in) reads 0.0 and the aim degrades to uncorrected, still
+        converging, just less precisely. Yaw only: `Face` has no vertical bearing (the
+        pitch in `margins` is head orientation, not elevation), so pitch stays 0 as it was.
+
+        Stands down for an exclusive move, the nap, and any gaze holder that is not ours
+        — a `wake`/`doa` turn is a person who already has his attention by voice, and
+        `look_at` has no priority, so taking the head back every poll would fight it.
+        """
         motion = self.motion
         if motion is None or getattr(motion, "sleeping", False) or getattr(motion, "busy", False):
             return
+        if getattr(motion, "gaze_source", "home") not in FOLLOW_SOURCES:
+            return
         try:
-            motion.look_at(cand.azimuth_deg, 0.0, hold_s=REAIM_HOLD_S, source="face")
+            aim = self._aim_deg(motion, track.azimuth_deg)
+            motion.look_at(aim, 0.0, hold_s=REAIM_HOLD_S, source=FACE_SOURCE)
         except Exception as e:
-            log.warning("face centring failed: %r", e)
+            log.warning("face lock-on failed: %r", e)
+            return
+        if self.debug:
+            log.info(
+                "greeter lock-on track=%d azimuth=%.1f aim=%.1f dwell=%.2f/%.1f",
+                track.id,
+                track.azimuth_deg,
+                aim,
+                track.dwell_s,
+                self.dwell_s,
+            )
+
+    @staticmethod
+    def _aim_deg(motion: Any, azimuth_deg: float) -> float:
+        """Head-relative azimuth -> a gaze command, damped and deadbanded."""
+        head = float(getattr(motion, "gaze_yaw_deg", 0.0) or 0.0)
+        correction = -FACE_FOLLOW_GAIN * float(azimuth_deg)
+        if abs(correction) <= FACE_FOLLOW_DEADBAND_DEG:
+            return head  # already on him: re-command where we are to refresh the hold
+        return head + correction
 
     def _scan(self, now: float) -> None:
         """The idle search: a slow ping-pong sweep for somebody to look at.
 
-        Reached only from the nobody-looking branch of `sample()`, and it moves the
-        head only while the room is genuinely empty. That restriction is the whole
-        hazard of this feature: `Face.azimuth_deg` is **head-relative** (gaze.py
+        Reached only when this sample saw no face at all — with `face_centering` on, a
+        face anywhere in frame owns the head through `_center` instead, and the sweep
+        stands down. That restriction is the whole hazard of this feature: `Face.azimuth_deg` is **head-relative** (gaze.py
         `azimuth_deg` measures the bbox centre against the image centre and the
         camera is head-mounted), so panning while a track exists moves the bearing
         we match identity on. One person walking past a still head becomes three

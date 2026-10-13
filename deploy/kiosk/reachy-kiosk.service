@@ -20,7 +20,7 @@
 # observable over ssh: StandardOutput=journal, a fixed VT, and `systemctl status` as the
 # only diagnosis channel.
 Description=Reachy Mini attendee kiosk on VT1 (issue #37)
-Documentation=file://%h/dev/robot/deploy/kiosk/README.md
+Documentation=file:///home/david/dev/robot/deploy/kiosk/README.md
 After=graphical.target
 After=systemd-user-sessions.service
 After=user@1000.service

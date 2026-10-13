@@ -173,7 +173,16 @@ def test_the_kiosk_is_installed_in_system_scope_and_unlinked_from_user_scope():
     """
     installer = (KIOSK.parent.parent / "scripts" / "install_kiosk.sh").read_text()
     assert "SYS_DIR=/etc/systemd/system" in installer
-    assert 'sudo cp "$REPO/deploy/kiosk/$KIOSK_UNIT.service" "$SYS_DIR/$KIOSK_UNIT.service"' in installer
+    # Not a straight copy: `%h` in a SYSTEM unit is the system manager's home (/root) and does
+    # NOT follow User=david, so the repo file's path has to be substituted per-install. Shipping
+    # /root/dev/robot/.../kiosk.xinitrc is what made the first booth night crash-loop 44 times
+    # with no Xorg log, no error in the journal, and `systemd-analyze verify` completely silent
+    # - verify checks directive spelling and never opens an ExecStart path.
+    assert re.search(r'sed "s#/[^#]*dev/robot#\$REPO#g"', installer), (
+        "ExecStart path must be substituted against $REPO, or a different $HOME ships /root again"
+    )
+    assert 'run sudo cp "$KIOSK_STAGED"' in installer, "install the substituted copy, not the source"
+    assert "'rm -f \"$KIOSK_STAGED\"'" in installer, "clean the staged temp up"
     assert "systemctl mask getty@tty1.service" in installer, "two readers cannot own one tty"
     assert 'rm -f "$REPO_DIR/$KIOSK_UNIT.service"' in installer, "the user-scope link has to go"
     assert 'ln -sfn "$REPO/deploy/kiosk/$KIOSK_UNIT.service"' not in installer, (
@@ -181,3 +190,19 @@ def test_the_kiosk_is_installed_in_system_scope_and_unlinked_from_user_scope():
     )
     assert "systemd-analyze verify" in installer, "a directive typo must not survive to enable time"
     assert (KIOSK / "10-autologin.conf").read_text().count("--autologin") == 1
+
+
+def test_the_system_unit_never_uses_the_h_home_specifier():
+    """`%h` is the trap that cost twenty minutes of a live booth.
+
+    In a USER unit it means the invoking user's home, which is why the line was correct in the
+    file we copied from. In a SYSTEM unit it means the home of whoever runs the system manager -
+    `/root` - and it does not follow `User=david`. systemd then runs a command whose argument
+    simply does not exist: startx dies in under a second, X never spawns far enough to write a
+    log anywhere, and the failure text goes to a console on a machine with no keyboard.
+    """
+    unit = (KIOSK / "reachy-kiosk.service").read_text()
+    body = "\n".join(l for l in unit.splitlines() if not l.lstrip().startswith("#"))
+    assert "%h" not in body, "%h in a system unit is /root, not User='s home"
+    assert "/home/david/dev/robot/deploy/kiosk/kiosk.xinitrc" in unit, "a real, existing path"
+    assert (KIOSK / "kiosk.xinitrc").exists(), "the unit must point at a file that exists"

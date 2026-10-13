@@ -495,12 +495,14 @@ def test_face_centering_off_is_the_default_and_the_head_never_moves():
 def test_face_centering_aims_at_the_dwelled_face_and_keeps_re_aiming():
     """The ask is lock-on-and-track, so the hook is not a one-shot nod toward the
     person: it re-aims at poll rate for as long as the presence holds (2 FPS idle /
-    3 FPS engaged, `REAIM_HOLD_S` per aim)."""
+    3 FPS engaged, `REAIM_HOLD_S` per aim), and it starts at the first sighting rather
+    than at the close of the dwell — turning toward a face is what keeps it in band."""
     rec, tracker, motion = Rec(), Tracker(), Motion()
     g = build(rec=rec, tracker=tracker, motion=motion, min_spacing_s=0.0, face_centering=True)
     tracker.faces = [face(azimuth=15.0)]
     dwell(g, tracker, 2.5)
-    assert motion.aims[0] == (15.0, 0.0, G.REAIM_HOLD_S, "face")
+    # -9.0 = 0.6 * 15 toward the person, in the motion owner's positive-left convention
+    assert motion.aims[0] == (-9.0, 0.0, G.REAIM_HOLD_S, "face")
     first = len(motion.aims)
     assert rec.kinds == ["solo"]
     # The greeting is already spent, so every aim after this row is tracking, not
@@ -519,9 +521,10 @@ def test_tracking_stops_when_the_face_leaves_the_frame():
     aims = len(motion.aims)
     assert aims > 0
     tracker.faces = []
-    # A track lingers for TRACK_LOST_S after the last detection (one dropped poll
-    # must not reset a dwell), and a stale candidate is still re-aimed in that
-    # grace. Past the grace there is nobody left to aim at, ever.
+    # A track lingers for TRACK_LOST_S after the last detection (one dropped poll must
+    # not reset a dwell) and can still be greeted in that grace — but it is not re-aimed:
+    # the lock-on acts on faces this sample actually saw, because there is nothing in
+    # frame to aim at otherwise. Past the grace there is nobody left, ever.
     dwell(g, tracker, 2.0, start=2.5)
     settled = len(motion.aims)
     dwell(g, tracker, 3.0, start=4.5)
@@ -531,8 +534,8 @@ def test_tracking_stops_when_the_face_leaves_the_frame():
 def test_face_centering_stands_down_for_an_exclusive_move_or_the_nap():
     """`MotionOwner.busy` is a scripted `exclusive()` move on the motion thread and
     `sleeping` is the shell's one asleep flag; neither may be overwritten by a face.
-    Note what this does NOT cover: a `doa`/`wake` gaze target has no busy flag, so a
-    face aim and a wake turn both write `_gaze_target` and the last writer wins."""
+    A `doa`/`wake` or `tool` gaze target is covered separately, by source label rather
+    than by a flag: see tests/test_vision_greeter_lockon.py."""
     for kw in ({"busy": True}, {"sleeping": True}):
         tracker, motion = Tracker(), Motion(**kw)
         g = build(tracker=tracker, motion=motion, min_spacing_s=0.0, face_centering=True)
