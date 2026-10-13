@@ -7,12 +7,22 @@ and the booth, when something looked wrong thirty seconds ago and the only recor
 is the database. Stdlib only, read-only on the DB (`mode=ro`), and it never opens
 an audio device - safe to run while the shell is live.
 
-The barge-in summary counts speech_started events that fall INSIDE a reply window
-(response.created -> completed/cancelled), because that is the whole question: if
-he cannot hear you while he is talking, the interrupt never happens and the journal
-shows a clean conversation. It also separates "flushed while audio was queued"
-(had_audio: true) from a flush that cut nothing, so a cancel that arrived after the
-reply already finished is not counted as a barge-in.
+The primary barge-in signal is the one the payload already carries:
+`audio.speech_started {"cut_playback": true}` means the shell cut audible playback
+at that moment (shell/realtime/client.py -> speaker.cancel_current()). That is the
+only barge-in count that does not depend on row order. `tts.flushed {"had_audio":
+true}` and `response.cancelled` stay separate counts: a flush with nothing queued
+and a cancel that arrived after the reply already finished are not audio cuts.
+
+The secondary signal, speech_started_MID_reply, answers the narrower question "was
+he heard while he was talking" (window = response.created/first_audio -> the first
+completed/cancelled). It needs the causal tolerance described on `is_mid_reply()`:
+without it a real interrupt is judged against an already-closed window and the
+number prints 0 while the journal clearly shows barge-ins.
+
+The advisory only blames a closed mic gate when there were replies AND zero
+mid-reply speech AND zero cut_playback barge-ins; with cuts on the board the gate
+is demonstrably open and saying otherwise is just wrong on a live booth screen.
 
     scripts/tail_journal.py                 # last 5 minutes
     scripts/tail_journal.py --minutes 30
@@ -37,6 +47,11 @@ REPO = Path(__file__).resolve().parent.parent
 DEFAULT_DB = REPO / "data" / "events.db"
 NOISE = ("audio.health", "attention.lease_renewed")
 
+# The shell writes response.cancelled, tts.flushed and audio.speech_started from one
+# interrupt within milliseconds of each other. Generous enough to cover a slow CPU,
+# tight enough that two unrelated events seconds apart never pair up.
+CAUSAL_PAIRING_S = 0.150
+
 
 def load(db_path: Path, minutes: float, grep: str = "") -> list[tuple[float, str, str]]:
     if not db_path.is_file():
@@ -54,13 +69,19 @@ def load(db_path: Path, minutes: float, grep: str = "") -> list[tuple[float, str
 
 def reply_windows(rows: list[tuple[float, str, str]]) -> list[tuple[float, float, str]]:
     """(start, end, end_reason) per reply. An unclosed window runs to `now`, so a
-    reply in progress still counts as 'he is talking right now'."""
+    reply in progress still counts as 'he is talking right now'.
+
+    first_audio also opens a window when the created row is missing (journal started
+    mid-reply, or a retention trim cut the head off the window).
+    """
     wins: list[tuple[float, float, str]] = []
     open_at: float | None = None
     for wall, t, p in rows:
         if t == "response.created":
             if open_at is not None:  # a second response before the first closed (tool follow-up)
                 wins.append((open_at, wall, "superseded"))
+            open_at = wall
+        elif t == "response.first_audio" and open_at is None:
             open_at = wall
         elif t in ("response.completed", "response.cancelled") and open_at is not None:
             wins.append((open_at, wall, t.split(".")[1]))
@@ -70,23 +91,77 @@ def reply_windows(rows: list[tuple[float, str, str]]) -> list[tuple[float, float
     return wins
 
 
+def payload_dict(p: str) -> dict:
+    """The payload column as a dict; a truncated or non-JSON row just reads as empty."""
+    try:
+        parsed = json.loads(p)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def is_mid_reply(wall: float, wins: list[tuple[float, float, str]]) -> bool:
+    """Did this speech_started land while a reply was live?
+
+    ORDERING TRAP — do not "simplify" this back to a plain containment test. An
+    interrupt closes its own window before it is judged: the shell writes
+    response.cancelled, then tts.flushed, then audio.speech_started from the same
+    callback, milliseconds apart, in that row order. Measured on tonight's journal
+    (events id 89997 then 89999): cancelled at ...662.8480358, speech_started at
+    ...662.848265. The speech lands ~0.2 ms AFTER `end`, outside every window, so a
+    containment-only test printed speech_started_MID_reply=0 over a conversation
+    with three real barge-ins in it.
+
+    Pairing a speech_started with a window-closing cancel within CAUSAL_PAIRING_S on
+    either side of the close is causal, not coincidence: the cancel is only ever
+    written by the interrupt path (shell/realtime/client.py handle_event).
+    """
+    return any(a <= wall <= b or (reason == "cancelled" and abs(wall - b) <= CAUSAL_PAIRING_S) for a, b, reason in wins)
+
+
 def summarize(rows: list[tuple[float, str, str]], wins: list[tuple[float, float, str]]) -> dict:
-    inside: list[float] = []
+    barge_in = 0
+    mid_reply = 0
     cut_audio = 0
     cancelled = 0
     for wall, t, p in rows:
-        if t == "audio.speech_started" and any(a <= wall <= b for a, b, _ in wins):
-            inside.append(wall)
-        if t == "tts.flushed" and '"had_audio": true' in p.replace("'had_audio': True", '"had_audio": true'):
+        if t == "audio.speech_started":
+            if payload_dict(p).get("cut_playback") is True:
+                barge_in += 1  # the shell cut audible playback: this is a barge-in
+            if is_mid_reply(wall, wins):
+                mid_reply += 1
+        elif t == "tts.flushed" and payload_dict(p).get("had_audio") is True:
             cut_audio += 1
-        if t == "response.cancelled":
+        elif t == "response.cancelled":
             cancelled += 1
     return {
         "replies": len(wins),
-        "speech_started_mid_reply": len(inside),
+        "barge_in_cut_playback": barge_in,
+        "speech_started_mid_reply": mid_reply,
         "flushed_with_audio_queued": cut_audio,
         "responses_cancelled": cancelled,
     }
+
+
+def advisory_lines(stats: dict) -> list[str]:
+    """What the counts entitle us to say, one line each.
+
+    The gating suspect (issue #40) may only be named when there were replies and
+    neither interruption signal fired. A cut_playback barge-in is proof the mic was
+    open during a reply — blaming the gate next to it is a lie on a public screen.
+    """
+    lines: list[str] = []
+    if stats["barge_in_cut_playback"]:
+        lines.append(
+            f"  → barge-in works: {stats['barge_in_cut_playback']} speech_started cut_playback=true, "
+            "audible playback was cut."
+        )
+    if stats["replies"] and not stats["barge_in_cut_playback"] and stats["speech_started_mid_reply"] == 0:
+        lines.append(
+            "  → no one was heard while he was talking. Either nobody interrupted, or the mic is\n"
+            "    gated shut during a reply (issue #40). Talk over his next answer to tell which."
+        )
+    return lines
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -125,13 +200,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{wall - t0:6.1f}s  {t:26} {detail}")
 
     print(
-        f"\n{len(rows)} rows | replies={stats['replies']} | speech_started_MID_reply={stats['speech_started_mid_reply']}"
+        f"\n{len(rows)} rows | replies={stats['replies']}"
+        f" | barge_in(audio cut)={stats['barge_in_cut_playback']}"
+        f" | speech_started_MID_reply={stats['speech_started_mid_reply']}"
     )
-    if stats["replies"] and stats["speech_started_mid_reply"] == 0:
-        print(
-            "  → no one was heard while he was talking. Either nobody interrupted, or the mic is\n"
-            "    gated shut during a reply (issue #40). Talk over his next answer to tell which."
-        )
+    for line in advisory_lines(stats):
+        print(line)
     print(
         f"  flushes that cut audible audio={stats['flushed_with_audio_queued']} "
         f"| responses cancelled={stats['responses_cancelled']}"
