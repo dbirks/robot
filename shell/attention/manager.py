@@ -26,6 +26,12 @@ from .participant import UNKNOWN, Observation, ResolvedParticipant
 from .profiles import AttentionProfile
 
 
+def _monotonic() -> float:
+    import time
+
+    return time.monotonic()
+
+
 class Action(Enum):
     ENGAGE = "engage"  # grant/renew lease, open realtime stream
     IGNORE = "ignore"  # utterance disappears from context
@@ -59,6 +65,10 @@ class AttentionManager:
         self._speech = deque()
         self._window = 60.0
         self.clock = clock
+        # Attention, measured when the guest speaks rather than when the model gets around to
+        # acting on it. See tool_confidence().
+        self._turn_conf = 0.0
+        self._turn_until = 0.0
 
     # ---- duty-cycle tracker ----
 
@@ -162,8 +172,48 @@ class AttentionManager:
 
     # ---- tool gate ----
 
+    def _arm(self, confidence: float) -> None:
+        """Record the attention the guest just demonstrated, for the length of one turn.
+
+        Staleness is the whole point of the window: an arm from a previous turn must not be
+        revived for whoever is standing there now, so an expired arm is dropped before the new
+        value is maxed against it.
+        """
+        now = (self.clock or _monotonic)()
+        if now > self._turn_until:
+            self._turn_conf = 0.0
+        self._turn_conf = max(self._turn_conf, min(1.0, confidence))
+        self._turn_until = now + self.profile.lease_renew_s
+
+    def freeze_for_turn(self) -> None:
+        """Called where an accepted user turn is recorded (`lease.note_interaction()`).
+
+        Measured live 2026-10-13 at 13:06 in the hackday config: the wake word hit, the lease was
+        live, and `set_volume` came back `attention.tool_denied` at confidence 0.7527 against the
+        event profile's 0.8 - with `play_emotion` denied twice in the same second. The guest had
+        spoken 3.0 s earlier. The gate read `lease.confidence()`, which is
+        ``remaining_s / lease_renew_s``: with renew 15 s that needs 12 s of lease left to clear
+        0.8, so a tool call had to land within ~3 s of the person finishing speech. This box
+        cannot do a cold camera grab (2.7-3.0 s) inside that, let alone a whole 4B reply - so
+        every state-changing tool was unreachable by voice at the event profile, and "go to bed"
+        only ever worked because the deterministic intent bypasses this gate.
+
+        Re-arms with the lease's own reading, and cannot lower an arm already held by stronger
+        evidence from the same turn (the wake word's 1.0).
+        """
+        self._arm(self.lease.confidence())
+
     def tool_confidence(self, _name: str) -> float:
-        return self.lease.confidence()
+        live = self.lease.confidence()
+        if not self.lease.active():
+            # An expired lease ends the turn's claim too: decay is the mechanism that stops an
+            # old participant's session licensing whoever is standing there now (ADR 0003).
+            self._turn_conf = 0.0
+            return 0.0
+        now = (self.clock or _monotonic)()
+        if self._turn_conf and now <= self._turn_until:
+            return max(live, self._turn_conf)
+        return live
 
     def _log(self, d: Decision, stage: str) -> None:
         self.journal.write(
@@ -175,3 +225,11 @@ class AttentionManager:
             duty_cycle=round(self.duty_cycle, 2),
             raise_applied=self._raise() > 1.0,
         )
+
+        if d.action == Action.ENGAGE:
+            # The evidence-derived number is what should decide an evidence gate. `on_keyword`
+            # returns confidence 1.0 and an ambient engage returns its own score, while
+            # `lease.confidence()` at the event profile starts at lease_base_s / lease_renew_s =
+            # 10/15 = 0.667 - BELOW the 0.8 bar it is compared to. Arming here is what makes the
+            # wake word mean what the journal already said it meant.
+            self._arm(d.confidence)

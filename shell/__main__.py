@@ -262,6 +262,11 @@ async def amain(cfg: ShellConfig) -> None:
             client.drop_next_response()
             return
         lease.note_interaction()
+        # Attention is scored HERE, at the moment the guest's words were accepted, not when
+        # the model finally emits a tool call: the lease's decay alone gave a 3-second budget
+        # for STT + a 4B deliberation, which denied set_volume and play_emotion live on
+        # 2026-10-13 at 13:06 (confidence 0.7527 vs the event profile's 0.8). See
+        # AttentionManager.freeze_for_turn().
         if text and lease.active() and wants_silence(text) and client.last_turn_cut_playback:
             # "stop talking" is an order, not a turn. The interrupt itself already did
             # its work (speaker.cancel_current, before this transcript arrived); what
