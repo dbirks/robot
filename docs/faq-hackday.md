@@ -16,9 +16,9 @@ here is unsourced; what could not be sourced is section 4 — a question for Dav
 
 - You are Reachy, a small desk robot at an AI hack day, speaking as a dry, weary, very tired British gentleman. One or two short spoken sentences. (envs/hackday.yaml)
 - One machine in this room does everything: a four-core i7-6700K, an 8 GB GTX 1070. (AGENTS.md)
-- Nothing is sent anywhere to be understood: no cloud inference, the service runs offline (`HF_HUB_OFFLINE=1`, deploy/systemd/reachy-s2s.service), and the dashboard binds loopback unless opened on purpose (`DASHBOARD_HOST`, dashboard/server.py:816). One tool leaves the box, `web_search`. (epic locality, section 4)
-- Room speech is not conversation: unengaged, the shell feeds the service silence, so an ambient utterance is never transcribed and can never reach a model or a tool. (0003, shell/__main__.py:268-276)
-- He opens on a wake keyword and on nothing else. A lease kept by speech starts and finished replies holds him, then he goes quiet about ten seconds after the room stops talking; person and face evidence is designed (0003), unwired. (shell/attention/profiles.py, shell/__main__.py:87,310)
+- Nothing is sent anywhere to be understood: no cloud inference, the service runs offline (`HF_HUB_OFFLINE=1`, deploy/systemd/reachy-s2s.service), and the dashboard binds loopback unless opened on purpose (`DASHBOARD_HOST`, dashboard/server.py:967; the port is hardcoded to 3001 at :968, so there is no `DASHBOARD_PORT` to set). One tool leaves the box, `web_search`. (epic locality, section 4)
+- Room speech is not conversation: unengaged, the shell feeds the service silence, so an ambient utterance is never transcribed and can never reach a model or a tool. (0003, `feeds_service` and the silence branch of the mic pump in shell/__main__.py — named by symbol, that file moves daily)
+- He opens on a wake keyword and on nothing else. A lease kept by speech starts and finished replies holds him, then he goes quiet about ten seconds after the room stops talking; person and face evidence is designed (0003), unwired. (shell/attention/profiles.py, `exchange_for_reply` and the `cfg.greeter_enabled` block in shell/__main__.py)
 - Changing state means volume, a remembered fact, an emotion or a dance (`play_emotion` and `peekaboo` are state-changing too): those tools need more evidence than answering does, so a shout from across the room can get a polite "not right now". (0003, env rule 2, shell/tools.py STATE_CHANGING)
 - Reachy is the robot's name, not the model's. "Reachy" and "hey Reachy" only: bare "robot" was dropped because the TV says it constantly (scripts/get_kws_model.sh:14-15, 1edb28c). ADR 0003's alias list predates that.
 - Numbers, model names, ports and paths in sections 1 and 2 are ours, never spoken. Say "a few seconds", "one machine in this room". (docs/hackday-patter.md rule 2)
@@ -66,7 +66,7 @@ veto a TV: the array is linear. (0003, 0005)
 
 **How does he turn toward the speaker?**
 On a wake keyword the head turns to the direction of arrival and both fixed beams steer there. Four
-mics on one axis, so front and back are ambiguous. (0005, shell/__main__.py:277-283)
+mics on one axis, so front and back are ambiguous. (0005, `DoaTracker.wake_turn` wired to `on_wake` in shell/__main__.py; `REACHY_XMOS_BEAM_FOCUS`, shell/audio/xmos_tuning.py)
 
 **Does he recognise faces?**
 Not here. He greets presence, not people: the greeter reads a dwell of about two seconds of
@@ -79,10 +79,10 @@ shared home file. Item B1 rewires that. The InsightFace cost is measured detecti
 "done". (env rule 1)
 
 **What happens to the recordings afterwards?**
-No PCM is journaled and retention is by rows and age (0007, shell/journal.py:74-79). The booth memory
+No PCM is journaled and retention is by rows and age (0007, shell/journal.py:89-90, pruned by `Journal._prune`). The booth memory
 store is its own file, starts empty, and keeps only what a guest asked him to remember: auto fact
 extraction is off here (envs/hackday.yaml). Two caveats, both ours: `take_snapshot` writes a JPEG when
-called (shell/robot_tools.py:80-84), and the journal is shared with the home desk.
+called (shell/robot_tools.py:88-96), and the journal is shared with the home desk.
 
 **What is on the dashboard?**
 A FastAPI page on port 3001, bound to loopback unless opened deliberately: a live conversation table
@@ -113,7 +113,8 @@ own venv via scripts/install_s2s.sh, and the cu126 torch pin must not be bumped.
 - No eye contact to go with the greeting that does run here: he greets a ~2 s dwell — rate-limited
   at 2 min spacing, 5 min for group notices, 6 per hour (shell/vision/greeter.py,
   envs/hackday.yaml `behaviour`) — but he does not turn to look you in the eye: head-centring is
-  gated behind `REACHY_GREETER_FACE_CENTERING`, default off in both rooms, unverifiable without the
+  gated behind `REACHY_GREETER_FACE_CENTERING` (`shell/config.py` `greeter_face_centering`, `docs/knobs.md` §1), default
+  off in both rooms, unverifiable without the
   robot on the bench and the face-vs-DOA precedence unwired. No greeting by identity: detection and
   gaze only, nothing remembered between visits. And a face is never attention: a reply the greeter
   prompted cannot renew the mic lease (shell/__main__.py `exchange_for_reply`, 0003).
@@ -157,7 +158,7 @@ own venv via scripts/install_s2s.sh, and the cu126 torch pin must not be bumped.
 7. Low light: sourced to setup-gtx1070-arch.md as a fixed-focus module that is blurry. Nobody has
    measured a lux floor.
 8. `web_search` stays (David, 2026-10-12 - people ask current questions), so the locality line in
-   section 1 carries its caveat. It is DuckDuckGo scraping (app/robot_tools.py:620-626); a better
+   section 1 carries its caveat. It is DuckDuckGo scraping (app/robot_tools.py:602-604); a better
    provider needs a key in `.env` and a shell-native handler.
 9. Nobody wants a persona switch on the attendee panel tomorrow (a change costs a 20-46 s service
    restart and #35's voice decision is still open), so the panel shows the persona and never

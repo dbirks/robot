@@ -73,7 +73,12 @@ sacrificing the evening.
 (LAN access is not the default: `dashboard/server.py` binds `127.0.0.1` because the
 page serves `data/known_faces.json` and `data/sessions.db` with no auth, so a tablet
 needs `DASHBOARD_HOST=0.0.0.0` on the dashboard and a decision about what is in those
-files first — `deploy/README.md`, "The dashboard is loopback by default".)
+files first — `deploy/README.md`, "The dashboard is loopback by default". `DASHBOARD_HOST`
+is the only dashboard address knob, and the port is **not** one: 3001 is hardcoded at
+`dashboard/server.py:968`. The kiosk's own four variables
+(`REACHY_DASHBOARD_URL`, `REACHY_KIOSK_PROFILE` in `kiosk.xinitrc`, `REACHY_KIOSK_SERVICE`,
+`REACHY_KIOSK_CONNECTORS`, `REACHY_KIOSK_INTERVAL_S` in `watch_hotplug.sh`) are read by
+those scripts and by nothing else — `docs/knobs.md` §2.)
 
 ## Not here
 

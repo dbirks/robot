@@ -107,7 +107,16 @@ sudo usermod -aG uucp $USER
 ```bash
 mkdir -p models/gguf models/piper
 
-# LLM — Qwen 3.5 4B Q4_K_M (recommended for GTX 1070)
+# LLM — what the live unit actually loads (docs/pins.yaml models.llm, ADR 0004):
+#   models/gguf/mtp/Qwen3.5-4B-UD-Q4_K_XL.gguf  (unsloth/Qwen3.5-4B-MTP-GGUF, UD-Q4_K_XL)
+#   models/gguf/mtp/mmproj-F16.gguf             (F16 projector — never BF16 on Pascal)
+# Both are already on this box; override the paths with LLAMA_MODEL_PATH /
+# LLAMA_MMPROJ_PATH (scripts/run_llama_server.sh:16,22).
+#
+# The two downloads below are the SUPERSEDED pair this file used to document:
+# qwen3.5-4b-q4_k_m.gguf and mmproj-BF16.gguf are still on disk (Apr 2026) and are not
+# what runs. The BF16 projector in particular is the file ADR 0004 says never to use —
+# GP104 has no BF16 in hardware and emulates it.
 curl -L -o models/gguf/qwen3.5-4b-q4_k_m.gguf \
   "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
 
@@ -131,6 +140,12 @@ cp .env.example .env
 # Edit .env — update LLAMA_MODEL_PATH in scripts/run_llama_server.sh
 # if your GGUF filename differs from the default
 ```
+
+Every variable this project reads — shell, service, dashboard, llama.cpp, kiosk — is
+tabulated with its reader and its per-room default in [`docs/knobs.md`](docs/knobs.md).
+`.env.example` is a template, not a list of live knobs: some of its lines (e.g.
+`OPENAI_BASE_URL=http://localhost:8080/v1`) point at llama.cpp directly and would bypass the
+name-fixing proxy that `scripts/run_s2s.sh:15` defaults to.
 
 ### 3. Install Python dependencies
 
@@ -183,7 +198,13 @@ logs/                  # gitignored — runtime logs and snapshots
 
 ## Available Tools
 
-The agent can call these tools during conversation:
+The legacy agent can call these tools during conversation. **The table is stale** — it lists 8
+of the 19 schemas in `app/robot_tools.py:24` `TOOLS` (no `describe_scene`, no `peekaboo`, no
+`play_emotion`, no memory tools), and the realtime shell advertises 21 through
+`shell/robot_tools.py:build_handlers` + `shell/memories.py:MEMORY_TOOLS`, minus whatever
+`REACHY_TOOLS_EXCLUDE` / `envs/<env>.yaml` drops (16 in `hackday`). Read the live list with
+`REACHY_ENV=<room> python -m shell --print-env` or the dashboard's environment panel, not from
+this table:
 
 | Tool | Description |
 |------|-------------|
@@ -209,9 +230,22 @@ Add the OpenAI function schema to `TOOLS` in `robot_tools.py` and a handler func
 yay -S cuda-12.9   # replaces the cuda package
 ```
 
-The `ctranslate2` library (used by faster-whisper) also needs a matching CUDA version. If you see `libcublas.so.12 not found` errors, your CUDA toolkit version doesn't match. Use `WHISPER_DEVICE=cpu` with `WHISPER_COMPUTE_TYPE=int8` as a reliable fallback — it's fast enough for small.en.
+The `ctranslate2` library (used by faster-whisper) also needs a matching CUDA version. If you see `libcublas.so.12 not found` errors, your CUDA toolkit version doesn't match.
+
+> **No `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE` knob exists.** Nothing in `app/`, `shell/`
+> or `scripts/` ever read those two names — this whole section describes a faster-whisper STT
+> that this repo does not run. The legacy loop transcribes with **Parakeet TDT 0.6B v3 on CPU
+> via `onnx_asr`**, hard-wired at `app/stt_service.py:12-21`; the realtime stack's STT device is
+> `S2S_PARAKEET_DEVICE` (`scripts/run_s2s.sh:74`). Do not set the whisper names expecting a CPU
+> fallback — there is none to fall back to. Every knob that is real is in
+> [`docs/knobs.md`](docs/knobs.md).
 
 ## VRAM Budget (GTX 1070, 8 GB)
+
+> **Superseded by [`docs/pins.yaml`](docs/pins.yaml).** The live box is 4.47 GB for the LLM
+> with the F16 projector and 7.84 GB total beside the Qwen3-TTS talker, with Parakeet on CPU
+> (`models.llm` measured). The table below is the legacy loop's estimate and is kept only
+> because it is the history of how the card got tight.
 
 | Component | VRAM |
 |-----------|------|
@@ -220,13 +254,17 @@ The `ctranslate2` library (used by faster-whisper) also needs a matching CUDA ve
 | CUDA overhead | ~0.5 GB |
 | **Total** | **~4.5 GB** |
 
-To free more VRAM, set `WHISPER_DEVICE=cpu` and `WHISPER_COMPUTE_TYPE=int8` in `.env` to run STT on CPU instead (~0 VRAM, still fast).
+To free more VRAM, run STT on CPU — which is where it already runs (`app/stt_service.py`, and
+`S2S_PARAKEET_DEVICE=cpu` for the realtime stack). The `WHISPER_*` variables named in older
+revisions of this file are not read by any code (see "GPU Compatibility" above).
 
 ## llama.cpp Notes
 
 The `--jinja` flag in `run_llama_server.sh` is **required** for tool calling to work. Without it, the server silently ignores the `tools` parameter.
 
-Context is set to 4096 by default (`LLAMA_CTX`). This is conservative but keeps memory low. Increase if the model needs more context for complex conversations.
+Context is set to **24576** by default (`LLAMA_CTX`, `scripts/run_llama_server.sh:36`: 2 slots
+x 12K, KV q8_0/q8_0 — see `docs/pins.yaml` `models.llm`). The 4096 this file quoted for months
+is not what the box runs.
 
 ### Qwen 3.5 thinking mode
 

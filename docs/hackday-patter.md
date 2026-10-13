@@ -25,7 +25,8 @@ Delivery notes, never spoken:
   (envs/hackday.yaml `behaviour`, shell/vision/greeter.py). Do not promise a greeting per arrival;
   for the demo effect, be there, look at him, dwell.
 - He will not turn to look you in the eye. The camera triggers the greeting; it does not move his
-  head: centring sits behind `REACHY_GREETER_FACE_CENTERING`, default off in both rooms, never
+  head: centring sits behind `REACHY_GREETER_FACE_CENTERING` (`shell/config.py` `greeter_face_centering`,
+  `docs/knobs.md` §1), default off in both rooms, never
   bench-verified, face-vs-DOA precedence unwired. And he is not looking you *up*: detection and
   gaze only, nobody remembered between visits, a name is only one he was just told. No line may
   claim he recognised, or turned to, anyone.
@@ -34,8 +35,9 @@ Delivery notes, never spoken:
   because faces are not namespaced until B1 (`app/face_tracker.py:16` is the home gallery). A name is
   only ever one you were just told, in this conversation: he cannot see it in a face, and "hello
   again" to a stranger is how a demo dies.
-- A bare wake keyword already gets a short "yes?" (commit 279fa88, `WAKE_ACK_WAIT_S`,
-  shell/__main__.py:55, `shell/reactions.py`). Do not spend a line here on that case.
+- A bare wake keyword already gets a short "yes?" (commit 279fa88, `WAKE_ACK_WAIT_S` in
+  `shell/__main__.py` — named by symbol, that file moves daily; `shell/reactions.py`). Do not
+  spend a line here on that case.
 - Speak, then act: the tool note wants a few words before the call and one short sentence after it
   (`TOOLS_NOTE`, shell/config.py).
 - A state change needs more attention than an answer does, and in the `event` profile the bar is

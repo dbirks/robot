@@ -11,6 +11,13 @@ A fully local, realtime, voice-driven social agent for the [Reachy Mini](https:/
 `REACHY_ENV` picks a room: `home` (default) or `hackday` (office demo). Each env is a bundle of
 attention profile + persona prompt + tool subset + namespaced memories/faces, in `envs/<name>.yaml`.
 Design and work list: [`docs/environments.md`](docs/environments.md). Event work happens on `main`.
+[`docs/knobs.md`](docs/knobs.md) is the authoritative table: every `REACHY_*` / `S2S_*` /
+`DASHBOARD_*` / `LLAMA_*` name that is really read, with the file:line that reads it and the value
+each room resolves. **A documented knob with no row there is a bug** — docs drift, and an operator
+at a booth copying a command that silently does nothing loses the hour. Two unit-graph facts that
+are not obvious from any status line: `reachy-shell.service` has `BindsTo=reachy-mini-daemon.service`,
+so restarting the daemon stops the shell and it stays stopped; and starting the retired
+`reachy-agent` unit opens a second mic/speaker owner and silences the live shell (ADR 0002).
 
 ## Two stacks coexist right now
 

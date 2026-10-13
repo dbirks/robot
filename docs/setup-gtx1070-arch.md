@@ -31,7 +31,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 CUDA 13 removed support for compute capabilities below 7.5 (Turing). The GTX 1070 is compute_61 (Pascal). The `cuda-12.9` AUR package installs alongside `gcc14` (also from AUR, built from source — takes ~30 min).
 
-This also affects `ctranslate2` (used by faster-whisper): it ships linked against CUDA 12, so `libcublas.so.12` must be present. With `cuda-12.9` installed this works. Without it, set `WHISPER_DEVICE=cpu` and `WHISPER_COMPUTE_TYPE=int8` in `.env`.
+This also affects `ctranslate2` (used by faster-whisper): it ships linked against CUDA 12, so `libcublas.so.12` must be present. With `cuda-12.9` installed this works.
+
+> **There is no `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE` knob.** This file used to tell you to
+> set them as the fallback; no code in `app/`, `shell/` or `scripts/` ever read those names, and
+> this repo does not run faster-whisper at all — the legacy loop uses Parakeet TDT 0.6B v3 on CPU
+> via `onnx_asr` (`app/stt_service.py:12-21`) and the realtime stack uses
+> `S2S_PARAKEET_DEVICE` (`scripts/run_s2s.sh:74`). The CUDA-12 constraint below is real; the two
+> variable names are not. See [`knobs.md`](knobs.md) §6.
 
 ## Building llama-server with CUDA
 
@@ -94,16 +101,20 @@ curl -L -o models/piper/en_GB-northern_english_male-medium.onnx.json \
 | CUDA overhead | ~0.5 GB |
 | **Total** | **~5.2 GB / 8 GB** |
 
-To save VRAM, run Whisper on CPU (`WHISPER_DEVICE=cpu` in `.env`) — frees ~1 GB with minimal speed impact for small.en.
+To save VRAM, run STT on CPU — which is where it already runs (see the note above: there is no
+`WHISPER_DEVICE` to set). `docs/pins.yaml` is the current measured budget and supersedes this
+table; the mmproj line here is the BF16 file, which ADR 0004 says never to use on Pascal.
 
 ## .env for this machine
 
 ```
+# Historical (2026-04): these two lines were this file's recommendation and are kept
+# as the record. They are not read by anything — see "CUDA 12 vs 13" above.
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 ```
 
-Everything else can stay at defaults from `.env.example`.
+For what to actually set on this box, use [`knobs.md`](knobs.md) and `deploy/README.md`.
 
 ## Known quirks
 

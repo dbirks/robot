@@ -10,6 +10,13 @@ systemctl --user daemon-reload
 systemctl --user enable --now llama-server reachy-llm-proxy reachy-s2s reachy-shell
 ```
 
+**Four units this box runs are not in `deploy/systemd/`** and cannot be installed from a
+checkout: `reachy-mini-daemon` and `reachy-dashboard` live only in
+`~/.config/systemd/user/`, and the retired `reachy-agent` / `qwen3-tts` are still there.
+So the `enable --now` line above is not the whole stack on a fresh machine, and
+`reachy-shell` will not come up at all without the daemon unit — it declares
+`BindsTo=reachy-mini-daemon.service`. `docs/knobs.md` §3 is the unit table for this box.
+
 Services, in startup order:
 
 | Unit | Runs | Notes |
@@ -20,9 +27,23 @@ Services, in startup order:
 | `reachy-llm-proxy` | `python -m shell.llm_proxy` on :8081 | rewrites STT mis-hearings of "Reachy" before llama.cpp |
 | `reachy-s2s` | pinned HF speech-to-speech realtime | `scripts/install_s2s.sh` once, then this |
 | `reachy-shell` | audio owners + attention + tools (`python -m shell`) | the new stack |
+| `reachy-dashboard` | FastAPI dashboard on :3001 (port is hardcoded in `dashboard/server.py:968`; there is no `DASHBOARD_PORT`) | unit lives outside the repo until Phase 2 |
 
 Phase 2 (issue #22) will fold the legacy `reachy-agent` / `qwen3-tts` units
 away and teach the dashboard about these names.
+
+**Do not start `reachy-agent` or `qwen3-tts` to "see what they do".** `reachy-agent` runs
+the legacy `python -m app`, which is a second owner of the same microphone and speaker
+(ADR 0002): while it is up, the live shell hears the room through the wrong device and
+his own voice stops being cancelled — and `reachy-shell` still reads `active` in every
+status line. `qwen3-tts` loads a second model onto a card already at 7.84 of 8 GB.
+`reachy-shell` also has `BindsTo=reachy-mini-daemon.service`: **restarting the daemon
+stops the shell and does not start it again**, so he is deaf until you say
+`systemctl --user start reachy-shell`. Both facts are in `docs/knobs.md` §3.
+
+One unit that `systemctl --user --failed` cannot see: `reachy-audio-init.service` is a
+**system** unit (`/etc/systemd/system/`), enabled and failing on this box — its
+`amixer -c 3` card no longer exists. Check it with `systemctl status reachy-audio-init`.
 
 ## Powering the robot back on (travel day)
 
@@ -33,8 +54,12 @@ and camera tools go quietly inert. After any power cycle, at the venue, in this 
 ```bash
 systemctl --user restart reachy-mini-daemon   # re-enumerate the robot, camera, audio
 scripts/preflight_demo.sh                     # must be clean before you trust anything
-systemctl --user start reachy-shell
+systemctl --user start reachy-shell           # NOT optional: BindsTo= took it down
 ```
+
+The third line is the whole point of the order. `reachy-shell.service` binds to the
+daemon, so the restart in line 1 stopped the shell; without line 3 the box looks healthy
+(`reachy-mini-daemon` active, `reachy-s2s` active) and answers nothing.
 
 `scripts/preflight_demo.sh` checks for the stale-daemon state and tells you so; do not
 skip it because the audio devices "look present" - the ALSA card enumerates over USB
@@ -43,12 +68,19 @@ even with the robot switched off.
 ## Before the doors open
 
 ```bash
-scripts/preflight_demo.sh                     # 13 checks: audio route, resolved room,
-                                              # safety gate, suite, model files on disk,
-                                              # egress for web_search, disk, booth memory
-                                              # freshness. Exit nonzero = do not start.
+scripts/preflight_demo.sh                     # audio route, the robot answering, resolved
+                                              # room, safety gate, suite, model files on
+                                              # disk, egress for web_search, services,
+                                              # disk, booth memory freshness.
+                                              # Exit nonzero = do not start.
 DEMO_ENV=hackday scripts/preflight_demo.sh    # also fails if the room did not take
+bash scripts/check_env_safety.sh             # the 13 numbered safety checks on their own
 ```
+
+The 13 checks belong to `scripts/check_env_safety.sh`, not to the pre-flight: the
+pre-flight runs that gate as **one** of its own steps (and the hardware-free suite as
+another), so a pre-flight PASS line is one line for thirteen checks. Read the gate's own
+output when you need to know which one moved.
 
 Ordered by how much each failure hurts: the PipeWire route first, because if playback
 is not landing on the Reachy card the XVF3800 gets no echo reference and nothing about
@@ -72,6 +104,10 @@ and no amount of gate-widening will help. Record it either way.
 word, what runs locally versus what does not, and what to do when he stops responding.
 
 ## Changing rooms (`REACHY_ENV`)
+
+**[`docs/knobs.md`](../docs/knobs.md) is the index**: every `REACHY_*` / `S2S_*` /
+`DASHBOARD_*` / `LLAMA_*` name that is actually read, the file:line that reads it, and
+what each room resolves. A name that is not in that table does nothing when you set it.
 
 `reachy-shell` runs a deployment environment: `envs/home.yaml` (the desk) or
 `envs/hackday.yaml` (the office demo). The file carries the persona, the attention
@@ -137,8 +173,10 @@ Three consequences to know before the demo:
   rooms, and a stamped prompt would put the home persona into a public booth the moment
   someone forgot to move the room back (hard rule 1). The room keeps its words.
 - **An inline `persona.instructions` in `envs/<env>.yaml` outranks the persona file.**
-  Both shipped rooms still carry one (it is the A2 parity bar: home resolves to the same
-  1568 bytes as before the picker existed), so tonight **applying a persona changes the
+  Both shipped rooms still carry one (it is the A2 parity bar: `home` resolves byte-identical
+  to what it resolved before the picker existed — pinned by `tests/test_env.py`, not by a byte
+  count quoted in a README, because the prompt moves and the number goes stale the same day), so
+  tonight **applying a persona changes the
   voice and the acknowledgements, not the words**. `apply_env.py` and the dashboard both
   say this out loud. To hand the words to the persona file, delete the `instructions:`
   block from that room's env file — `personas/obama.yaml` and `personas/marvin.yaml`

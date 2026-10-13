@@ -43,7 +43,7 @@ tools:
   include: []                     # empty = everything the shell knows about
   exclude: [go_to_sleep, reset_conversation]
 memory:
-  namespace: hackday              # memories.<ns>.json + faces.<ns>.json
+  namespace: hackday              # memories.<ns>.json ONLY: faces.<ns>.json is the B1 sketch below, not the loader
 behaviour:
   greeter: true                   # proactive hello when a face appears
   greeter_cooldown_s: 120         # per person
@@ -56,6 +56,10 @@ audio:
 
 Unknown keys are ignored (forward-compatible), a missing file is a hard startup error,
 and `python -m shell --print-env` dumps the resolved config for the dashboard/ADR trail.
+**[`docs/knobs.md`](knobs.md) is the authoritative table** of every key above and the
+`REACHY_*` / `S2S_*` / `DASHBOARD_*` process variable that outranks it, one row per knob
+with the file:line that reads it. A knob added to `LAYERS` without a row there is a knob
+nobody will find at the booth.
 
 ### `persona:` — a name, an inline block, or both (issue #35)
 
@@ -150,9 +154,11 @@ in `.env`: `reachy-s2s` reads the same values and one fact must have one source.
       unit: `EnvironmentFile=` overrides `Environment=`. Booting with `REACHY_ENV` never set now logs a **WARN**
       naming the environment it fell back to, not an INFO.
 - [x] A7 Tests: precedence, unknown-key tolerance, home parity (resolved instructions match today's)
-      — `tests/test_env.py` (33 tests: precedence both ways including empty values, null, unknown keys, missing
-      file, `--print-env` purity + round trip, namespaces, the home-store guard, migration, tool policy, the
-      privacy scan of prompts and schemas) plus two journal stamp tests.
+      — `tests/test_env.py` (precedence both ways including empty values, null, unknown keys, missing
+      file, `--print-env` purity + round trip, namespaces, the home-store guard, migration, tool policy,
+      the privacy scan of prompts and schemas) plus two journal stamp tests. Run
+      `uv run pytest tests/test_env.py -q` for the current count — this line used to quote one and was
+      stale within a day, which is the same failure class `docs/knobs.md` exists to kill.
 - [x] A9 2026-10-12 review fixes (privacy + home-parity reviews), all hardware-free tests plus the new gate:
       face tools out of `hackday`; present-but-empty `REACHY_*` = no opinion (and blank numbers no longer crash
       `float("")`); the home-namespace guard above; `behaviour.learn_facts` off in `hackday` (auto extraction
@@ -190,6 +196,9 @@ in `.env`: `reachy-s2s` reads the same values and one fact must have one source.
       live sink dropped 1.70 → 0.50. Still open: per-env volume policy (a conference room needs
       headroom the home table does not) and `reachy-audio-init.service`, which hardcodes
       `amixer -c 3` and now fails at boot with `Invalid card number '3'` — match the card by name.
+      Note for the runbook: it is a **system** unit (`/etc/systemd/system/`), so
+      `systemctl --user --failed` never lists it and an "all clear" from that command is not one
+      about this machine. Read it with `systemctl status reachy-audio-init` (`docs/knobs.md` §3).
 - [ ] B1 Wire face recognition natively into the shell (`learn_face` / `identify_face`
       return "not available" today because `make_handlers` gets no `face_tracker`);
       per-env faces file; measured InsightFace CPU cost in `pins.yaml`
