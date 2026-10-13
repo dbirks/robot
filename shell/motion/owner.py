@@ -38,6 +38,7 @@ from typing import Callable
 import numpy as np
 
 from .. import journal as J
+from ..sleep import SleepState
 from .kinematics import exp_alpha, minimum_jerk, pose6, pose6_from_matrix, pose_matrix, smooth_step, spring_update
 
 log = logging.getLogger("shell.motion")
@@ -154,6 +155,7 @@ class MotionOwner:
         rng: random.Random | None = None,
         is_speaking: Callable[[], bool] | None = None,
         sway=None,  # SpeechSway-like: .step(now) -> 6-vector offsets
+        sleep_state=None,  # shell.sleep.SleepState: the one asleep flag (issue #36)
     ) -> None:
         self.robot = robot
         self.journal = journal
@@ -162,6 +164,11 @@ class MotionOwner:
         self._rng = rng or random.Random()
         self._is_speaking = is_speaking or (lambda: False)
         self.sway = sway
+        # Asleep is not ours to own any more: the shell assembly gates the
+        # microphone on the same flag, so the head can never lie down on a live
+        # mic (issue #36). Constructed here when nobody injects one (tests, the
+        # legacy bridge), which keeps `sleeping` a single readable source.
+        self._sleep = sleep_state if sleep_state is not None else SleepState(journal=journal, clock=clock)
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -202,7 +209,6 @@ class MotionOwner:
         self._body = 0.0
 
         self._resume: tuple[np.ndarray, np.ndarray, float] | None = None
-        self.sleeping = False
         self._last_tick: float | None = None
         self.last_command: Command | None = None
         self._errors = 0
@@ -295,6 +301,12 @@ class MotionOwner:
         with self._lock:
             return self.job_running is not None or bool(self._jobs)
 
+    @property
+    def sleeping(self) -> bool:
+        """Asleep (the shell's one flag, shell/sleep.py): the loop pauses, the
+        DOA re-aim stands down, the microphone is closed."""
+        return self._sleep.sleeping
+
     def exclusive(self, name: str, fn: Callable) -> bool:
         """Run fn(mini) on the motion thread with the loop paused (scripted
         SDK moves: goto_target, sleep, peekaboo). Returns False when there is
@@ -307,27 +319,46 @@ class MotionOwner:
             self._jobs.append((name, fn))
         return True
 
-    def sleep(self) -> bool:
+    def sleep(self, reason: str = "tool") -> bool:
+        """Lie down AND stop listening (issue #36).
+
+        The flag moves here, at request time, not when the pose lands: the mic
+        gate and the head are read by different threads, and a pose that waits
+        behind a move in progress may not leave the microphone open. Returns
+        False only when he was already asleep."""
+        if not self._sleep.enter(reason):
+            return False
+
         def go(mini) -> None:
             mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=2.0)
             with self._lock:
-                self.sleeping = True
                 self._anims.clear()
                 self._anim = None
 
-        return self.exclusive("sleep", go)
+        self._queue_move("sleep", go)
+        return True
 
-    def wake(self) -> bool:
-        """Leave the sleep pose (no-op when awake)."""
-        if not self.sleeping:
+    def wake(self, reason: str = "tool") -> bool:
+        """Leave the sleep pose and listen again (no-op when awake).
+
+        Every way back up goes through here — the wake word
+        (`shell/__main__.py`) and any physical tool (`shell/robot_tools.py`) —
+        so the head and the microphone can never disagree about it."""
+        if not self._sleep.exit(reason):
             return False
 
         def go(mini) -> None:
             mini.goto_target(head=np.eye(4), antennas=INIT_ANTENNAS, duration=1.0)
-            with self._lock:
-                self.sleeping = False
 
-        return self.exclusive("wake_up", go)
+        self._queue_move("wake_up", go)
+        return True
+
+    def _queue_move(self, name: str, fn: Callable) -> None:
+        """Append a scripted move behind whatever is running, the way `start()`
+        appends its startup pose. `_run` pops jobs before it consults `tick()`,
+        so this plays even while asleep (which is exactly how he gets back up)."""
+        with self._lock:
+            self._jobs.append((name, fn))
 
     # ---- control loop ----
 

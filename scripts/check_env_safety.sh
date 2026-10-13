@@ -185,6 +185,93 @@ assert not re.search(r"^\s*REACHY_PROFILE=", example, re.M), \
     "REACHY_PROFILE uncommented: a set line outranks the env file and boots the booth on quiet"
 PY
 
+run "9. no template reaches for an external asset" <<PY
+import pathlib
+# Filtered egress on this box, none guaranteed at the booth: a page that pulls
+# Tailwind/htmx/fonts from a CDN renders unstyled in front of the room (issue #38).
+TPL = sorted(pathlib.Path("dashboard/templates").rglob("*.html"))
+bad = []
+for path in TPL:
+    for lineno, line in enumerate(path.read_text().splitlines(), 1):
+        if "http-equiv" in line:
+            continue
+        if "http://" in line or "https://" in line or '="//' in line:
+            bad.append("%s:%s" % (path, lineno))
+assert len(TPL) >= 9, "only found %s templates - the glob is wrong" % len(TPL)
+assert not bad, "template reaches off-box: %s" % bad
+for name in ("tailwind.js", "htmx.min.js", "htmx-ext-sse.js", "fonts.css"):
+    assert (pathlib.Path("dashboard/static/vendor") / name).stat().st_size > 1000, "vendored %s is empty" % name
+woff = list(pathlib.Path("dashboard/static/vendor/fonts").glob("*.woff2"))
+assert len(woff) == 6, "expected 6 vendored latin faces, found %s" % len(woff)
+PY
+
+run "10. the journal reader and the panel stay importable without fastapi" <<PY
+# CI runs the tests in a minimal env (numpy + pyyaml + pytest). If a server-only
+# import sneaks into the chain, every dashboard test errors there instead of here.
+import ast, sys
+for rel in ("dashboard/journal_read.py", "dashboard/env_panel.py"):
+    tree = ast.parse(open(rel).read())
+    mods = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            mods.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            mods.add(node.module.split(".")[0])
+    forbidden = mods & {"fastapi", "starlette", "sse_starlette", "uvicorn", "jinja2", "dotenv", "app", "shell"}
+    assert not forbidden, "%s imports %s" % (rel, sorted(forbidden))
+    extra = mods - set(sys.stdlib_module_names)
+    assert not extra, "%s reaches outside the stdlib: %s" % (rel, sorted(extra))
+PY
+
+run "11. the dashboard cannot switch the room, show faces, or start a legacy audio owner" <<PY
+import ast, pathlib
+
+src = pathlib.Path("dashboard/server.py").read_text()
+tree = ast.parse(src)
+
+# (a) the room is a readout: nothing in this process writes REACHY_ENV, and no
+#     environment route exists to receive a form post (docs/environments.md hard rule 1)
+assert 'write_env_setting("REACHY_ENV"' not in src, "the dashboard can change the room"
+assert '"REACHY_ENV"' not in src, "the dashboard resolves the room itself: two sources"
+for rel in ("dashboard/templates/environment.html", "dashboard/templates/partials/environment.html"):
+    text = pathlib.Path(rel).read_text()
+    for control in ("<form", "<select", "<input", "<button", "hx-post"):
+        assert control not in text, "%s offers %s - the env panel must be a readout" % (rel, control)
+
+# (b) faces are hidden: the page and every faces route refuse, and the nav does not link them
+assert "FACES_VISIBLE = False" in src, "the family faces panel is back on"
+bodies = {n.name: ast.unparse(n) for n in tree.body if isinstance(n, ast.AsyncFunctionDef)}
+for route in ("faces_page", "partial_faces", "face_thumbnail", "delete_face"):
+    assert "faces_hidden()" in bodies[route], "faces route %s renders family data" % route
+nav = pathlib.Path("dashboard/templates/base.html").read_text()
+assert "/faces" not in nav and "faces.html" not in nav and "agent_button" not in nav, "a hidden panel is back in the nav"
+
+# (c) no systemctl call in this process may name a retired unit: starting reachy-agent
+#     opens a second mic/speaker owner and silences the real shell (ADR 0002)
+units = set()
+for node in ast.walk(tree):
+    if isinstance(node, ast.List):
+        strs = [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+        if strs[:2] != ["systemctl", "--user"] or strs[2:3] not in (["restart"], ["stop"], ["start"]):
+            continue
+        last = node.elts[-1]
+        if isinstance(last, ast.Constant) and isinstance(last.value, str):
+            units.add(last.value)
+assert units == set(), "the dashboard can systemctl %s" % sorted(units)
+panel_tree = ast.parse(pathlib.Path("dashboard/env_panel.py").read_text())
+units_list = ast.literal_eval(
+    next(
+        ast.unparse(n.value)
+        for n in panel_tree.body
+        if isinstance(n, (ast.Assign, ast.AnnAssign))
+        and getattr(n.target if isinstance(n, ast.AnnAssign) else n.targets[0], "id", "") == "SERVICE_UNITS"
+    )
+)
+assert "SERVICES = list(env_panel.SERVICE_UNITS)" in src, "the controllable list was re-hardcoded"
+for retired in ("reachy-agent", "qwen3-tts"):
+    assert retired not in units_list, "%s is back on the controllable list" % retired
+PY
+
 echo
 if [ "$fails" -ne 0 ]; then
   echo "check_env_safety: $fails check(s) FAILED - do not switch rooms or start the shell"

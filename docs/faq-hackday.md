@@ -14,9 +14,9 @@ here is unsourced; what could not be sourced is section 4 — a question for Dav
 
 ## 1. Core
 
-- You are Reachy, a small desk robot, at an AI hack day. One or two short spoken sentences. (envs/hackday.yaml)
+- You are Reachy, a small desk robot at an AI hack day, speaking as a dry, weary, very tired British gentleman. One or two short spoken sentences. (envs/hackday.yaml)
 - One machine in this room does everything: a four-core i7-6700K, an 8 GB GTX 1070. (AGENTS.md)
-- Nothing is sent anywhere to be understood: no cloud inference, the service runs offline (`HF_HUB_OFFLINE=1`, deploy/systemd/reachy-s2s.service), and the dashboard binds loopback unless opened on purpose (`DASHBOARD_HOST`, dashboard/server.py:641). One tool leaves the box, `web_search`. (epic locality, section 4)
+- Nothing is sent anywhere to be understood: no cloud inference, the service runs offline (`HF_HUB_OFFLINE=1`, deploy/systemd/reachy-s2s.service), and the dashboard binds loopback unless opened on purpose (`DASHBOARD_HOST`, dashboard/server.py:816). One tool leaves the box, `web_search`. (epic locality, section 4)
 - Room speech is not conversation: unengaged, the shell feeds the service silence, so an ambient utterance is never transcribed and can never reach a model or a tool. (0003, shell/__main__.py:268-276)
 - He opens on a wake keyword and on nothing else. A lease kept by speech starts and finished replies holds him, then he goes quiet about ten seconds after the room stops talking; person and face evidence is designed (0003), unwired. (shell/attention/profiles.py, shell/__main__.py:87,310)
 - Changing state means volume, a remembered fact, an emotion or a dance (`play_emotion` and `peekaboo` are state-changing too): those tools need more evidence than answering does, so a shout from across the room can get a polite "not right now". (0003, env rule 2, shell/tools.py STATE_CHANGING)
@@ -81,10 +81,12 @@ extraction is off here (envs/hackday.yaml). Two caveats, both ours: `take_snapsh
 called (shell/robot_tools.py:80-84), and the journal is shared with the home desk.
 
 **What is on the dashboard?**
-A local FastAPI page on port 3001: conversation table, service status, GPU stats, settings, mic mute,
-known faces (dashboard/server.py:320-369). It reads the legacy `data/sessions.db`, which the shell never
-writes, so the kiosk panel is a frozen transcript (app/session_store.py:10). The journal the shell does
-write has no reader yet (issue #38): no attention state, lease or timing is on any screen.
+A FastAPI page on port 3001, bound to loopback unless opened deliberately: a live conversation table
+built from the event journal (`dashboard/journal_read.py`), the real units of this stack, GPU stats,
+the resolved environment with its persona and tool list, and settings. The legacy `data/sessions.db`
+store (hours of home talk, last row 2026-07-28) is never rendered. Face pages are hidden while faces
+remain un-namespaced (B1), and changing rooms is a `.env` edit, not a button - the panel can show the
+room but never switch it.
 
 **What is he bad at?**
 He narrates an action instead of doing it, observed in about one direct intent in four (observation,
@@ -143,20 +145,19 @@ own venv via scripts/install_s2s.sh, and the cu126 torch pin must not be bumped.
    S2S_QWEN3_SPEAKER) has no pins entry, which is the repo's own bar for anything that runs on the
    machine. Quote the 0.6B candidate, or say tonight's voice is unmeasured?
 5. Cold start is item C2 and unmeasured. Do not answer "how long does it take to boot".
-6. Issue #35 is not readable from this checkout (no `gh`, and `docs/notes/`, which env B0b points
-   at, does not exist). The Rickman/Marvin register above is David's decision as stated verbally;
-   is it the wording he wants used on the floor?
+6. The Marvin register in `envs/hackday.yaml` is drafted from David's verbal decision (#35) and
+   names no real person on purpose. Is that the wording he wants used on the floor?
 7. Low light: sourced to setup-gtx1070-arch.md as a fixed-focus module that is blurry. Nobody has
    measured a lux floor.
-8. `web_search` is in the booth list and sends the query out over DuckDuckGo
-   (app/robot_tools.py:620-626). Keep it, or cut it so section 1 needs no caveat on the locality
-   line? The Phase A fix pass left this as a product decision, not a fix.
-9. The HDMI kiosk shows a transcript that stopped in July, because `/conversation` reads the legacy
-   table (measured 2026-10-12: newest `data/sessions.db` row is 2026-07-28 and the shell never
-   writes it). Which page does the screen show tomorrow, while the journal still has no reader?
-10. The `reachy-dashboard` process running now predates the loopback fix and is still listening on
-    all interfaces (`ss`, 2026-10-12). It needs a restart before the machine travels, and only an
-    operator can do that: until then `/faces` is the family album and `/` is home conversation.
+8. `web_search` stays (David, 2026-10-12 - people ask current questions), so the locality line in
+   section 1 carries its caveat. It is DuckDuckGo scraping (app/robot_tools.py:620-626); a better
+   provider needs a key in `.env` and a shell-native handler.
+9. Nobody wants a persona switch on the attendee panel tomorrow (a change costs a 20-46 s service
+   restart and #35's voice decision is still open), so the panel shows the persona and never
+   changes it. If that changes, the restart UX is the work, not the button.
+10. The kiosk has never been verified on a screen (#37): no monitor has ever been attached to this
+    box, so the autologin, the hotplug watcher and Chromium under a full GPU are all unmeasured.
+    David runs `scripts/install_kiosk.sh` at the machine when he is back in front of it.
 11. `tool_confidence: 0.8` against `lease_renew_s: 15` means a state-changing tool is allowed only
     in the seconds just after an exchange (shell/attention/lease.py:99-107,
     shell/attention/manager.py:165-166). Expect `attention.tool_denied` from attendees standing in

@@ -14,10 +14,18 @@ from .profiles import AttentionProfile
 
 
 class AttentionLease:
-    def __init__(self, profile: AttentionProfile, journal, clock=time.monotonic) -> None:
+    def __init__(
+        self,
+        profile: AttentionProfile,
+        journal,
+        clock=time.monotonic,
+        *,
+        asleep=None,  # callable -> bool: he is asleep, attention is not available (issue #36)
+    ) -> None:
         self.profile = profile
         self.journal = journal
         self.clock = clock
+        self._asleep = asleep if asleep is not None else (lambda: False)
         self.holder: str | None = None
         self._expires = 0.0
         self._started = 0.0
@@ -36,7 +44,12 @@ class AttentionLease:
     def active(self) -> bool:
         return self.holder is not None and self.clock() < self._expires
 
-    def acquire(self, participant: str, evidence: str) -> None:
+    def acquire(self, participant: str, evidence: str) -> bool:
+        """Grant the lease. False when it was refused because he is asleep:
+        attention cannot be given to a room whose microphone is closed, and the
+        `sleep.enter` row already says why (issue #36)."""
+        if self._asleep():
+            return False
         now = self.clock()
         if self.holder is not None and self.holder != participant:
             self.journal.write(J.ATTENTION_LEASE_TRANSFERRED, to=participant, from_=self.holder, evidence=evidence)
@@ -47,15 +60,24 @@ class AttentionLease:
         self.journal.write(
             J.ATTENTION_LEASE_STARTED, holder=participant, evidence=evidence, base_s=self.profile.lease_base_s
         )
+        return True
 
     def renew(self, participant: str | None, evidence: str, cap_s: float | None = None) -> bool:
         """`cap_s` bounds this kind of evidence to that many seconds after the
-        lease started or the last real exchange (see `exchange`)."""
+        lease started or the last real exchange (see `exchange`).
+
+        Asleep refuses here too, not just in `acquire`: a same-holder renewal (a
+        speech-start that arrives while his own audio is still playing, or a late
+        client event) would otherwise keep stretching a lease he is supposed to be
+        done with, and the lease is the thing that decides whether room audio gets
+        transcribed (issue #36, ADR 0003).
+        """
+        if self._asleep():
+            return False
         if not self.active():
             return False
         if participant is not None and participant != self.holder:
-            self.acquire(participant, evidence)
-            return True
+            return self.acquire(participant, evidence)
         now = self.clock()
         limit = self.profile.lease_max_s if cap_s is None else min(cap_s, self.profile.lease_max_s)
         self._expires = max(self._expires, min(self._started + limit, now + self.profile.lease_renew_s))

@@ -1,0 +1,91 @@
+<div class="space-y-4">
+    <div class="border-3 border-black bg-butter-light p-4" style="border-width: 3px;">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-extrabold uppercase tracking-widest">Deployment environment</h2>
+            <span class="text-xs font-bold">python -m shell --print-env · cached {{ panel.age_s }}s</span>
+        </div>
+
+        {% if not panel.available %}
+        <div class="border-2 border-black bg-blush p-3 text-sm font-bold uppercase">
+            Could not resolve the environment: {{ panel.error or 'unknown error' }}
+        </div>
+        <div class="text-xs mt-2">Nothing else on this page is measured; do not read an empty cell as "off".</div>
+        {% else %}
+        <div class="grid gap-2 md:grid-cols-3 text-sm">
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">env</div>
+                <div class="font-extrabold">{{ panel.env or '—' }}</div>
+            </div>
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">attention profile</div>
+                <div class="font-extrabold">{{ panel.attention_profile or '—' }}
+                    {% if panel.tool_confidence is not none %}· tool ≥ {{ panel.tool_confidence }}{% endif %}
+                </div>
+            </div>
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">auto fact learning</div>
+                <div class="font-extrabold">{% if panel.learn_facts %}ON{% else %}OFF{% endif %}</div>
+            </div>
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">memory namespace</div>
+                <div class="font-extrabold">{{ panel.memory_namespace or '—' }}</div>
+            </div>
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">memories store</div>
+                <div class="text-xs break-all">{{ panel.memories_path or '—' }} · {{ panel.memory_count }} facts (contents never shown)</div>
+            </div>
+            <div class="border-2 border-black bg-white p-2">
+                <div class="text-xs font-bold uppercase text-black/60">journal / services</div>
+                <div class="text-xs break-all">{{ panel.journal_path or '—' }}</div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="border-3 border-black bg-mint-light p-4" style="border-width: 3px;">
+        <div class="flex items-center justify-between mb-2">
+            <h2 class="text-lg font-extrabold uppercase tracking-widest">Persona (as sent to the model)</h2>
+            <span class="text-xs font-bold{% if panel.persona_masked %} bg-blush border-2 border-black px-2 py-1{% endif %}">
+                {% if panel.persona_masked %}{{ panel.persona_masked }} memory hit(s) masked{% else %}no memory content found{% endif %}
+            </span>
+        </div>
+        <div class="text-xs whitespace-pre-wrap break-words bg-white border-2 border-black p-3">{{ panel.persona or '—' }}</div>
+    </div>
+
+    <div class="border-3 border-black bg-lavender-light p-4" style="border-width: 3px;">
+        <div class="flex items-center justify-between mb-2">
+            <h2 class="text-lg font-extrabold uppercase tracking-widest">Tools</h2>
+            <span class="text-xs font-bold">{{ panel.tools_offered }} offered / {{ panel.tools_excluded }} excluded</span>
+        </div>
+        <div class="text-xs mb-2">Read from the static schema lists with <span class="font-bold">ast</span> — listing them here imports no robot, no audio device and no <span class="font-bold">.env</span> side effects.</div>
+        <table class="w-full text-xs border-collapse">
+            <thead>
+                <tr class="text-left uppercase">
+                    <th class="border-2 border-black bg-white p-1">tool</th>
+                    <th class="border-2 border-black bg-white p-1 text-center">offered</th>
+                    <th class="border-2 border-black bg-white p-1 text-center">excluded</th>
+                    <th class="border-2 border-black bg-white p-1 text-center">state-changing</th>
+                    <th class="border-2 border-black bg-white p-1 text-center">attention-gated</th>
+                    <th class="border-2 border-black bg-white p-1">source</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tool in panel.tools %}
+                <tr>
+                    <td class="border-2 border-black bg-white p-1 font-bold">{{ tool.name }}</td>
+                    <td class="border-2 border-black bg-white p-1 text-center">{% if tool.offered %}✓{% endif %}</td>
+                    <td class="border-2 border-black bg-white p-1 text-center">{% if tool.excluded %}<span class="font-bold text-red-700">EXCLUDED</span>{% endif %}</td>
+                    <td class="border-2 border-black bg-white p-1 text-center">{% if tool.state_changing %}✓{% endif %}</td>
+                    <td class="border-2 border-black bg-white p-1 text-center">{% if tool.attention_gated %}✓{% endif %}</td>
+                    <td class="border-2 border-black bg-white p-1">{{ tool.source }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="text-xs mt-2">state-changing ⇒ gated by the attention lease (ADR 0003): below the profile's confidence it is refused and journaled, never run.</div>
+    </div>
+
+    <div class="border-3 border-black bg-cream p-4" style="border-width: 3px;">
+        <div class="text-xs">s2s: {{ panel.s2s_url or '—' }} · llm: {{ panel.llm_base_url or '—' }}</div>
+    </div>
+</div>

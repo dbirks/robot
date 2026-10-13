@@ -32,6 +32,10 @@ behaviour:
   learn_facts: true           # auto fact extraction (shell/conversation.py); this is
                               # today's behaviour, and the code default. Off in
                               # envs/hackday.yaml: one shared booth store.
+  auto_sleep_s: 0             # never lie down by himself: the desk is always ready
+                              # (issue #36). 0 in every shipped environment, home
+                              # and hackday alike; set REACHY_AUTO_SLEEP_S>0 to
+                              # try the idle nap.
 
 audio:
   mic: null                   # null = "no opinion": system default, or REACHY_MIC

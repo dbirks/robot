@@ -1,239 +1,46 @@
 <div style="height: calc(100vh - 7rem);">
     <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-extrabold uppercase tracking-widest">Conversation</h2>
-        {% if session_id %}
-        <span class="text-xs font-mono bg-butter border-2 border-black px-2 py-1">{{ session_id[:12] }}</span>
-        {% endif %}
+        <div class="flex items-center gap-2 text-xs font-bold">
+            {% if live_env %}
+            <span class="bg-black text-cream px-2 py-1 uppercase">ENV {{ live_env }}</span>
+            {% endif %}
+            {% if live and live.liveness and live.liveness.alive %}
+            <span class="bg-mint border-2 border-black px-2 py-1 uppercase">SHELL ALIVE {{ live.liveness.age_s | round(0) | int }}s</span>
+            {% elif live and live.journal_error %}
+            <span class="bg-blush border-2 border-black px-2 py-1 uppercase">JOURNAL UNAVAILABLE</span>
+            {% else %}
+            <span class="bg-butter border-2 border-black px-2 py-1 uppercase">SHELL QUIET{% if live and live.liveness.age_s %} {{ live.liveness.age_s | round(0) | int }}s{% endif %}</span>
+            {% endif %}
+            {% if session_id %}
+            <span class="font-mono bg-butter border-2 border-black px-2 py-1">{{ session_id[:12] }}</span>
+            {% endif %}
+        </div>
     </div>
 
-    <!-- Conversation messages -->
+    <!-- Conversation messages. The SSE payload is the rendered body (see
+         /sse/conversation): the journal collapses partials into finals and an
+         assistant bubble can gain a tool block late, so the whole window is
+         re-rendered rather than appended turn by turn. -->
     <div id="conversation-scroll"
          class="overflow-y-auto space-y-3 scroll-area"
          style="height: calc(100% - 3rem);"
          hx-ext="sse"
-         sse-connect="/sse/conversation">
-
-        {% for turn in turns %}
-        {% if turn.role == "user" %}
-        <div class="flex justify-end">
-            <div class="max-w-[85%] border-2 border-black bg-blush px-4 py-3">
-                <div class="text-xs font-bold uppercase mb-1">YOU // {{ turn.timestamp | format_ts }}</div>
-                <div class="text-sm">{{ turn.content or "" }}</div>
-            </div>
-        </div>
-
-        {% elif turn.role == "assistant" and turn.tool_calls %}
-        <!-- Assistant message WITH tool calls — combined call + result block -->
-        <div class="flex justify-start">
-            <div class="max-w-[85%] border-2 border-black bg-lavender px-4 py-3">
-                <div class="text-xs font-bold uppercase mb-1">REACHY // {{ turn.timestamp | format_ts }}</div>
-                {% if turn.content %}
-                <div class="text-sm mb-2">{{ turn.content }}</div>
-                {% endif %}
-                <div class="space-y-2">
-                    {% for tc in turn.tool_calls %}
-                    <div class="border-2 border-black bg-lavender-light p-2">
-                        {% if tc is mapping %}
-                        <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">
-                            TOOL: {{ tc.get("function", {}).get("name", "unknown") }}
-                        </div>
-                        <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">Args: {{ tc.get("function", {}).get("arguments", "{}") }}</pre>
-                        {% if tc.get("_result") is not none %}
-                        <div class="mt-1 bg-white border-2 border-black p-2 text-xs space-y-0.5">
-                            {{ tc.get("_result", "") | format_result | safe }}
-                        </div>
-                        {% endif %}
-                        {% else %}
-                        <pre class="text-xs overflow-x-auto whitespace-pre-wrap">{{ tc }}</pre>
-                        {% endif %}
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-
-        {% elif turn.role == "assistant" %}
-        <!-- Assistant message WITHOUT tool calls -->
-        <div class="flex justify-start">
-            <div class="max-w-[85%] border-2 border-black bg-mint px-4 py-3">
-                <div class="text-xs font-bold uppercase mb-1">REACHY // {{ turn.timestamp | format_ts }}</div>
-                {% if turn.content %}
-                <div class="text-sm">{{ turn.content }}</div>
-                {% endif %}
-            </div>
-        </div>
-
-        {% elif turn.role == "system" %}
-        <div class="flex justify-center">
-            <div class="text-xs font-bold uppercase bg-butter border-2 border-black px-3 py-1">SYSTEM PROMPT SET</div>
-        </div>
-        {% endif %}
-        {% endfor %}
-
-        {% if not turns %}
-        <div class="flex items-center justify-center h-full">
-            <div class="text-center">
-                <div class="text-sm font-bold uppercase mb-2">No conversation yet</div>
-                <div class="text-xs">Turns will appear here when the agent is running</div>
-            </div>
-        </div>
-        {% endif %}
+         sse-connect="/sse/conversation"
+         sse-swap="refresh"
+         hx-swap="innerHTML">
+        {% include "partials/conversation_body.html" %}
     </div>
+
+    {% if live and live.journal %}
+    <div class="mt-2 text-xs">journal: {{ live.journal }}{% if live.journal_error %} — {{ live.journal_error }}{% endif %}</div>
+    {% endif %}
 </div>
 
 <script>
-// SSE connection for live conversation updates.
-// Tool-call assistant turns are buffered so we can merge the following
-// tool-result turns into the same rendered block.
-const evtSource = new EventSource('/sse/conversation');
-
-// Pending assistant turn waiting for tool results
-let pendingAssistant = null;  // {turn, expectedIds: Set, results: Map}
-
-function prettyJson(s) {
-    try { return JSON.stringify(JSON.parse(s), null, 2); } catch(e) { return s; }
-}
-
-function escapeHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
-}
-
-function formatResult(jsonStr) {
-    try {
-        const data = JSON.parse(jsonStr);
-        if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
-            return Object.entries(data).map(([k, v]) => {
-                const keyHtml = `<span class="font-bold text-black/60 min-w-[80px]">${escapeHtml(k)}</span>`;
-                let vHtml;
-                if (k === 'ok') {
-                    vHtml = v
-                        ? '<span class="text-green-700 font-bold">✓</span>'
-                        : '<span class="text-red-700 font-bold">✗</span>';
-                } else if (typeof v === 'boolean') {
-                    const color = v ? 'text-green-700' : 'text-red-700';
-                    vHtml = `<span class="${color}">${escapeHtml(String(v))}</span>`;
-                } else if (typeof v === 'object' && v !== null) {
-                    vHtml = `<pre class="text-xs whitespace-pre-wrap break-all">${escapeHtml(JSON.stringify(v, null, 2))}</pre>`;
-                } else {
-                    vHtml = `<span>${escapeHtml(String(v))}</span>`;
-                }
-                return `<div class="flex gap-2">${keyHtml}${vHtml}</div>`;
-            }).join('');
-        }
-    } catch(e) {}
-    return escapeHtml(jsonStr);
-}
-
-function renderToolBlock(turn) {
-    const time = new Date(turn.timestamp * 1000).toLocaleTimeString();
-    const results = turn._results || {};
-    const tcItems = turn.tool_calls.map(tc => {
-        const name = tc?.function?.name || 'unknown';
-        const args = tc?.function?.arguments || '{}';
-        const tcId = tc?.id || '';
-        const result = results[tcId];
-        const resultHtml = result !== undefined
-            ? `<div class="mt-1 bg-white border-2 border-black p-2 text-xs space-y-0.5">${formatResult(result)}</div>`
-            : '';
-        return `<div class="border-2 border-black bg-lavender-light p-2">
-            <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">TOOL: ${escapeHtml(name)}</div>
-            <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">Args: ${escapeHtml(args)}</pre>
-            ${resultHtml}
-        </div>`;
-    }).join('');
-    return `<div class="flex justify-start">
-        <div class="max-w-[85%] border-2 border-black bg-lavender px-4 py-3">
-            <div class="text-xs font-bold uppercase mb-1">REACHY // ${time}</div>
-            ${turn.content ? `<div class="text-sm mb-2">${escapeHtml(turn.content)}</div>` : ''}
-            <div class="space-y-2">${tcItems}</div>
-        </div></div>`;
-}
-
-function flushPending() {
-    if (!pendingAssistant) return;
-    const container = document.getElementById('conversation-scroll');
-    if (!container) return;
-    const html = renderToolBlock(pendingAssistant.turn);
-    pendingAssistant = null;
-    container.insertAdjacentHTML('beforeend', html);
-    container.scrollTop = container.scrollHeight;
-}
-
-evtSource.addEventListener('new_turn', function(event) {
-    const container = document.getElementById('conversation-scroll');
-    if (!container) return;
-
-    try {
-        const turn = JSON.parse(event.data);
-        const time = new Date(turn.timestamp * 1000).toLocaleTimeString();
-
-        // Handle tool result — try to merge into pending assistant
-        if (turn.role === 'tool') {
-            if (pendingAssistant && turn.tool_call_id && pendingAssistant.expectedIds.has(turn.tool_call_id)) {
-                pendingAssistant.turn._results[turn.tool_call_id] = turn.content || '';
-                pendingAssistant.expectedIds.delete(turn.tool_call_id);
-                if (pendingAssistant.expectedIds.size === 0) {
-                    flushPending();
-                }
-            }
-            // If no pending or no match, silently drop (already shown or orphaned)
-            return;
-        }
-
-        // If there's a pending assistant that hasn't been flushed, flush it now
-        if (pendingAssistant) {
-            flushPending();
-        }
-
-        let html = '';
-
-        if (turn.role === 'user') {
-            html = `<div class="flex justify-end">
-                <div class="max-w-[85%] border-2 border-black bg-blush px-4 py-3">
-                    <div class="text-xs font-bold uppercase mb-1">YOU // ${time}</div>
-                    <div class="text-sm">${escapeHtml(turn.content || '')}</div>
-                </div></div>`;
-        } else if (turn.role === 'assistant') {
-            const hasTools = turn.tool_calls && turn.tool_calls.length > 0;
-            if (hasTools) {
-                // Buffer this turn — wait for tool results
-                const expectedIds = new Set(turn.tool_calls.map(tc => tc?.id).filter(Boolean));
-                turn._results = {};
-                pendingAssistant = { turn, expectedIds };
-                // Set a timeout to flush if results don't arrive within 5s
-                setTimeout(() => {
-                    if (pendingAssistant && pendingAssistant.turn === turn) {
-                        flushPending();
-                    }
-                }, 5000);
-                return;
-            } else {
-                html = `<div class="flex justify-start">
-                    <div class="max-w-[85%] border-2 border-black bg-mint px-4 py-3">
-                        <div class="text-xs font-bold uppercase mb-1">REACHY // ${time}</div>
-                        ${turn.content ? `<div class="text-sm">${escapeHtml(turn.content)}</div>` : ''}
-                    </div></div>`;
-            }
-        } else if (turn.role === 'system') {
-            html = `<div class="flex justify-center">
-                <div class="text-xs font-bold uppercase bg-butter border-2 border-black px-3 py-1">SYSTEM PROMPT SET</div>
-            </div>`;
-        }
-
-        if (html) {
-            container.insertAdjacentHTML('beforeend', html);
-            container.scrollTop = container.scrollHeight;
-        }
-    } catch (e) {
-        console.error('SSE parse error:', e);
-    }
-});
-
-// Auto-scroll on load
-document.addEventListener('DOMContentLoaded', function() {
-    const el = document.getElementById('conversation-scroll');
-    if (el) el.scrollTop = el.scrollHeight;
+// Keep the newest turn in view after an SSE re-render.
+document.body.addEventListener('htmx:afterSwap', function (event) {
+    const el = event.detail && event.detail.target;
+    if (el && el.id === 'conversation-scroll') el.scrollTop = el.scrollHeight;
 });
 </script>

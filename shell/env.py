@@ -157,6 +157,7 @@ LAYERS: tuple[_Layer, ...] = (
     _Layer("tools.exclude", "tools_exclude", "REACHY_TOOLS_EXCLUDE", _names),
     _Layer("memory.namespace", "memory_namespace", "REACHY_MEMORY_NAMESPACE"),
     _Layer("behaviour.learn_facts", "learn_facts", "REACHY_LEARN_FACTS", _flag),
+    _Layer("behaviour.auto_sleep_s", "auto_sleep_s", "REACHY_AUTO_SLEEP_S", _number),
     _Layer("audio.mic", "mic_device", "REACHY_MIC"),
     _Layer("audio.speaker", "speaker_device", "REACHY_SPEAKER"),
     _Layer("audio.xmos_agc_max_gain", "xmos_agc_max_gain", "REACHY_XMOS_AGC_MAX_GAIN", _number),

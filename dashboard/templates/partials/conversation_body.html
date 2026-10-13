@@ -1,0 +1,65 @@
+{% for turn in turns %}
+{% if turn.role == "user" %}
+<div class="flex justify-end">
+    <div class="max-w-[85%] border-2 border-black bg-blush px-4 py-3">
+        <div class="text-xs font-bold uppercase mb-1">YOU // {{ turn.timestamp | format_ts }}</div>
+        <div class="text-sm">{{ turn.content or "" }}</div>
+    </div>
+</div>
+
+{% elif turn.role == "assistant" and turn.tool_calls %}
+<!-- Assistant message WITH tool calls — combined call + result block -->
+<div class="flex justify-start">
+    <div class="max-w-[85%] border-2 border-black bg-lavender px-4 py-3">
+        <div class="text-xs font-bold uppercase mb-1">REACHY // {{ turn.timestamp | format_ts }}</div>
+        {% if turn.content %}
+        <div class="text-sm mb-2">{{ turn.content }}</div>
+        {% endif %}
+        <div class="space-y-2">
+            {% for tc in turn.tool_calls %}
+            <div class="border-2 border-black bg-lavender-light p-2">
+                {% if tc is mapping %}
+                <div class="text-xs font-bold uppercase bg-black text-lavender inline-block px-2 py-0.5 mb-1">
+                    TOOL: {{ tc.get("function", {}).get("name", "unknown") }}
+                </div>
+                <pre class="text-xs mt-1 overflow-x-auto whitespace-pre-wrap break-all">Args: {{ tc.get("function", {}).get("arguments", "{}") }}</pre>
+                {% if tc.get("_result") is not none %}
+                <div class="mt-1 bg-white border-2 border-black p-2 text-xs space-y-0.5">
+                    {{ tc.get("_result", "") | format_result | safe }}
+                </div>
+                {% endif %}
+                {% else %}
+                <pre class="text-xs overflow-x-auto whitespace-pre-wrap">{{ tc }}</pre>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+{% elif turn.role == "assistant" %}
+<!-- Assistant message WITHOUT tool calls -->
+<div class="flex justify-start">
+    <div class="max-w-[85%] border-2 border-black bg-mint px-4 py-3">
+        <div class="text-xs font-bold uppercase mb-1">REACHY // {{ turn.timestamp | format_ts }}</div>
+        {% if turn.content %}
+        <div class="text-sm">{{ turn.content }}</div>
+        {% endif %}
+    </div>
+</div>
+
+{% elif turn.role == "system" %}
+<div class="flex justify-center">
+    <div class="text-xs font-bold uppercase bg-butter border-2 border-black px-3 py-1">SYSTEM PROMPT SET</div>
+</div>
+{% endif %}
+{% endfor %}
+
+{% if not turns %}
+<div class="flex items-center justify-center h-full">
+    <div class="text-center">
+        <div class="text-sm font-bold uppercase mb-2">No conversation yet</div>
+        <div class="text-xs">Turns come from the live event journal — they appear here as the shell hears them</div>
+    </div>
+</div>
+{% endif %}

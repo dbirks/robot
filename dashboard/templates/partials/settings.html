@@ -4,9 +4,6 @@
         {% if saved is defined and saved %}
         <span class="text-xs font-bold bg-mint border-2 border-black px-2 py-1">SAVED</span>
         {% endif %}
-        {% if restarted is defined and restarted %}
-        <span class="text-xs font-bold bg-blush border-2 border-black px-2 py-1">SAVED &amp; RESTARTING...</span>
-        {% endif %}
     </div>
 
     <form class="space-y-5">
@@ -70,16 +67,10 @@
                            hover:bg-cream">
                 Save
             </button>
-            <button type="button"
-                    hx-post="/settings/apply-restart"
-                    hx-target="#settings-panel"
-                    hx-swap="innerHTML"
-                    hx-include="closest form"
-                    hx-confirm="Save settings and restart the agent?"
-                    class="flex-1 px-4 py-3 text-sm font-bold uppercase border-2 border-black bg-lavender
-                           hover:bg-purple-300">
-                Apply &amp; Restart Agent
-            </button>
         </div>
+        <div class="text-xs">Volume applies immediately. Engine and voice are written to .env and take effect the next time the operator restarts reachy-shell from Services — the dashboard never restarts a service that owns audio (ADR 0002).</div>
+        {% if needs_restart is defined and needs_restart %}
+        <div class="mt-2 text-xs font-bold bg-butter border-2 border-black px-2 py-1">SAVED — engine/voice need an operator restart of reachy-shell to take effect</div>
+        {% endif %}
     </form>
 </div>

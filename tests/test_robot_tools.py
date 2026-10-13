@@ -155,6 +155,12 @@ def test_motion_tools_drive_the_owner():
     assert [a.name for a in motion._anims] == ["nod", "shake_head"]
     assert h["peekaboo"]()["ok"] is True
     assert h["peekaboo"]()["ok"] is False  # busy: one exclusive move at a time
-    assert h["go_to_sleep"]()["ok"] is False
-    motion._jobs.clear()
+    # Issue #36: sleeping is a state, not an exclusive move. With a move still
+    # queued he goes asleep anyway (the pose queues behind it) so the
+    # microphone closes now instead of after the peekaboo finishes.
     assert h["go_to_sleep"]() == {"ok": True, "action": "sleeping"}
+    assert motion.sleeping
+    assert h["go_to_sleep"]() == {"ok": True, "action": "already_sleeping"}
+    motion._jobs.clear()
+    assert h["nod"]()["ok"]  # any physical tool moves the same state back
+    assert not motion.sleeping

@@ -227,7 +227,10 @@ def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | N
         return None
 
     def _woken() -> None:
-        motion.wake()  # asked to move while asleep: get up first
+        # Asleep is one state, not a pose (issue #36): any request that needs
+        # the head moves that same state, so being asked to nod also reopens
+        # the microphone. MotionOwner.wake() is the only path back up.
+        motion.wake()
 
     @_guard
     def look_left(**_kw: Any) -> dict:
@@ -293,10 +296,11 @@ def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | N
     def go_to_sleep(**_kw: Any) -> dict:
         if err := _ready():
             return err
-        if motion.sleeping:
+        # The flag moves even when the head is mid-move: the pose queues behind
+        # it, but the microphone closes now, because he must never keep
+        # answering the room lying down (issue #36).
+        if not motion.sleep(reason="tool"):
             return {"ok": True, "action": "already_sleeping"}
-        if not motion.sleep():
-            return {"ok": False, "error": "Busy with another move - wait for it to finish"}
         return {"ok": True, "action": "sleeping"}
 
     return {

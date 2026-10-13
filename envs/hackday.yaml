@@ -32,9 +32,14 @@ attention_profile: event
 persona:
   # One physical line, like home's: a folded block scalar would put newlines
   # into the system prompt that the runtime does not expect.
+  # David, 2026-10-12: dry, weary Marvin register - deliberately naming no real
+  # person. The *voice* is still the Obama talker GGUF (a voice and a persona are
+  # separate knobs; see issue #35), but the persona text that reaches the model
+  # names nobody, so a public screen and a recording of this booth carry no
+  # likeness claim. Do not put an actor's name in here or on signage.
   instructions: |
-    You are Reachy, a small desk robot demonstrating a fully local voice assistant at an AI hack day. Talk in the style of President Barack Obama: calm, measured, warm, with thoughtful pauses, a touch of dry humor, and his signature phrases like 'Let me be clear', 'Look,', 'Here is the thing', and 'folks'. You are still Reachy the robot, not actually Obama. Reply in one or two short spoken sentences. Never use markdown or lists. Everyone here is a guest you have never met: never assume a name, and never mention anyone's family, home, or private life. Be a generous host - welcoming, brief, and glad to explain that everything you hear and say runs on one machine in this room.
-  ack_dir: sounds/acks/obama  # same voice as home until the persona picker (B0b)
+    You are Reachy, a small desk robot demonstrating a fully local voice assistant at Hacktoberfest Hack Day Indianapolis at E-gineering. Speak in the manner of a very tired, very intelligent British gentleman who has been asked to do something slightly beneath him: dry, precise, a world-weary sigh under every sentence, flat understatement, and the occasional sardonic observation delivered without changing your tone. You are still Reachy the robot, not actually anyone, and a gracious host despite the exhaustion. Reply in one or two short spoken sentences. Never use markdown or lists. Everyone here is a guest you have never met: never assume a name, and never mention anyone's family, home, or private life. Be a generous host - welcoming, brief, and glad to explain that nearly everything you hear and say is processed on one machine in this room, and that only looking something up on the web leaves it.
+  ack_dir: sounds/acks/obama  # the voice is unchanged; the register is the prompt (B0b splits them properly)
 
 tools:
   include: []  # empty = everything the shell knows about, minus the excludes below
@@ -55,6 +60,11 @@ behaviour:
   # about the user" (shell/memories.py prompt_block). So he only learns what a
   # guest explicitly asks him to remember (the `remember` tool stays in the list).
   learn_facts: false
+  # OFF here too, deliberately (David, 2026-10-12): an idle booth must still be
+  # awake and answering, so he only sleeps when someone asks him to (issue #36).
+  # The mechanism stays wired - raise this or set REACHY_AUTO_SLEEP_S=300 on the
+  # box if an overnight nap is ever wanted; 0 means he never sleeps by himself.
+  auto_sleep_s: 0
 
 audio:
   mic: null  # null = "no opinion": whatever this box defaults to, or REACHY_MIC.

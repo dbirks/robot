@@ -1,0 +1,12 @@
+<!-- The refusal body (issue #38). Returned from the handler with a 405 when the
+     read-only gate is armed (REACHY_DASHBOARD_READONLY=1); base.html shows this text
+     in a banner on htmx:responseError. The gate is off by default: this is an armed
+     state, not the booth state. -->
+<div class="border-3 border-black bg-blush p-3" style="border-width: 3px;">
+    <div class="text-sm font-bold uppercase">Read-only gate armed — refused {{ path }}</div>
+    <div class="text-xs mt-1">
+        The dashboard has no auth, so this mode changes nothing: no service, no volume,
+        no settings file, no mute. Clear <span class="font-bold">{{ var }}</span> in
+        <span class="font-bold">.env</span> and restart reachy-dashboard to hand the controls back.
+    </div>
+</div>

@@ -98,6 +98,22 @@ def test_transcript_routed_to_listeners(journal, speaker):
     assert journal.find("turn.transcript_final")[0]["text"] == "hey robot"
 
 
+def test_assistant_transcript_is_journaled(journal, speaker):
+    """issue #38: nothing else in the journal carries his own words."""
+    c = make_client(journal, speaker)
+    seen = []
+    c.on_assistant_text = seen.append
+    asyncio.run(
+        c.handle_event(
+            {"type": "response.output_audio_transcript.done", "response_id": "r1", "transcript": "  sixty one.  "}
+        )
+    )
+    row = journal.find("response.transcript_final")[0]
+    assert row["text"] == "  sixty one.  "
+    assert row["response_id"] == "r1"
+    assert seen == ["  sixty one.  "]
+
+
 class StubRouter:
     def __init__(self, follow=True, delay=0.0, result=None):
         self.follow, self.delay, self.calls = follow, delay, []

@@ -631,6 +631,27 @@ def test_learn_facts_is_an_env_key(tmp_path, clean_env, monkeypatch):
     assert load_config("lab", envs_dir=envs).learn_facts is True
 
 
+def test_auto_sleep_s_is_an_env_key(tmp_path, clean_env, monkeypatch):
+    """Issue #36: auto-sleep is OFF everywhere it ships - code default, home and
+    hackday all resolve to 0, so he stays awake in an empty room (David's call).
+    The knob still has to work, which is why a non-zero value is checked through
+    both an env file and the override. Precedence is the same as every other
+    layer, and an empty `REACHY_AUTO_SLEEP_S=` is no opinion - it must not zero
+    a value the way a stray `REACHY_LEARN_FACTS=` once re-armed the fact miner."""
+    assert ShellConfig().auto_sleep_s == 0.0
+    assert load_config("home", envs_dir=ENVS_DIR).auto_sleep_s == 0.0
+    assert load_config("hackday", envs_dir=ENVS_DIR).auto_sleep_s == 0.0
+    envs = write_env(tmp_path, "lab", "behaviour:\n  auto_sleep_s: 45\n")
+    assert load_config("lab", envs_dir=envs).auto_sleep_s == 45.0  # non-zero still resolves
+    monkeypatch.setenv("REACHY_AUTO_SLEEP_S", "90")
+    assert load_config("lab", envs_dir=envs).auto_sleep_s == 90.0
+    assert load_config("hackday", envs_dir=ENVS_DIR).auto_sleep_s == 90.0  # override reaches the booth
+    monkeypatch.setenv("REACHY_AUTO_SLEEP_S", "  ")
+    assert load_config("lab", envs_dir=envs).auto_sleep_s == 45.0
+    assert load_config("hackday", envs_dir=ENVS_DIR).auto_sleep_s == 0.0
+    assert ShellConfig().auto_sleep_s == 0.0
+
+
 def test_the_explicit_remember_tool_still_works_in_the_booth(tmp_path, clean_env):
     """A guest who asks to be remembered is a request, not mining: `remember`
     stays in the hack-day tool list and writes to the hack-day store."""

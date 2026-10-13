@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Environment{% endblock %}
+
+{% block content %}
+<div id="environment-panel"
+     hx-get="/partials/environment"
+     hx-trigger="every 15s"
+     hx-swap="innerHTML">
+    {% include "partials/environment.html" %}
+</div>
+{% endblock %}

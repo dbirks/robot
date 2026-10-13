@@ -10,9 +10,19 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
+
+# `dashboard/server.py` runs two ways: `uvicorn dashboard.server:app` from the repo
+# root (tests, ad-hoc) and `python server.py` with WorkingDirectory=dashboard (the
+# systemd unit). The relative import is the first one; the flat one is the unit.
+try:
+    from . import env_panel, journal_read
+except ImportError:  # pragma: no cover - systemd path
+    import env_panel  # type: ignore[no-redef]
+    import journal_read  # type: ignore[no-redef]
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("dashboard")
@@ -20,12 +30,67 @@ log = logging.getLogger("dashboard")
 ROBOT_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = ROBOT_DIR / ".env"
 DB_PATH = ROBOT_DIR / "data" / "sessions.db"
+JOURNAL_FALLBACK = ROBOT_DIR / "data" / "events.db"
 FACES_PATH = ROBOT_DIR / "data" / "known_faces.json"
 
-SERVICES = ["reachy-mini-daemon", "llama-server", "reachy-agent", "qwen3-tts"]
+# The controllable list is the units that exist and matter. `reachy-agent` and
+# `qwen3-tts` are gone on purpose (issue #38): restarting a dead legacy row from a
+# visitor's click would start a second mic/speaker owner and silence the real
+# shell (ADR 0002). See dashboard/env_panel.py for the reasoning.
+SERVICES = list(env_panel.SERVICE_UNITS)
 
 app = FastAPI(title="Reachy Mini Dashboard")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+# Vendored assets (Tailwind play script, htmx, the SSE extension, both mono
+# faces). This box has filtered egress and the booth has no guarantee of any, so
+# a page that pulls from a CDN is a page that renders unstyled in front of a room.
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
+
+# ---------------------------------------------------------------------------
+# Read-only gate (issue #38) — armed, not engaged
+# ---------------------------------------------------------------------------
+
+READONLY = env_panel.readonly_enabled()
+# Nothing is allowed to write *while the gate is armed*: `allow=()` is the explicit
+# statement that no endpoint has been proven safe to mutate from an unattended room.
+# Default state is interactive (David's call for the booth), so this is currently a
+# no-op — but the check stays in every handler rather than in a template, because
+# hiding a button would leave `curl -X POST` working.
+READONLY_ALLOW: tuple[str, ...] = ()
+
+# Faces stay hidden at every privilege level (issue #38): `data/known_faces.json` and
+# its thumbnails are family names and photos, and the interactive booth has hands.
+# Nothing about them renders, and the routes answer 404 rather than an empty list,
+# so "hidden" cannot be read as "no faces yet". Restore with FACES_VISIBLE = True at
+# home; the template and helpers are kept for that.
+FACES_VISIBLE = False
+
+
+def refuse_mutation(request: Request) -> Response | None:
+    """Return the refusal for a mutating request, or None to let it through.
+
+    405 with an HTML body the page shows in a banner (`htmx:responseError` in
+    base.html), so an armed gate refuses visibly instead of a control that appears
+    to do nothing.
+    """
+    if not READONLY:
+        return None
+    verdict = journal_read.readonly_reject(request.method, request.url.path, allow=READONLY_ALLOW)
+    if verdict is None:
+        return None
+    log.info("read-only refusal: %s %s", request.method, request.url.path)
+    return HTMLResponse(
+        render_refusal(request, request.url.path),
+        status_code=verdict["status"],
+        headers={"HX-Rewrite": "true"},
+    )
+
+
+def render_refusal(request: Request, path: str) -> str:
+    return templates.get_template("partials/refused.html").render(
+        request=request, path=path, readonly=READONLY, var=env_panel.READONLY_VAR
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +206,51 @@ def write_env_setting(key: str, value: str):
     if not found:
         new_lines.append(f"{key}={value}")
     ENV_PATH.write_text("\n".join(new_lines) + "\n")
+
+
+def journal_path() -> Path:
+    """Where the live journal is, per the resolved env — not a hardcoded guess."""
+    cfg = env_panel._RESOLVER.resolve()["config"] or {}
+    rel = str(cfg.get("journal_path") or "").strip()
+    if not rel:
+        return JOURNAL_FALLBACK
+    path = Path(rel)
+    return path if path.is_absolute() else ROBOT_DIR / path
+
+
+def live_turns(limit: int = 400) -> tuple[list[dict], str | None, dict]:
+    """The conversation as the shell sees it: rows from the live event journal.
+
+    The journal is the only conversation source, in every mode. `data/sessions.db`
+    is the legacy agent's store - hours of home talk, last written 2026-07-28, and
+    the shell never writes it - so rendering it first and letting the SSE stream
+    overwrite it seconds later would both show family conversation on a public
+    screen and swap the page's data source mid-demo (issue #38 review P1).
+    A missing journal is reported as such, not as an empty chat.
+    """
+    path = journal_path()
+    if not path.exists():
+        return [], None, {"journal": str(path), "journal_error": "journal not found", "liveness": {}}
+    try:
+        conn = journal_read.open_ro(path)
+    except Exception as e:  # noqa: BLE001 - the page must still render the failure
+        log.error("cannot open %s: %s", path, e)
+        return [], None, {"journal": str(path), "journal_error": str(e), "liveness": {}}
+    try:
+        events = journal_read.latest_events(conn, limit=limit, types=journal_read.CONVERSATION_TYPES)
+        turns = journal_read.turns_from_events(events)[-100:]
+        badge = journal_read.env_badge(journal_read.latest_events(conn, limit=20))
+        return (
+            turns,
+            badge,
+            {
+                "journal": str(path),
+                "journal_error": None,
+                "liveness": journal_read.liveness(conn),
+            },
+        )
+    finally:
+        conn.close()
 
 
 def get_recent_turns(limit: int = 100) -> tuple[list[dict], str | None]:
@@ -309,6 +419,7 @@ def render(request: Request, template: str, ctx: dict | None = None, **kwargs) -
     """Shorthand for TemplateResponse with the new Starlette API."""
     context = ctx or {}
     context.update(kwargs)
+    context.setdefault("readonly", READONLY)
     return templates.TemplateResponse(request, template, context=context)
 
 
@@ -325,13 +436,27 @@ async def index():
 
 @app.get("/conversation", response_class=HTMLResponse)
 async def conversation_page(request: Request):
-    turns, session_id = get_recent_turns()
+    turns, env, state = live_turns()
     return render(
         request,
         "conversation.html",
         turns=turns,
-        session_id=session_id,
+        session_id=state.get("session_id"),
+        live_env=env,
+        live=state,
+        readonly=READONLY,
         active_page="conversation",
+    )
+
+
+@app.get("/environment", response_class=HTMLResponse)
+async def environment_page(request: Request):
+    return render(
+        request,
+        "environment.html",
+        panel=env_panel.build_panel(),
+        readonly=READONLY,
+        active_page="environment",
     )
 
 
@@ -358,6 +483,8 @@ async def settings_page(request: Request):
 
 @app.get("/faces", response_class=HTMLResponse)
 async def faces_page(request: Request):
+    if not FACES_VISIBLE:
+        return faces_hidden()
     return render(
         request,
         "faces.html",
@@ -366,11 +493,25 @@ async def faces_page(request: Request):
     )
 
 
+def faces_hidden() -> HTMLResponse:
+    """404, not an empty list: hidden and "nobody has been seen yet" are different answers."""
+    body = (
+        "<div style='font-family:monospace;padding:1.5rem'>"
+        "<b>FACES ARE HIDDEN IN THIS DEPLOYMENT</b>"
+        "<div>known_faces.json and its thumbnails are personal data, so this panel does not "
+        "serve them at any privilege level. Set FACES_VISIBLE = True in dashboard/server.py on "
+        "the home machine.</div></div>"
+    )
+    return HTMLResponse(body, status_code=404)
+
+
 @app.get("/face_thumbnail/{name}")
 async def face_thumbnail(name: str):
     """Serve a face thumbnail image."""
     from fastapi.responses import FileResponse
 
+    if not FACES_VISIBLE:
+        return faces_hidden()
     path = THUMB_DIR / f"{name}.jpg"
     if path.exists():
         return FileResponse(path, media_type="image/jpeg")
@@ -392,6 +533,9 @@ async def partial_services(request: Request):
 
 @app.post("/services/{name}/{action}", response_class=HTMLResponse)
 async def service_action(request: Request, name: str, action: str):
+    refused = refuse_mutation(request)
+    if refused is not None:
+        return refused
     if name not in SERVICES or action not in ("restart", "stop"):
         return HTMLResponse("Invalid", status_code=400)
     try:
@@ -408,10 +552,27 @@ async def partial_gpu(request: Request):
     return render(request, "partials/gpu.html", gpu=get_gpu_stats())
 
 
+@app.get("/partials/environment", response_class=HTMLResponse)
+async def partial_environment(request: Request):
+    return render(request, "partials/environment.html", panel=env_panel.build_panel(), readonly=READONLY)
+
+
 @app.get("/partials/conversation", response_class=HTMLResponse)
 async def partial_conversation(request: Request):
-    turns, session_id = get_recent_turns()
-    return render(request, "partials/conversation.html", turns=turns, session_id=session_id)
+    turns, env, state = live_turns()
+    return render(
+        request,
+        "partials/conversation.html",
+        turns=turns,
+        session_id=state.get("session_id"),
+        live_env=env,
+        live=state,
+        readonly=READONLY,
+    )
+
+
+def state_blank() -> dict:
+    return {"journal": None, "journal_error": None, "liveness": {}}
 
 
 @app.get("/partials/settings", response_class=HTMLResponse)
@@ -422,6 +583,9 @@ async def partial_settings(request: Request):
 @app.post("/settings/volume", response_class=HTMLResponse)
 async def set_volume(request: Request, volume_boost: str = Form(...)):
     """Set pipewire volume immediately without restarting anything."""
+    refused = refuse_mutation(request)
+    if refused is not None:
+        return refused
     try:
         level = float(volume_boost)
         level = max(0.0, min(5.0, level))
@@ -439,6 +603,9 @@ async def save_settings(
     tts_engine: str = Form(...),
     kokoro_voice: str = Form(...),
 ):
+    refused = refuse_mutation(request)
+    if refused is not None:
+        return refused
     # Apply volume to pipewire immediately
     try:
         set_pipewire_volume(float(volume_boost))
@@ -447,44 +614,33 @@ async def save_settings(
     write_env_setting("VOLUME_BOOST", volume_boost)
     write_env_setting("TTS_ENGINE", tts_engine)
     write_env_setting("KOKORO_VOICE", kokoro_voice)
-    return render(request, "partials/settings.html", settings=get_env_settings(), saved=True)
-
-
-@app.post("/settings/apply-restart", response_class=HTMLResponse)
-async def apply_restart(
-    request: Request,
-    volume_boost: str = Form(...),
-    tts_engine: str = Form(...),
-    kokoro_voice: str = Form(...),
-):
-    # Apply volume to pipewire immediately
-    try:
-        set_pipewire_volume(float(volume_boost))
-    except (ValueError, subprocess.SubprocessError):
-        pass
-    write_env_setting("VOLUME_BOOST", volume_boost)
-    write_env_setting("TTS_ENGINE", tts_engine)
-    write_env_setting("KOKORO_VOICE", kokoro_voice)
-    try:
-        subprocess.run(
-            ["systemctl", "--user", "restart", "reachy-agent"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except Exception as e:
-        log.error("Restart reachy-agent failed: %s", e)
-    await asyncio.sleep(1)
-    return render(request, "partials/settings.html", settings=get_env_settings(), restarted=True)
+    # There is no "apply & restart" route any more (issue #38): the only unit it ever
+    # restarted was the retired reachy-agent, and starting it takes the audio devices
+    # away from the live shell (ADR 0002). Volume is applied here and now; an
+    # engine/voice change needs an operator to restart reachy-shell from Services.
+    return render(
+        request,
+        "partials/settings.html",
+        settings=get_env_settings(),
+        saved=True,
+        needs_restart=True,
+    )
 
 
 @app.get("/partials/faces", response_class=HTMLResponse)
 async def partial_faces(request: Request):
+    if not FACES_VISIBLE:
+        return faces_hidden()
     return render(request, "partials/faces.html", faces=get_known_faces())
 
 
 @app.delete("/faces/{name}", response_class=HTMLResponse)
 async def delete_face(request: Request, name: str):
+    if not FACES_VISIBLE:
+        return faces_hidden()
+    refused = refuse_mutation(request)
+    if refused is not None:
+        return refused
     deleted = delete_known_face(name)
     return render(request, "partials/faces.html", faces=get_known_faces(), deleted=name if deleted else None)
 
@@ -515,6 +671,9 @@ async def mic_status():
 
 @app.post("/api/mic_toggle", response_class=HTMLResponse)
 async def mic_toggle(request: Request):
+    refused = refuse_mutation(request)
+    if refused is not None:
+        return refused
     try:
         subprocess.run(
             ["wpctl", "set-mute", "@DEFAULT_SOURCE@", "toggle"],
@@ -533,36 +692,38 @@ async def partial_mic_button(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Routes — Agent sleep/wake control
+# Routes — retired agent sleep/wake control (issue #38)
 # ---------------------------------------------------------------------------
 
 
-def _get_agent_running() -> bool:
-    """Check if the reachy-agent service is active."""
-    status = get_service_status("reachy-agent")
-    return status["running"]
+def retired_agent() -> HTMLResponse:
+    """The sleep/wake control is retired, and it is not a read-only question.
+
+    `reachy-agent` runs the legacy loop, which opens its own mic and speaker. With
+    the new shell live, starting it from a kiosk button does not wake the robot — it
+    takes the audio devices from the process that is actually talking (ADR 0002),
+    which is the failure this list was supposed to be free of. Sleep is the shell's
+    own business (`auto_sleep_s`, shell/sleep.py).
+    """
+    return HTMLResponse(
+        "<div style='font-family:monospace;padding:1.5rem'>"
+        "<b>SLEEP/WAKE CONTROL IS RETIRED</b><div>reachy-agent is the legacy loop; starting it "
+        "opens a second audio owner and silences the running shell. Sleep is automatic "
+        "(auto_sleep_s). Restart the real service from the Services panel as the operator.</div></div>",
+        status_code=404,
+    )
 
 
 @app.post("/api/agent_toggle", response_class=HTMLResponse)
 async def agent_toggle(request: Request):
-    running = _get_agent_running()
-    action = "stop" if running else "start"
-    try:
-        subprocess.run(
-            ["systemctl", "--user", action, "reachy-agent"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except Exception as e:
-        log.error("Agent %s failed: %s", action, e)
-    await asyncio.sleep(0.5)
-    return render(request, "partials/agent_button.html", agent_running=_get_agent_running())
+    return retired_agent()
 
 
 @app.get("/partials/agent_button", response_class=HTMLResponse)
 async def partial_agent_button(request: Request):
-    return render(request, "partials/agent_button.html", agent_running=_get_agent_running())
+    # Nothing polls it any more (base.html dropped the button); stay empty rather
+    # than render a control that answers 404 when pressed.
+    return HTMLResponse("")
 
 
 # ---------------------------------------------------------------------------
@@ -572,54 +733,56 @@ async def partial_agent_button(request: Request):
 
 @app.get("/sse/conversation")
 async def sse_conversation(request: Request):
-    """Push new conversation turns via Server-Sent Events."""
+    """Push the live conversation over Server-Sent Events.
+
+    The payload is the rendered partial, not one turn at a time. The journal's
+    transcript rows collapse into turns (`journal_read.collapse_finals`) and an
+    assistant bubble can gain a tool block after it first appeared, so a stream of
+    individual turns would either double-render or lose the merge. Re-rendering the
+    window is one read-only query over a few hundred rows and cannot drift from the
+    journal, which is the property that matters next to a room full of people.
+    """
 
     async def event_generator():
         last_id = 0
-        # Get initial max id
-        if DB_PATH.exists():
+        path = journal_path()
+        if path.exists():
             try:
-                conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
-                row = conn.execute("SELECT MAX(id) FROM turns").fetchone()
-                if row and row[0]:
-                    last_id = row[0]
+                conn = journal_read.open_ro(path)
+                head = conn.execute("SELECT MAX(id) FROM events").fetchone()
                 conn.close()
-            except Exception:
-                pass
+                last_id = int(head["id"] or 0) if head else 0
+            except Exception as e:  # noqa: BLE001 - start from the top rather than lie
+                log.error("SSE cursor init failed: %s", e)
 
         while True:
             if await request.is_disconnected():
                 break
-            if DB_PATH.exists():
+            path = journal_path()
+            if path.exists():
                 try:
-                    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
-                    conn.row_factory = sqlite3.Row
-                    rows = conn.execute(
-                        "SELECT id, session_id, timestamp, role, content, tool_calls, tool_call_id "
-                        "FROM turns WHERE id > ? ORDER BY id ASC LIMIT 20",
-                        (last_id,),
-                    ).fetchall()
-                    for r in rows:
-                        last_id = r["id"]
-                        tc = None
-                        if r["tool_calls"]:
-                            try:
-                                tc = json.loads(r["tool_calls"])
-                            except json.JSONDecodeError:
-                                tc = r["tool_calls"]
-                        turn = {
-                            "id": r["id"],
-                            "role": r["role"],
-                            "content": r["content"],
-                            "tool_calls": tc,
-                            "tool_call_id": r["tool_call_id"],
-                            "timestamp": r["timestamp"],
-                        }
-                        yield {"event": "new_turn", "data": json.dumps(turn)}
-                    conn.close()
-                except Exception as e:
-                    log.error("SSE DB error: %s", e)
-            await asyncio.sleep(0.5)
+                    conn = journal_read.open_ro(path)
+                except Exception as e:  # noqa: BLE001
+                    log.error("SSE open %s failed: %s", path, e)
+                    conn = None
+                if conn is not None:
+                    try:
+                        new = journal_read.events_after(conn, last_id, limit=500, types=journal_read.CONVERSATION_TYPES)
+                        if new:
+                            last_id = new[-1]["id"]
+                            turns = journal_read.turns_from_events(
+                                journal_read.latest_events(conn, limit=400, types=journal_read.CONVERSATION_TYPES)
+                            )[-100:]
+                            badge = journal_read.env_badge(journal_read.latest_events(conn, limit=20))
+                            html = templates.get_template("partials/conversation_body.html").render(
+                                request=request, turns=turns, live_env=badge, readonly=READONLY
+                            )
+                            yield {"event": "refresh", "data": html}
+                    except Exception as e:  # noqa: BLE001
+                        log.error("SSE journal error: %s", e)
+                    finally:
+                        conn.close()
+            await asyncio.sleep(1.0)
 
     return EventSourceResponse(event_generator())
 

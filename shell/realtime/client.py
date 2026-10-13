@@ -333,6 +333,12 @@ class RealtimeClient:
                     self.on_first_audio()
 
         elif t == "response.output_audio_transcript.done":
+            # Journal first: a listener that raises must not cost us the transcript (ADR 0007).
+            self.journal.write(
+                J.RESPONSE_TRANSCRIPT_FINAL,
+                text=ev.get("transcript") or "",
+                response_id=ev.get("response_id", ""),
+            )
             if self.on_assistant_text:
                 self.on_assistant_text(ev.get("transcript") or "")
 

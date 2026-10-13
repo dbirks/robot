@@ -22,9 +22,21 @@ by default anywhere outside an explicitly-toggled Model Lab experiment.
 Event families (superset grows, never renames — add a type instead):
 `audio.*`, `kws.detected`, `attention.*` (decision/lease_*/profile_changed with the
 evidence that produced it), `participant.*`, `turn.*` (transcript partial/final,
-smart-turn score), `response.*` (created/first_text/first_audio/cancelled/completed),
+smart-turn score), `response.*` (created/first_text/first_audio/cancelled/completed/transcript_final),
 `tool.*`, `tts.*`, `context.compacted` (before/after tokens + latency),
-`memory.updated`, `model.loaded/unloaded`, `system.resource_sample`.
+`memory.updated`, `model.loaded/unloaded`, `system.resource_sample`,
+`sleep.enter`/`sleep.exit` (issue #36: sleep is one state that closes the microphone with
+the head, so each row carries the `reason` that moved it — `tool`, `auto_sleep`,
+`kws:<word>`; the absence of a `sleep.exit` is what "he answered the room while lying
+ down" looks like).
+
+`response.transcript_final` (issue #38) is the one row that carries **what he actually said**: `{text, response_id}`
+from upstream `response.output_audio_transcript.done`, written by `shell/realtime/client.py` before the
+`on_assistant_text` listener runs. Every other `response.*` row is ids and timings only, so reading the live
+journal gave a conversation with his side missing entirely (the 3552 turns in `data/sessions.db` are all dead
+legacy-agent data, last written 2026-07-28). It is written even when `text` is empty: an empty
+`transcript_final` beside a `response.cancelled` is the record of a barge-in cutting a sentence off, which is
+what ADR 0003's cancellation acceptance wants queryable. Bubble-rendering readers skip blank text.
 
 `env` is a **reserved payload key**: `shell/env.py` resolves a deployment environment
 and `Journal(..., env=cfg.env)` stamps it on every row (docs/environments.md A4), so one

@@ -1,6 +1,9 @@
 <div class="border-3 border-black bg-mint-light p-4" style="border-width: 3px;">
     <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-extrabold uppercase tracking-widest">Services</h2>
+        {% if readonly %}
+        <span class="text-xs font-bold uppercase bg-black text-butter px-2 py-1">read-only: restart/stop refused</span>
+        {% endif %}
         <span class="htmx-indicator text-xs font-bold">UPDATING...</span>
     </div>
     <div class="space-y-2">

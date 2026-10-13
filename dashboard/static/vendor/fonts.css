@@ -1,0 +1,44 @@
+/* Vendored faces — this box has filtered egress and the booth may have none,
+   so the fonts the dashboard renders in are served from /static (issue #38). */
+@font-face {
+    font-family: 'Maple Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('/static/vendor/fonts/maple-mono-latin-400.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Maple Mono';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('/static/vendor/fonts/maple-mono-latin-500.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Maple Mono';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('/static/vendor/fonts/maple-mono-latin-700.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('/static/vendor/fonts/ibm-plex-mono-latin-400.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('/static/vendor/fonts/ibm-plex-mono-latin-500.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('/static/vendor/fonts/ibm-plex-mono-latin-700.woff2') format('woff2');
+}

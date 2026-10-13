@@ -158,6 +158,13 @@ class ShellConfig:
     # tool is NOT gated by this - a guest who asks to be remembered is answered.
     learn_facts: bool = field(default_factory=lambda: _bool_env("REACHY_LEARN_FACTS"))
 
+    # Lie down by himself after this many seconds of silence with nobody
+    # engaged (behaviour.auto_sleep_s, shell/sleep.py + shell/__main__.py). 0 =
+    # never, which is what BOTH environments resolve to today (David's call:
+    # Reachy stays awake even in an empty room); the knob stays for operators.
+    # Whatever it is, the wake word always wakes him (issue #36).
+    auto_sleep_s: float = field(default_factory=lambda: float(_env("REACHY_AUTO_SLEEP_S", "0")))
+
     # Direct llama.cpp endpoint for side tasks (conversation compaction).
     llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "http://127.0.0.1:8080/v1"))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "local"))

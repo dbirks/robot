@@ -44,6 +44,7 @@ from .reactions import WakeReaction
 from .realtime import RealtimeClient
 from .robot import RobotLink
 from .robot_tools import build_handlers, load_sdk_sound
+from .sleep import SleepState, feeds_keyword_spotter, feeds_service, should_auto_sleep
 from .tools import ToolRouter, apply_tool_policy
 
 log = logging.getLogger("shell")
@@ -82,8 +83,9 @@ def fact_mining(cfg: ShellConfig, memories: MemoryStore) -> tuple[FactExtractor 
 
 async def amain(cfg: ShellConfig) -> None:
     journal = Journal(cfg.journal_path, env=cfg.env)  # env on every event (A4)
+    sleep = SleepState(journal)  # the one asleep flag: head and microphone (issue #36)
     profile = load_profile(cfg.attention_profile)
-    lease = AttentionLease(profile, journal)
+    lease = AttentionLease(profile, journal, asleep=lambda: sleep.sleeping)
     resolver = ParticipantResolver(profile, journal)
     manager = AttentionManager(profile, lease, journal)
 
@@ -95,7 +97,14 @@ async def amain(cfg: ShellConfig) -> None:
     camera = CameraGrabber(robot.daemon_url)
     sway = SpeechSway(cfg.sample_rate)
     speaker.tap = sway.feed  # head sways with the samples actually played
-    motion = MotionOwner(robot, journal, hz=cfg.motion_hz, is_speaking=lambda: speaker.playing, sway=sway)
+    motion = MotionOwner(
+        robot,
+        journal,
+        hz=cfg.motion_hz,
+        is_speaking=lambda: speaker.playing,
+        sway=sway,
+        sleep_state=sleep,
+    )
     sounds: dict[str, object] = {}
 
     def play_sound(name: str) -> None:  # tool earcons go through the one speaker owner
@@ -104,8 +113,23 @@ async def amain(cfg: ShellConfig) -> None:
         if sounds[name] is not None:
             speaker.enqueue(speaker.generation, "sound", sounds[name])
 
+    def wake_up(reason: str) -> bool:
+        """End the nap: head and antennas up through the motion owner, the SDK
+        chirp through the one speaker. False when he was already awake."""
+        if not motion.wake(reason=reason):
+            return False
+        play_sound("wake_up.wav")
+        return True
+
     memories = MemoryStore(cfg.memories_path)  # per-environment store (A5)
     extract_facts, save_fact = fact_mining(cfg, memories)  # off in a shared booth
+
+    def tool_confidence(name: str) -> float:
+        # Asleep: no state-changing tool runs. The lease cannot be acquired
+        # while he sleeps, but one that was already live keeps its confidence
+        # for its remaining seconds, so sleep has to zero it out (issue #36).
+        return 0.0 if sleep.sleeping else manager.tool_confidence(name)
+
     tools, handlers = build_handlers(
         robot, camera, data_dir=cfg.data_dir, motion=motion, play_sound=play_sound, memories=memories
     )
@@ -114,7 +138,7 @@ async def amain(cfg: ShellConfig) -> None:
         tools,
         handlers,
         journal,
-        confidence_fn=manager.tool_confidence,
+        confidence_fn=tool_confidence,
         confidence_threshold=profile.tool_confidence,
     )
 
@@ -179,6 +203,11 @@ async def amain(cfg: ShellConfig) -> None:
 
     def on_transcript(text: str) -> None:
         turn_t0[0] = None
+        if sleep.sleeping:
+            # Nothing said after he went down reaches history, the LLM or a tool
+            # call - including the in-flight transcript his sleep command cut
+            # short (issue #36).
+            return
         if text:
             awaiting_reply[0] = time.monotonic()
         if text and lease.active() and wants_sleep(text):
@@ -253,6 +282,7 @@ async def amain(cfg: ShellConfig) -> None:
         if was_speaking[0] and not speaking:
             lease.exchange("reply-played")  # answer window starts when he stops
         was_speaking[0] = speaking
+        asleep = sleep.sleeping  # one read per frame: head and mic cannot disagree
         now = time.monotonic()
         t0 = turn_t0[0]
         st = stopped_at[0]
@@ -265,17 +295,22 @@ async def amain(cfg: ShellConfig) -> None:
             turn_t0[0] = None
             mute_until[0] = now + FORCED_END_SILENCE_S
             journal.write("turn.forced_end", after_s=round(now - t0, 1))
-        if (lease.active() or speaking) and now >= mute_until[0]:
+        if feeds_service(sleeping=asleep, engaged=lease.active() or speaking, muted=now < mute_until[0]):
             client.feed(pcm)  # engaged: s2s owns VAD/turn/STT
             return
-        # Not engaged: send silence, not nothing. If the stream just stops,
+        # Not engaged (or asleep): send silence, not nothing. If the stream just stops,
         # s2s never sees a turn end and keeps it open until the NEXT wake -
         # then answers a conversation from minutes ago (2026-10-04: 13 min).
         client.feed(silence.setdefault(len(pcm), bytes(len(pcm))))
-        if kws is None or lease.active() or speaking:
+        # KWS keeps hearing the real frames however deaf the service is: the
+        # wake word is the alarm clock, and this is the one path out of a nap
+        # that does not need the room to be listened to (issue #36).
+        if kws is None or not feeds_keyword_spotter(sleeping=asleep, engaged=lease.active() or speaking):
             return
         for hit in kws.process(pcm):
             kws_hit_t[0] = time.monotonic()
+            if sleep.sleeping:
+                wake_up(f"kws:{hit.keyword}")  # up, antennas up, chirp - then normal attention
             decision = manager.on_keyword(None, hit.keyword)
             reaction.wake(doa_deg=None, attending_same=not decision.acquired)  # head turn first
             journal.write("kws.detected", keyword=hit.keyword, score=hit.score)
@@ -298,6 +333,8 @@ async def amain(cfg: ShellConfig) -> None:
 
     xmos = XmosWatchdog(journal, reboot_xmos)
 
+    boot_t = time.monotonic()  # an idle booth that nobody ever talks to goes to sleep too
+
     async def attention_tick():
         # 1 Hz: the beam must widen again soon after attention ends, or the
         # next wake word from another direction is attenuated.
@@ -310,6 +347,14 @@ async def amain(cfg: ShellConfig) -> None:
                 lease.expire_if_due()
             if xmos_tuner.focused is not None and not lease.active() and not speaker.playing:
                 await asyncio.to_thread(xmos_tuner.release)
+            idle_s = time.monotonic() - max(boot_t, lease.last_interaction, stopped_at[0] or 0.0, turn_t0[0] or 0.0)
+            if should_auto_sleep(
+                auto_sleep_s=cfg.auto_sleep_s,
+                idle_s=idle_s,
+                engaged=lease.active() or speaker.playing or speech_open[0],
+                sleeping=sleep.sleeping,
+            ):
+                motion.sleep(reason="auto_sleep")  # journals sleep.enter (ADR 0007)
 
     async def watchdog_sample():
         while True:

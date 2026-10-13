@@ -46,6 +46,10 @@ TURN_TRANSCRIPT_PARTIAL = "turn.transcript_partial"
 TURN_TRANSCRIPT_FINAL = "turn.transcript_final"
 
 RESPONSE_CREATED = "response.created"
+# His OWN spoken reply (upstream response.output_audio_transcript.done). Nothing
+# else in the journal carries assistant text - the response.* payloads are ids and
+# timings only - so without this row the dashboard cannot show the conversation.
+RESPONSE_TRANSCRIPT_FINAL = "response.transcript_final"
 RESPONSE_FIRST_AUDIO = "response.first_audio"
 RESPONSE_CANCELLED = "response.cancelled"
 RESPONSE_COMPLETED = "response.completed"
@@ -65,6 +69,9 @@ MOTION_EXCLUSIVE = "motion.exclusive"  # scripted SDK move ran with the loop pau
 MOTION_ERROR = "motion.error"  # set_target failures, rate-limited
 MOTION_WAKE_TURN = "motion.wake_turn"  # KWS -> head target set; latency_ms from detection
 MOTION_DOA_AIM = "motion.doa_aim"  # in-conversation re-aim toward the talker
+
+SLEEP_ENTER = "sleep.enter"  # one state moved: head down AND microphone closed
+SLEEP_EXIT = "sleep.exit"  # reason names what woke him (kws:<word>, tool, ...)
 
 MODEL_LOADED = "model.loaded"
 SYSTEM_RESOURCE_SAMPLE = "system.resource_sample"
