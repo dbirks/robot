@@ -476,3 +476,57 @@ def test_trace_page_renders_without_a_network_and_says_what_is_missing(tmp_path)
     assert "first audio" in html and "cancelled" in html and "1500" in html
     html = env.get_template("trace.html").render(panel=panel, turn=None, unknown_id=99)
     assert "is not in the traced window" in html
+
+
+def _ev(eid, typ, wall, **payload):
+    return {"id": eid, "type": typ, "wall": wall, "mono": wall, "payload": payload}
+
+
+def _user_rows(rows):
+    return [r["content"] for r in rows if r["role"] == "user"]
+
+
+def test_the_caption_reads_reachy_when_the_spotter_heard_it():
+    """Tonight's journal: the spotter matched "Reachy" score 1.0 while the STT wrote
+    Richie / Ricci / Hotel. Attendees see those words on a screen in a public room."""
+    rows = jr.turns_from_events(
+        [
+            _ev(1, jr.KWS_DETECTED, 100.0, keyword="Reachy", score=1.0),
+            _ev(2, jr.TURN_TRANSCRIPT_FINAL, 100.3, text="Richie, can you hear me?"),
+        ]
+    )
+    assert _user_rows(rows) == ["Reachy, can you hear me?"]
+
+
+def test_no_spotter_hit_means_the_words_stay_the_speaker_s():
+    rows = jr.turns_from_events([_ev(2, jr.TURN_TRANSCRIPT_FINAL, 100.3, text="richie can you hear me")])
+    assert _user_rows(rows) == ["richie can you hear me"]
+
+
+def test_the_correction_is_local_to_the_wake_word():
+    """Only the first few words, and only the alias token: "the quiet room was nice"
+    style sentences must survive intact, and a genuine question about a hotel is not
+    a wake word just because the spotter fired nearby."""
+    rows = jr.turns_from_events(
+        [
+            _ev(1, jr.KWS_DETECTED, 100.0, keyword="Reachy"),
+            _ev(2, jr.TURN_TRANSCRIPT_FINAL, 100.2, text="hey you richie is fine but not ricci"),
+            _ev(3, jr.KWS_DETECTED, 200.0, keyword="Reachy"),
+            _ev(4, jr.TURN_TRANSCRIPT_FINAL, 200.2, text="can you book a hotel for tuesday"),
+        ]
+    )
+    said = _user_rows(rows)
+    assert said[0] == "hey you Reachy is fine but not ricci"  # 4th word: outside the window
+    assert said[1] == "can you book a hotel for tuesday"  # "hotel" not in first 3 words
+
+
+def test_the_journal_row_itself_is_never_rewritten():
+    """ADR 0007: the journal is an audit record. The caption is derived at read time,
+    so the stored payload must still carry what the microphone actually produced."""
+    events = [
+        _ev(1, jr.KWS_DETECTED, 100.0, keyword="Reachy"),
+        _ev(2, jr.TURN_TRANSCRIPT_FINAL, 100.2, text="Hotel, can you hear me?"),
+    ]
+    rows = jr.turns_from_events(events)
+    assert _user_rows(rows) == ["Reachy, can you hear me?"]
+    assert events[1]["payload"]["text"] == "Hotel, can you hear me?"

@@ -12,6 +12,7 @@ conversation template already renders. It never writes, creates or prunes.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import urllib.parse
@@ -23,6 +24,7 @@ from typing import Any
 # literals so the dashboard can be vendored without the shell package.
 TURN_TRANSCRIPT_PARTIAL = "turn.transcript_partial"
 TURN_TRANSCRIPT_FINAL = "turn.transcript_final"
+KWS_DETECTED = "kws.detected"
 RESPONSE_TRANSCRIPT_FINAL = "response.transcript_final"
 RESPONSE_CANCELLED = "response.cancelled"
 TOOL_STARTED = "tool.started"
@@ -47,6 +49,10 @@ CONVERSATION_TYPES = (
     TOOL_STARTED,
     TOOL_COMPLETED,
     TOOL_FAILED,
+    # The wake word is not a bubble. It is read because the display correction in
+    # `display_transcript` only fires when the spotter actually heard the name - see
+    # that docstring for why that gate is the whole design.
+    KWS_DETECTED,
 )
 
 # The rows a trace is built from (issue #39). Everything here is written by the
@@ -190,6 +196,54 @@ def collapse_finals(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+# What the STT actually returns for "hey Reachy" on this box, taken from tonight's
+# journal rows rather than a guessed homophone list: `Richie`, `Ricci`, and "Hey
+# Reachy" collapsing into the single word `Hotel`. Extend this by looking, not by
+# imagining - the wake word is spotter-matched in its own rows:
+#
+#   sqlite3 -readonly data/events.db "select wall,payload from events where
+#     type='kws.detected' or type='turn.transcript_final' order by id"
+#
+# and reading what follows each kws.detected. The name is BPE-out-of-vocabulary for
+# Parakeet TDT v3 and that backend has no hotword/context knob at all
+# (`nano_parakeet.transcribe(audio, timestamps)` is the whole signature, and the
+# pinned service exposes no such flag for Parakeet), so this is a caption
+# readability fix at the display layer - it does not make him hear better.
+WAKE_WORD = "Reachy"
+WAKE_ALIASES = {"richie", "ricci", "hotel"}
+# The spotter fires on the same breath as the transcript it belongs to; anything
+# further apart is a different utterance and none of our business.
+KWS_WINDOW_S = 2.5
+
+
+def wake_word_heard(kws_walls: list[float], wall: float) -> bool:
+    return any(abs(kw - wall) <= KWS_WINDOW_S for kw in kws_walls)
+
+
+def display_transcript(text: str, *, wake_word_heard_this_turn: bool) -> str:
+    """The user's words as the caption should read them, for a screen in a public room.
+
+    Three guards, because rewriting what somebody said is exactly the kind of thing
+    an audit record must never do (ADR 0007): the keyword spotter must have fired
+    within `KWS_WINDOW_S` of this transcript (proof the wake word was said, not that
+    the ASR guessed), the alias must sit in the first few words ("was it quiet in
+    Rome" has no business being touched, and neither does a request about a hotel),
+    and only that one token changes. The journal keeps the verbatim text; the LLM is
+    not touched either - `RealtimeClient` is the only thing that injects into that
+    conversation, and a caption is not a reason to edit what a person asked.
+    """
+    if not text or not wake_word_heard_this_turn:
+        return text
+    words = text.split()
+    for i, word in enumerate(words[:3]):
+        core = re.sub(r"[^a-z']", "", word.lower())
+        if core in WAKE_ALIASES:
+            tail = re.match(r"[A-Za-z']*([^A-Za-z']*)", word)
+            words[i] = WAKE_WORD + (tail.group(1) if tail else "")
+            return " ".join(words)
+    return text
+
+
 def turns_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Journal rows -> the turn dicts partials/conversation.html renders.
 
@@ -200,6 +254,7 @@ def turns_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     turns: list[dict[str, Any]] = []
     next_id = 1
+    kws_walls = [float(ev["wall"]) for ev in events if ev["type"] == KWS_DETECTED]
 
     def push(role: str, wall: float) -> dict[str, Any]:
         turn = {
@@ -220,7 +275,10 @@ def turns_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for ev in collapse_finals(events):
         t, wall, payload = ev["type"], ev["wall"], ev["payload"]
         if t == TURN_TRANSCRIPT_FINAL:
-            push("user", wall)["content"] = str(payload.get("text") or "")
+            said = str(payload.get("text") or "")
+            push("user", wall)["content"] = display_transcript(
+                said, wake_word_heard_this_turn=wake_word_heard(kws_walls, wall)
+            )
         elif t == RESPONSE_TRANSCRIPT_FINAL:
             text = str(payload.get("text") or "").strip()
             if not text:
