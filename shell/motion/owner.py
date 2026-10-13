@@ -416,9 +416,22 @@ class MotionOwner:
             self._thread.join(timeout=4.0)
             self._thread = None
 
+    # tick() and _send() were the only calls in this loop with no guard - _run_job
+    # journals its own failures, and anything raised here killed the thread and, being
+    # a daemon, would die with the process later. The visible symptom is the worst one
+    # for a booth: he keeps hearing and answering with a frozen head, and nothing in the
+    # journal says why. Found by the type-cleanup lane on 2026-10-13; it left it as
+    # "separate issue, not tonight" because it was under orders not to rewrite the loop.
+    TICK_ERROR_LOG_S = 5.0  # journal/log rate for a still-failing tick
+    TICK_ERROR_BACKOFF_AFTER = 20  # consecutive failures before we stop retrying at hz
+    TICK_ERROR_BACKOFF_S = 1.0  # then retry once a second, forever, until it recovers
+
     def _run(self) -> None:
         interval = 1.0 / self.hz
         next_t = self.clock()
+        streak = 0
+        self.tick_errors = 0
+        last_logged = None
         while not self._stop.is_set():
             job = None
             with self._lock:
@@ -429,9 +442,40 @@ class MotionOwner:
                 self._run_job(*job)
                 next_t = self.clock()
                 continue
-            cmd = self.tick()
-            if cmd is not None:
-                self._send(cmd)
+            try:
+                cmd = self.tick()
+                if cmd is not None:
+                    self._send(cmd)
+            except Exception as e:
+                streak += 1
+                self.tick_errors += 1
+                now = self.clock()
+                if last_logged is None or now - last_logged >= self.TICK_ERROR_LOG_S:
+                    last_logged = now
+                    log.exception("motion tick failed (%d in a row)", streak)
+                    if self.journal is not None:
+                        self.journal.write(J.MOTION_ERROR, where="tick", error=repr(e), streak=streak)
+                # Back off rather than exit: a USB flap on the daemon can fail the tick
+                # for several seconds, and motion that gave up for the evening over that
+                # is a worse booth failure than a head that resumes when the bus does.
+                if streak >= self.TICK_ERROR_BACKOFF_AFTER:
+                    self._stop.wait(self.TICK_ERROR_BACKOFF_S)
+                    next_t = self.clock()
+                    continue
+            else:
+                if streak:
+                    # Rate-limited above, so recovery needs its own line or the journal
+                    # would show a failure and never its end.
+                    if self.journal is not None:
+                        self.journal.write(
+                            J.MOTION_ERROR,
+                            where="tick",
+                            error="recovered",
+                            streak=streak,
+                            total=self.tick_errors,
+                        )
+                    streak = 0
+                    last_logged = None
             next_t += interval
             delay = next_t - self.clock()
             if delay < -interval:
