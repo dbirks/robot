@@ -444,12 +444,21 @@ def test_print_env_prints_and_leaves_no_trace(clean_env, capsys, monkeypatch):
     import socket
     import sqlite3
 
-    import sounddevice
+    # The microphone tripwire is best-effort: sounddevice is imported lazily inside
+    # MicOwner/SpeakerOwner.open(), and this test already forbids those methods
+    # directly, which is the guarantee that holds everywhere. Importing the library
+    # just to assert we do not call it would mean the hardware-free CI env cannot run
+    # the check at all - a dependency in a test for the absence of a dependency.
+    try:
+        import sounddevice
+    except ModuleNotFoundError:
+        sounddevice = None
 
     monkeypatch.setattr(sqlite3, "connect", forbidden("sqlite"))
     monkeypatch.setattr(socket, "socket", forbidden("the network"))
-    monkeypatch.setattr(sounddevice, "InputStream", forbidden("a microphone"))
-    monkeypatch.setattr(sounddevice, "OutputStream", forbidden("a speaker"))
+    if sounddevice is not None:
+        monkeypatch.setattr(sounddevice, "InputStream", forbidden("a microphone"))
+        monkeypatch.setattr(sounddevice, "OutputStream", forbidden("a speaker"))
     monkeypatch.setattr(shell_main.MicOwner, "open", forbidden("the mic owner"))
     monkeypatch.setattr(shell_main.SpeakerOwner, "open", forbidden("the speaker owner"))
     monkeypatch.setattr(shell_main.RobotLink, "connect", forbidden("the robot"))

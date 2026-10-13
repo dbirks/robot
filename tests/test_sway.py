@@ -7,6 +7,14 @@ import random
 import numpy as np
 import pytest
 
+# These tests exercise the SDK-backed paths (app/robot_tools.py imports reachy_mini at
+# module level; the motion owner and DOA read its pose types). CI deliberately runs the
+# hardware-free suite in a minimal env without the SDK - installing it would pull the
+# multi-GB torch stack the lint workflow goes out of its way to avoid (ADR 0004) - so
+# skip here rather than report a failure that means "this machine has no robot library".
+# On the robot box, where the SDK is installed, they run.
+pytest.importorskip("reachy_mini")
+
 from shell.motion import MotionOwner, SpeechSway
 from shell.motion.owner import LISTENING_MAX_S
 from tests.conftest import pump_speaker

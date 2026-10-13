@@ -39,7 +39,9 @@ Design and work list: [`docs/environments.md`](docs/environments.md). Event work
 
 - **Commit often.** Commit and push at natural breakpoints.
 - **uv only.** `uv sync` to install, but note: sync pulls the cu126 torch pair — never bump those (ADR 0004).
-- Tests are hardware-free: `uv run pytest tests/`.
+- Tests are hardware-free: `uv run pytest tests/`. In a bare env (what CI does) the same suite runs with
+`uvx --with numpy --with pyyaml --with pytest --with python-dotenv --with httpx --with fastapi --with soundfile pytest tests/`
+(what CI does); the SDK-backed motion/sway/DOA/robot-tool tests `importorskip("reachy_mini")` and skip themselves rather than fail.
 - Lint/format/type gates live in `.github/workflows/lint.yml`; the `ty` check is scoped to `shell/ tests/` until the legacy loop is deleted at cutover.
 
 ## Adding a new robot tool (new stack)

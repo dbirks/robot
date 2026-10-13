@@ -45,5 +45,11 @@ jobs:
           uvx ty@0.0.86 check --python .venv-typedeps/bin/python shell tests || echo "::warning::ty reported failures (advisory until #44 closes)"
 
       - name: Run tests
-        # Hardware-free suite: only numpy + pyyaml needed at import time.
-        run: uvx --with numpy --with pyyaml --with pytest pytest tests/ -q --no-header
+        # Hardware-free: no robot, no microphone, no network, no GPU. The five packages
+        # are what the modules import at module level (dotenv in shell/config.py, httpx and
+        # fastapi in the LLM proxy, soundfile in the reaction tests) - no device code, no
+        # model weights, no robot.
+        # SDK-backed tests (motion, sway, DOA, robot tools) skip themselves via
+        # pytest.importorskip("reachy_mini"): installing the SDK means the multi-GB
+        # torch stack this workflow deliberately avoids (ADR 0004).
+        run: uvx --with numpy --with pyyaml --with pytest --with python-dotenv --with httpx --with fastapi --with soundfile pytest tests/ -q --no-header
