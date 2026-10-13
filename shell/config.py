@@ -30,12 +30,42 @@ DEFAULT_INSTRUCTIONS = (
 
 # Appended to every persona. shell/llm_proxy.py stamps user messages with the
 # time they were said; without this the model can't use (or might read) them.
+#
+# What a stamp is FOR, settled 2026-10-12 against the booth rehearsal. Until now
+# this note claimed the newest stamp is "the current time" while TOOLS_NOTE tells
+# him to call a tool when asked for the time - so the same system prompt both said
+# "the stamp is the clock" and "go check". Qwen 4B resolved the contradiction the
+# worst way (`scripts/rehearse_booth.py`, 23:41 run): no `get_time` call, and the
+# words "The clock indicates it is still late... I have checked the time, and it
+# remains as it was." A bluff, because this note also forbids reading the stamp
+# aloud, so the only time he was allowed to speak was the one he had not verified.
+#
+# The stamp is not a clock, and it cannot be one:
+#   - shell/llm_proxy.py `Timestamper` keys the stamp on the message TEXT and reuses
+#     the first-seen time for every re-send, so an identical line asked again after a
+#     session reset (50 of them in data/events.db) is stamped with the OLD time. In
+#     the journal, "hey richie." is re-used verbatim across resets 24.8 and 41.5 min
+#     apart (2026-10-11 14:19 -> 15:00), which is the parent's 22:00/22:40 case: he
+#     is not "picking the newest stamp", he is being handed a stale one.
+#   - The stamp is also only ever when the guest SPOKE, not when he answers (a
+#     tool-carrying turn ran 31.7 s behind its transcript, 2026-10-12 22:36:32).
+# So the stamp keeps the two jobs it is good at - which day it is, and how long ago
+# the last message was (2026-10-05: it answered a 40-minute-old dangling question)
+# - and the spoken time comes from get_time, the one source that reads the clock at
+# the moment he answers. Same local clock either way: `time.localtime` here vs
+# `datetime.now().astimezone()` in app/robot_tools.py:get_time, whose "bare UTC ISO
+# gave tomorrow's date every evening after 20:00 EDT" bug is why that tool spells
+# the local zone out - and why the note below says to repeat its fields verbatim
+# instead of letting a 4B re-derive a date from an offset it cannot see.
 TIME_NOTE = (
     " Each user message begins with the date and time it was said, like"
-    " [Sunday, October 11, 2026, 5:38 PM]; the newest one is today's date and the current"
-    " time - use it, never guess the date. Never read the stamps aloud. Answer only the newest message; if a"
-    " lot of time has passed since the previous one, treat it as a fresh"
-    " conversation and do not bring back old, unanswered topics."
+    " [Sunday, October 11, 2026, 5:38 PM]; the newest one is how you know today's date and"
+    " how long ago the guest spoke, so never guess the date. A stamp is not the time now: it"
+    " can be minutes or hours old, so never state a time you only read off a stamp. When"
+    " anyone asks the time, call get_time and say the date and time it returns exactly as it"
+    " returns them - they are already the local clock, read just now. Never read the stamps"
+    " aloud. Answer only the newest message; if a lot of time has passed since the previous"
+    " one, treat it as a fresh conversation and do not bring back old, unanswered topics."
 )
 
 # When to call tools. Granite 4.1 3B (2026-10-10/11) both over-calls (a bare
