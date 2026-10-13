@@ -1,0 +1,22 @@
+[Unit]
+# Reachy Mini hardware playback gains, resolved by CARD NAME.
+#
+# This replaces a unit that ran `amixer -c 3 set PCM,0 60` and failed at boot on
+# 2026-10-12 with "Invalid card number '3'": the USB card had not enumerated when the
+# unit ran, and its index is not stable anyway (the same card was index 1 earlier that
+# day and index 3 after a power cycle). The failure was also invisible - it is a SYSTEM
+# unit, and the operator's `systemctl --user --failed` shows nothing for it.
+#
+# scripts/reachy_audio_init.sh waits for the card by name (up to 20 s), sets PCM,0 and
+# PCM,1 to the card's own maximum, and exits 0 when the robot is simply not attached -
+# so a desk with no robot does not leave a red unit in `systemctl --failed`.
+Description=Set Reachy Mini audio levels on boot (by card name)
+Documentation=file:///home/david/dev/robot/deploy/README.md
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/bin/bash /home/david/dev/robot/scripts/reachy_audio_init.sh
+StandardOutput=journal
+StandardError=journal

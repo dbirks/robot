@@ -129,6 +129,20 @@ head_ "services, robot, space"
 for u in reachy-mini-daemon llama-server reachy-llm-proxy reachy-s2s reachy-shell; do
   printf '  %-22s %s\n' "$u" "$(systemctl --user is-active "$u" 2>/dev/null)"
 done
+# System units are where the audio gains nearly got away: reachy-audio-init ran
+# `amixer -c 3` and failed at boot with "Invalid card number '3'" (the USB card
+# enumerates late, and its index is not stable across a power cycle). It is invisible to
+# every `systemctl --user` command an operator would type, and it decides whether the
+# speaker's hardware gain is set at all - so ask explicitly, read-only, no sudo needed.
+if command -v systemctl >/dev/null 2>&1; then
+  if [ "$(systemctl is-failed reachy-audio-init.service 2>/dev/null)" = failed ]; then
+    warn "reachy-audio-init is FAILED: the Reachy PCM gains were not set at boot (hardware volume may be low and no user command shows why). Fix: install scripts/reachy_audio_init.sh + deploy/systemd/reachy-audio-init.service (name-based, waits for USB), then sudo systemctl daemon-reload && sudo systemctl restart reachy-audio-init"
+  else
+    ok "reachy-audio-init not failed (hardware audio gains set at boot)"
+  fi
+  NFAILED=$(systemctl --failed --no-legend --no-pager 2>/dev/null | wc -l | tr -dc '0-9')
+  [ "${NFAILED:-0}" -gt 0 ] && warn "$NFAILED failed SYSTEM unit(s) - invisible to systemctl --user; see: systemctl --failed"
+fi
 [ -e /dev/ttyACM0 ] && ok "/dev/ttyACM0 present (robot attached)" || bad "/dev/ttyACM0 missing: the daemon has no robot to talk to"
 AVAIL=$(df -BG --output=avail . | tail -1 | tr -dc '0-9')
 [ "${AVAIL:-0}" -ge 5 ] && ok "disk: ${AVAIL}G free" || bad "disk: ${AVAIL}G free"
