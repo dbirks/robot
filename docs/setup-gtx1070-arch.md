@@ -37,7 +37,7 @@ This also affects `ctranslate2` (used by faster-whisper): it ships linked agains
 > set them as the fallback; no code in `app/`, `shell/` or `scripts/` ever read those names, and
 > this repo does not run faster-whisper at all — the legacy loop uses Parakeet TDT 0.6B v3 on CPU
 > via `onnx_asr` (`app/stt_service.py:12-21`) and the realtime stack uses
-> `S2S_PARAKEET_DEVICE` (`scripts/run_s2s.sh:74`). The CUDA-12 constraint below is real; the two
+> `S2S_PARAKEET_DEVICE` (`scripts/run_s2s.sh:124`). The CUDA-12 constraint below is real; the two
 > variable names are not. See [`knobs.md`](knobs.md) §6.
 
 ## Building llama-server with CUDA

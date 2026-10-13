@@ -43,7 +43,7 @@ measured Qwen3-TTS candidate is the 0.6B at 0.25 s to first audio, streaming. (0
 
 **How do the realtime websocket, the LLM and the tools fit together?**
 speech-to-speech v1.0.0 is a pinned service on a localhost websocket. It reaches the model through the
-name-fixing proxy on :8081, not llama.cpp directly (scripts/run_s2s.sh:13-15), then emits tool
+name-fixing proxy on :8081, not llama.cpp directly (scripts/run_s2s.sh:24,27), then emits tool
 arguments for this process to run. An interrupt flushes queued audio and refuses the cancelled
 generation. (0001, 0002)
 

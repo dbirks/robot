@@ -54,11 +54,11 @@ file key that fills the same field when the process variable is unset or empty.
 | `REACHY_XMOS_BEAM_FOCUS` | `shell/config.py` `xmos_beam_focus` | steer both fixed beams at the wake-word direction | true | true |
 | `REACHY_MOTION_HZ` | `shell/config.py` `motion_hz` | motion control-loop rate; lower it if CPU is tight (ADR 0006) | 50 | 50 |
 | `REACHY_COMPACT_AFTER_S` / `REACHY_RESET_AFTER_S` | `shell/config.py` `compact_after_s`, `reset_after_s` (used by `shell/conversation.py`) | summary compaction / fresh-session timers | 180 / 300 | 180 / 300 |
-| `REACHY_MAX_TURN_S` | `shell/config.py` `max_turn_s` (also named in `scripts/run_s2s.sh:39`) | shell force-ends a longer turn by feeding silence | 15 | 15 |
+| `REACHY_MAX_TURN_S` | `shell/config.py` `max_turn_s` (also named in `scripts/run_s2s.sh:51`) | shell force-ends a longer turn by feeding silence | 15 | 15 |
 | `REACHY_ACK_DIR` | `shell/config.py` `ack_dir` | `<dir>/wake/*.wav`, `<dir>/think/*.wav` | `sounds/acks/obama` | `sounds/acks/obama` |
 | `REACHY_PERSONA` | `shell/env.py` `PERSONA_VAR` / `persona_selection()` | names `personas/<name>.yaml`; outranks `persona.name:` in the file. Stamped by `deploy/generated/persona.env`, **never** with `REACHY_INSTRUCTIONS` | `obama` | `marvin` |
 | `S2S_URL` | `shell/config.py` `s2s_url` | realtime websocket | `ws://127.0.0.1:8765/v1/realtime` | same |
-| `LLM_BASE_URL` / `LLM_MODEL` | `shell/config.py` `llm_base_url`, `llm_model` | side-channel llama.cpp (compaction); `LLM_MODEL` is also the s2s `--model_name` (`scripts/run_s2s.sh:86`) | `.env` | `.env` |
+| `LLM_BASE_URL` / `LLM_MODEL` | `shell/config.py` `llm_base_url`, `llm_model` | side-channel llama.cpp (compaction); `LLM_MODEL` is also the s2s `--model_name` (`scripts/run_s2s.sh:136`) | `.env` | `.env` |
 | `DATA_DIR` | `shell/config.py` `data_dir` | moves `events.db` and `memories.*.json` | `data` | `data` |
 | `KWS_MODEL_DIR` | `shell/config.py` `kws_model_dir`, `scripts/get_kws_model.sh:10` | wake-word model dir | `models/kws` | `models/kws` |
 | `VISION_BASE_URL` / `VISION_MODEL` | `shell/robot_tools.py:72` | separate CPU VLM instead of the chat model's `--mmproj` | unset (commented in `.env`) | unset |
@@ -69,21 +69,22 @@ file key that fills the same field when the process variable is unset or empty.
 |---|---|---|---|
 | `DASHBOARD_HOST` | `dashboard/server.py:967` | bind address; empty = `127.0.0.1` | Port is **hardcoded 3001** (`dashboard/server.py:968`): there is no `DASHBOARD_PORT`, despite `scripts/booth_recovery.sh` carrying a local shell variable of that name. `/` and `/faces` serve *home* data, so `0.0.0.0` is a deliberate act (deploy/README.md). |
 | `REACHY_DASHBOARD_READONLY` | `dashboard/env_panel.py:45,135` via `dashboard/server.py:55` | every mutating route refuses with a visible message | Off by default; the process has no auth at all. |
-| `S2S_PORT` | `scripts/run_s2s.sh:71` | websocket port | Only `run_s2s.sh` reads it. `shell/config.py` does **not**: `S2S_URL` is one string, and moving the port without rewriting `S2S_URL` splits the two processes. |
-| `S2S_TTS` | `scripts/run_s2s.sh:43` | `kokoro` \| `qwen3` \| anything else = upstream default | tonight `.env` sets `qwen3` |
-| `S2S_STT` | `scripts/run_s2s.sh:72` | STT backend | default `parakeet-tdt` |
-| `S2S_PARAKEET_MODEL` / `S2S_PARAKEET_DEVICE` | `scripts/run_s2s.sh:73`, `:74` | model id / device (CPU fp32 is the measured choice, ADR 0004) | |
-| `S2S_QWEN3_MODEL` / `S2S_QWEN3_TALKER_GGUF` / `S2S_QWEN3_CODEC_GGUF` / `S2S_QWEN3_SPEAKER` / `S2S_QWEN3_QUANT` | `scripts/run_s2s.sh:56-64` | the Qwen3-TTS voice | Read **once at startup**: a voice change costs a `reachy-s2s` restart, measured 20-46 s of dead air. `persona.env` outranks `.env` for these keys (deploy/README.md). No pins line for tonight's 1.7B talker — `docs/pins.yaml` `tts_trial` is the 0.6B candidate. |
-| `S2S_KOKORO_DEVICE` | `scripts/run_s2s.sh:48` | `cuda` \| `cpu` for the Kokoro path | tonight the engine is qwen3, so this is inert unless `S2S_TTS=kokoro` |
-| `KOKORO_VOICE` | `scripts/run_s2s.sh:46` | kokoro voice id | also read by the **legacy** `app/tts_service.py:17` |
-| `S2S_LIVE_TRANSCRIPTION`, `S2S_MAX_SPEECH_MS`, `S2S_VAD_THRESH`, `S2S_REOPEN_MS` | `scripts/run_s2s.sh:76-80` | upstream endpointing knobs | CPU cost of live transcription is unmeasured (ADR 0006) |
-| `S2S_DIR`, `S2S_REF` | `scripts/run_s2s.sh:8`, `scripts/install_s2s.sh:7,9` | where the pinned service lives (`~/.local/share/reachy/speech-to-speech`) | |
-| `HF_HUB_OFFLINE` | `scripts/run_s2s.sh:17`, pinned `Environment=` in `deploy/systemd/reachy-s2s.service` | offline mode | First run on a fresh box needs `HF_HUB_OFFLINE=0` once. |
-| `OPENAI_BASE_URL`, `OPENAI_API_KEY` | `scripts/run_s2s.sh:12,15` | where the service reaches the LLM | **Default is the proxy on :8081.** Put `OPENAI_BASE_URL=http://localhost:8080/v1` in `.env` — as `.env.example:29` shows — and the name-fixing proxy (`reachy-llm-proxy`) is silently bypassed and "Reachy" goes back to being mis-heard. Use `S2S_URL`/`.env` only when you mean to. |
+| `S2S_PORT` | `scripts/run_s2s.sh:121` | websocket port | Only `run_s2s.sh` reads it. `shell/config.py` does **not**: `S2S_URL` is one string, and moving the port without rewriting `S2S_URL` splits the two processes. |
+| `S2S_TTS` | `scripts/run_s2s.sh:113` | `kokoro` \| `qwen3` \| anything else = upstream default | tonight `.env` sets `qwen3` |
+| `S2S_STT` | `scripts/run_s2s.sh:122` | STT backend | default `parakeet-tdt` |
+| `S2S_PARAKEET_MODEL` / `S2S_PARAKEET_DEVICE` | `scripts/run_s2s.sh:123`, `:124` | model id / device (CPU fp32 is the measured choice, ADR 0004) | |
+| `S2S_QWEN3_MODEL` / `S2S_QWEN3_TALKER_GGUF` / `S2S_QWEN3_CODEC_GGUF` / `S2S_QWEN3_SPEAKER` / `S2S_QWEN3_QUANT` | `scripts/run_s2s.sh:73-81` | the Qwen3-TTS voice | Read **once at startup**: a voice change costs a `reachy-s2s` restart, measured 20-46 s of dead air. `persona.env` outranks `.env` for these keys (deploy/README.md). No pins line for tonight's 1.7B talker — `docs/pins.yaml` `tts_trial` is the 0.6B candidate. |
+| `S2S_QWEN3_INSTRUCT` | `scripts/run_s2s.sh:97-99` → upstream `--qwen3_tts_instruct` | the voice **style** line: `personas/<name>.yaml voice.instruct`, stamped by `scripts/apply_env.py`. Passed **only when non-empty**; empty/absent sends no flag at all, which is upstream's `None` | Every shipped persona carries `instruct: ""` tonight, so the flag is **off** in both rooms: the voice is the Obama talker GGUF plus its speaker embedding, unstyled. It is live plumbing, not decoration, and it is what a second (VoiceDesign) voice will use. |
+| `S2S_KOKORO_DEVICE` | `scripts/run_s2s.sh:66` | `cuda` \| `cpu` for the Kokoro path | tonight the engine is qwen3, so this is inert unless `S2S_TTS=kokoro` |
+| `KOKORO_VOICE` | `scripts/run_s2s.sh:64` | kokoro voice id | also read by the **legacy** `app/tts_service.py:17` |
+| `S2S_LIVE_TRANSCRIPTION`, `S2S_MAX_SPEECH_MS`, `S2S_VAD_THRESH`, `S2S_REOPEN_MS` | `scripts/run_s2s.sh:126-130` | upstream endpointing knobs | CPU cost of live transcription is unmeasured (ADR 0006) |
+| `S2S_DIR`, `S2S_REF` | `scripts/run_s2s.sh:18`, `scripts/install_s2s.sh:7,9` | where the pinned service lives (`~/.local/share/reachy/speech-to-speech`) | |
+| `HF_HUB_OFFLINE` | `scripts/run_s2s.sh:29`, pinned `Environment=` in `deploy/systemd/reachy-s2s.service` | offline mode | First run on a fresh box needs `HF_HUB_OFFLINE=0` once. |
+| `OPENAI_BASE_URL`, `OPENAI_API_KEY` | `scripts/run_s2s.sh:24,27` | where the service reaches the LLM | **Default is the proxy on :8081.** Put `OPENAI_BASE_URL=http://localhost:8080/v1` in `.env` — as `.env.example:29` shows — and the name-fixing proxy (`reachy-llm-proxy`) is silently bypassed and "Reachy" goes back to being mis-heard. Use `S2S_URL`/`.env` only when you mean to. |
 | `LLAMA_MODEL_PATH`, `LLAMA_MMPROJ_PATH` | `scripts/run_llama_server.sh:16`, `:22` | the GGUF + projector | live defaults are `models/gguf/mtp/Qwen3.5-4B-UD-Q4_K_XL.gguf` and `models/gguf/mtp/mmproj-F16.gguf` — **not** the `qwen3.5-4b-q4_k_m.gguf` / `mmproj-BF16.gguf` pair `README.md` still tells you to download (Pascal has no BF16, ADR 0004) |
 | `LLAMA_CTX` | `scripts/run_llama_server.sh:36` | total context across `LLAMA_PARALLEL` slots | default **24576** (2 × 12K), not the 4096 `README.md` quotes |
 | `LLAMA_PORT`, `LLAMA_HOST`, `LLAMA_PARALLEL`, `LLAMA_GPU_LAYERS`, `LLAMA_THREADS`, `LLAMA_FLASH_ATTN`, `LLAMA_CACHE_TYPE_K/_V`, `LLAMA_CACHE_REUSE`, `LLAMA_SERVER_BIN`, `LLAMA_DIR` | `scripts/run_llama_server.sh:24-96` | the llama.cpp serving flags | KV types must stay matched (ADR 0004) |
-| `LLM_API_KEY` | `app/config.py:15` (legacy loop); the service uses `OPENAI_API_KEY` (`scripts/run_s2s.sh:12`) | the local path still needs a dummy string | `shell/config.py` has no `LLM_API_KEY` reader |
+| `LLM_API_KEY` | `app/config.py:15` (legacy loop); the service uses `OPENAI_API_KEY` (`scripts/run_s2s.sh:24`) | the local path still needs a dummy string | `shell/config.py` has no `LLM_API_KEY` reader |
 | `TTS_ENGINE` / `TTS_SERVER_URL` / `TTS_SPEAKER` / `KOKORO_LANG` / `KOKORO_DEVICE` | `app/tts_service.py:14-22` | **legacy loop only** (`python -m app`); the realtime stack's engine is `S2S_TTS` | live `.env` sets `TTS_ENGINE=kokoro`, which changes nothing for `reachy-shell` |
 | `REACHY_DAEMON_URL` | `scripts/booth_recovery.sh:40` | where the recovery script asks `/api/media/status` | `shell/camera.py:86` hardcodes `http://localhost:8000`; the shell does **not** read this variable |
 | `REACHY_INSTRUCTIONS` (drop-in caution) | see §1 | `deploy/generated/persona.env` deliberately never sets it | one global file read by both rooms |

@@ -66,12 +66,13 @@ def apply_script():
 
 
 # --------------------------------------------------------------------------
-# the two shipped personas
+# the three shipped personas
 # --------------------------------------------------------------------------
 
 
-def test_two_personas_ship(clean_env):
-    assert shell_env.known_personas() == ["marvin", "obama"]
+def test_three_personas_ship(clean_env):
+    """Discovery, not a list: adding personas/<name>.yaml is the whole registration."""
+    assert shell_env.known_personas() == ["marvin", "obama", "tars"]
 
 
 def test_obama_is_byte_identical_to_the_persona_home_has_always_used(clean_env):
@@ -102,6 +103,45 @@ def test_the_marvin_text_is_the_hackday_persona_of_today(clean_env):
 
 def test_marvin_borrows_the_obama_voice_until_a_model_exists(clean_env):
     assert pp.voice_of(pp_load_persona("marvin")) == pp.voice_of(pp_load_persona("obama"))
+
+
+# The booth rules are safety, and a third persona is where a copied rule goes missing.
+BOOTH_RULES = (
+    "never name a real person",
+    "never assume a name",
+    "never mention anyone's family, home, or private life",
+    "one or two short spoken sentences",
+    "never use markdown or lists, never emoji, never action text",
+    "a guest is never the joke",
+    "open with the wish rather than the lack",
+    "never save anything about a guest unless that guest asks you to remember it",
+)
+
+
+def test_tars_carries_every_hard_booth_rule_marvin_carries(clean_env):
+    text = persona_text("tars").lower()
+    missing = [rule for rule in BOOTH_RULES if rule not in text]
+    assert not missing, f"personas/tars.yaml dropped: {missing}"
+    assert "hack day" in text
+
+
+def test_tars_is_described_in_words_only(clean_env):
+    """issue #49: the register is fine, a likeness claim on a public screen is not.
+    Checked on the text that reaches the model and the panel, not the comments."""
+    text = persona_text("tars").lower()
+    assert not any(word in text for word in ("tars", "interstellar", "warner", "bill irwin", "robot brand"))
+
+
+def test_tars_resolves_as_a_persona_without_touching_a_room_file(tmp_path, clean_env):
+    """The picker must be able to reach it with no edit to envs/*.yaml (parity is
+    protected): a room that names it resolves, and its voice is the measured one."""
+    envs = write_env(tmp_path, "lab", {"persona": "tars", "memory": {"namespace": "lab"}})
+    cfg = shell_env.load_config("lab", envs_dir=envs, personas_dir=ROOT / "personas")
+    expected = persona_instructions(persona_text("tars"))
+    if not cfg.learn_facts:  # same reconcile as the marvin test above
+        expected = shell_env.instructions_without_auto_learn(expected)
+    assert cfg.instructions == expected
+    assert pp.voice_of(pp_load_persona("tars")) == pp.voice_of(pp_load_persona("marvin"))
 
 
 # --------------------------------------------------------------------------
@@ -167,7 +207,7 @@ def test_persona_report_names_the_room_and_the_inline_shadow(clean_env):
     report = shell_env.persona_report("home")
     assert report["persona"] == "obama" and report["persona_source"] == "persona.name"
     assert report["inline_instructions"] is True
-    assert [p["name"] for p in report["personas"]] == ["marvin", "obama"]
+    assert [p["name"] for p in report["personas"]] == ["marvin", "obama", "tars"]
     assert report["personas"][0]["voice"]["engine"] == "qwen3"
 
 
