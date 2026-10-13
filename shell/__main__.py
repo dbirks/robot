@@ -36,7 +36,7 @@ from .camera import CameraGrabber, CameraStream
 from .config import REACHY_ENV_VAR, ShellConfig
 from .conversation import ConversationMemory, Turn, llm_extract_facts, llm_summarize
 from .env import EnvError, config_to_dict, load_config, persona_report
-from .intents import is_bare_wake, wants_silence, wants_sleep
+from .intents import is_bare_wake, volume_request, wants_silence, wants_sleep
 from .journal import Journal
 from .memories import MemoryStore, migrate_legacy_memories
 from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
@@ -280,6 +280,47 @@ async def amain(cfg: ShellConfig) -> None:
             reaction.cancel()  # no "hmm" filler over the silence just demanded
             wake_t[0] = None
             client.drop_next_response()
+            return
+        level = volume_request(text) if (text and lease.active()) else None
+        if level is not None:
+            # Loudness is an order too, and for a harder reason than "stop talking": measured
+            # 2026-10-13 in a CLEAN session with no gate denials and the tool enabled, four plain
+            # requests produced a call for only two of them ("Much louder please." and "Turn it
+            # down." produced nothing at all), and the robot still said something about it. A
+            # booth hears "I'm afraid I cannot adjust the volume" from a machine whose gain is
+            # one function call away, and no prompt edit fixed that today.
+            #
+            # The router is still the only thing that decides (its attention gate rejects room
+            # speech about somebody's phone), so the result is inspected on completion: the reply
+            # is dropped when the change actually happened - the next words are audibly louder,
+            # which is better feedback than a sentence - and left alone when it did not, because a
+            # refusal is the only honest thing the model can say at that point.
+            journal.write("intent.volume", level=level, text=text[:60])
+            reaction.cancel()  # no "hmm" filler over a command that is already being obeyed
+
+            def _volume_done(fut) -> None:
+                try:
+                    result = fut.result()
+                except Exception as e:  # never let a callback kill the loop
+                    log.warning("volume intent failed: %r", e)
+                    return
+                if not result.get("ok"):
+                    return  # the gate refused it; the model's refusal is the honest answer
+                # Drop his reply only when the change is already audible - he was speaking, or
+                # this utterance cut him off - so the next words come out at the new level and no
+                # narration is needed. When he was SILENT, suppressing him produces dead air after
+                # a command, which reads as a robot that ignored you; there he gets to answer, and
+                # since the shell really did change the gain, "I've turned it down" is finally true
+                # instead of a habit.
+                audible = bool(speaker.playing) or bool(client.last_turn_cut_playback)
+                if audible:
+                    awaiting_reply[0] = 0.0
+                    wake_t[0] = None
+                    client.drop_next_response()
+
+            loop.run_in_executor(None, router.execute, "set_volume", {"level": level}).add_done_callback(
+                lambda f: loop.call_soon_threadsafe(_volume_done, f)
+            )
             return
         if wake_t[0] is not None and text:
             fresh = time.monotonic() - wake_t[0] < 10.0
