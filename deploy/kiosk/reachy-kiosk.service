@@ -49,6 +49,18 @@ StandardInput=tty
 StandardOutput=journal
 StandardError=journal
 UnsetEnvironment=TERM
+# XDG_SESSION_ID has to go, or the unit can never be restarted cleanly - found live on the booth
+# screen 2026-10-13 at 19:31. PAMName=login opens a real login session, chromium inherits its id,
+# and chromium re-parents its children into a systemd **scope** tagged with that session. So the
+# PAM session cannot close while a renderer lives, `systemctl restart` hangs in stop-sigterm
+# forever with Tasks=0 and an empty cgroup (the browser is in the *session's* scope, not this
+# unit's), and Restart=always is silently disarmed - a kiosk that cannot be restarted is a kiosk
+# you cannot fix at a booth. Killing the orphaned chromium completed the stop instantly, which is
+# how this was pinned. Dropping the variable keeps the seat and VT (XDG_SEAT/XDG_VTNR still come
+# from the unit) and takes away only the session pin.
+UnsetEnvironment=XDG_SESSION_ID
+# And if anything still lingers, do not wait out the 90 s default with the audience watching.
+TimeoutStopSec=10
 UtmpIdentifier=tty1
 UtmpMode=user
 TTYReset=yes
