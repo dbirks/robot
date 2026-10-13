@@ -232,9 +232,10 @@ def collapse_finals(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-# What the STT actually returns for "hey Reachy" on this box, taken from tonight's
-# journal rows rather than a guessed homophone list: `Richie`, `Ricci`, and "Hey
-# Reachy" collapsing into the single word `Hotel`. Extend this by looking, not by
+# What the STT actually returns for "hey Reachy" on this box, taken from journal rows
+# rather than a guessed homophone list: `Richie`, `Ricci`, `Erichi` (23:09:04 tonight,
+# a whole turn that was just the wake word), and "Hey Reachy" collapsing into the single
+# word `Hotel`. Extend this by looking, not by
 # imagining - the wake word is spotter-matched in its own rows:
 #
 #   sqlite3 -readonly data/events.db "select wall,payload from events where
@@ -246,7 +247,7 @@ def collapse_finals(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # pinned service exposes no such flag for Parakeet), so this is a caption
 # readability fix at the display layer - it does not make him hear better.
 WAKE_WORD = "Reachy"
-WAKE_ALIASES = {"richie", "ricci", "hotel"}
+WAKE_ALIASES = {"richie", "ricci", "hotel", "erichi"}
 # The spotter fires on the same breath as the transcript it belongs to; anything
 # further apart is a different utterance and none of our business.
 KWS_WINDOW_S = 2.5

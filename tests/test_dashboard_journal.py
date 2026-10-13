@@ -623,3 +623,16 @@ def test_traces_do_not_cross_rooms(tmp_path):
         panel = jr.trace_window(conn, window=500, limit=10, env="hackday")
         assert panel["env"] == "hackday"
         assert all(t["env"] in (None, "hackday") for t in panel["traces"])
+
+
+def test_erichi_is_a_misheard_wake_word_too(tmp_path):
+    """A turn that was nothing but the wake word came through as \"Erichi.\" - the
+    caption a stranger reads. Added because the journal showed it, not because it
+    looks like a plausible homophone."""
+    rows = jr.turns_from_events(
+        [
+            _ev(1, jr.KWS_DETECTED, 300.0, keyword="Reachy", score=1.0),
+            _ev(2, jr.TURN_TRANSCRIPT_FINAL, 300.2, text="Erichi."),
+        ]
+    )
+    assert _user_rows(rows) == ["Reachy."]

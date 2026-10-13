@@ -108,7 +108,13 @@ async def amain(cfg: ShellConfig) -> None:
     manager = AttentionManager(profile, lease, journal)
 
     mic = MicOwner(cfg.mic_device, cfg.sample_rate, cfg.block_size, cfg.preroll_seconds, journal)
-    speaker = SpeakerOwner(rate=cfg.sample_rate, block=cfg.block_size, device=cfg.speaker_device, journal=journal)
+    speaker = SpeakerOwner(
+        rate=cfg.sample_rate,
+        block=cfg.block_size,
+        device=cfg.speaker_device,
+        journal=journal,
+        asleep=lambda: sleep.sleeping,  # asleep means the mouth too, not only the ears
+    )
 
     robot = RobotLink(journal)
     await asyncio.to_thread(robot.connect)  # robot absent -> tools say so, shell runs
@@ -242,6 +248,19 @@ async def amain(cfg: ShellConfig) -> None:
             # don't trust the LLM to act on it (it often just says goodnight)
             journal.write("intent.sleep", text=text)
             loop.run_in_executor(None, router.execute, "go_to_sleep", {})
+            # ...and do not let him ANSWER the command either. Measured 2026-10-12 at
+            # 23:09: the intent put him to sleep (tool.completed {"ok": true,
+            # "action": "sleeping"}), the same three words still reached the model as a
+            # user turn, it called go_to_sleep a second time, the router DENIED that
+            # call for attention confidence (attention.tool_denied, asleep zeroes tool
+            # confidence), and 4 s later - lying down, head folded - he said: "Let me be
+            # clear: I don't have a sleep function." A command he already obeyed is not
+            # a question, and a denial read as absent capability is worse than silence.
+            awaiting_reply[0] = 0.0
+            reaction.cancel()
+            wake_t[0] = None
+            client.drop_next_response()
+            return
         lease.note_interaction()
         if text and lease.active() and wants_silence(text) and client.last_turn_cut_playback:
             # "stop talking" is an order, not a turn. The interrupt itself already did

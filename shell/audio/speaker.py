@@ -45,6 +45,15 @@ class SpeakerOwner:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     playing: bool = False
     level: float = 0.0
+    # `asleep` is a live predicate (the shell passes shell/sleep.SleepState), not a
+    # copy: being asleep has to mean the mouth is off too, not only the ears. Measured
+    # 2026-10-12 23:09: the sleep tool returned {"ok": true, "action": "sleeping"}, the
+    # head folded, and 4 seconds later he was still talking - "Let me be clear: I don't
+    # have a sleep function" - a lie from a model whose own duplicate call had been
+    # denied, delivered by a body that was already asleep. The flag must reach the
+    # speaker, not just the microphone.
+    asleep: Any = None
+    _asleep_refused: set = field(default_factory=set, repr=False)
     # Called from the audio callback with exactly the samples written to the
     # device (motion speech sway). Must only copy+enqueue: real-time thread.
     tap: Any = field(default=None, repr=False)
@@ -85,6 +94,17 @@ class SpeakerOwner:
         acknowledgement silent."""
         with self._lock:
             if channel == "tts" and generation in self._cancelled:
+                return False
+            if channel == "tts" and callable(self.asleep) and self.asleep():
+                # Asleep outranks speech: refuse the chunk rather than drain it, and
+                # say so once per generation so the journal shows a sleeping robot that
+                # was talked at, without a row per 100 ms of audio.
+                if generation not in self._asleep_refused:
+                    self._asleep_refused.add(generation)
+                    if len(self._asleep_refused) > 8:
+                        self._asleep_refused = {g for g in self._asleep_refused if g > self._generation - 8}
+                    if self.journal:
+                        self.journal.write("tts.refused_asleep", generation=generation)
                 return False
             self._q.append(_Chunk(generation=generation, channel=channel, samples=[samples]))
         return True

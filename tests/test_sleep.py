@@ -151,3 +151,85 @@ def test_the_silence_buffer_is_what_an_unengaged_client_gets():
     assert feeds_service(sleeping=False, engaged=True, muted=True) is False
     assert feeds_service(sleeping=True, engaged=True, muted=False) is False
     assert np.zeros(4).tobytes() != b""  # the frame shape the gates are handed
+
+
+class RecordingJournal:
+    def __init__(self):
+        self.rows = []
+
+    def write(self, type_, **payload):
+        self.rows.append((type_, payload))
+
+
+def test_asleep_refuses_speech_but_still_allows_acks():
+    """The invariant the operator asked for: going to sleep turns the talking off.
+
+    Measured 2026-10-12 23:09:21-23:09:27 - go_to_sleep returned ok:true, the head
+    folded, and he then said "Let me be clear: I don't have a sleep function". The
+    sleep flag reached the microphone and the motion thread but not the speaker queue.
+    """
+    from shell.audio.speaker import SpeakerOwner
+
+    nap = SleepState()
+    j = RecordingJournal()
+    sp = SpeakerOwner(rate=16000, block=512, journal=j, asleep=lambda: nap.sleeping)
+    gen = sp.begin_generation()
+    assert sp.enqueue(gen, "tts", np.zeros(64, dtype=np.int16)) is True  # awake: speech flows
+
+    nap.enter("tool")
+    queued = sp.pending()  # the awake chunk from above is still in line
+    gen2 = sp.begin_generation()
+    assert sp.enqueue(gen2, "tts", np.zeros(64, dtype=np.int16)) is False
+    assert sp.pending() == queued, "asleep but audio still queued: he would talk lying down"
+    assert sp.enqueue(gen2, "ack", np.zeros(64, dtype=np.int16)) is True, "acks are not speech"
+    assert sum(1 for t, _ in j.rows if t == "tts.refused_asleep") == 1, "one row per generation, not per chunk"
+
+    nap.exit("kws:Reachy")
+    gen3 = sp.begin_generation()
+    assert sp.enqueue(gen3, "tts", np.zeros(64, dtype=np.int16)) is True
+
+
+def test_sleep_pose_reports_where_the_antennas_actually_went():
+    """ "The antennas didn't go back" vs "they went to -3.05 rad" must be a number.
+
+    Our SLEEP_ANTENNAS is byte-identical to the SDK's SLEEP_ANTENNAS_JOINT_POSITIONS and
+    the exclusive move logged ok:true in 2.009 s, so the only way to settle the
+    difference is to journal the present positions either side of the move.
+    """
+    from shell.motion.owner import SLEEP_ANTENNAS, MotionOwner
+
+    class FakeMini:
+        def __init__(self):
+            self.antennas = [-0.17, 0.17]
+            self.moves = 0
+
+        def goto_target(self, head=None, antennas=None, duration=1.0):
+            self.moves += 1
+            self.antennas = [float(a) for a in antennas]
+
+        def get_present_antenna_joint_positions(self):
+            return list(self.antennas)
+
+    mini_holder = {}
+
+    class FakeRobot:
+        connected = True
+
+        @property
+        def mini(self):
+            return mini_holder["mini"]
+
+    fake = FakeMini()
+    mini_holder["mini"] = fake
+    j = RecordingJournal()
+    owner = MotionOwner(FakeRobot(), journal=j)
+    assert owner.sleep(reason="tool") is True
+    # run the queued exclusive move the way the motion thread would
+    name, fn = owner._jobs.popleft()
+    fn(fake)
+    assert fake.moves == 1
+    rows = [p for t, p in j.rows if t == "motion.sleep_pose"]
+    assert rows, "sleep pose wrote no telemetry"
+    assert rows[-1]["antennas_before"] == [-0.17, 0.17]
+    assert rows[-1]["antennas_after"] == [round(float(a), 3) for a in SLEEP_ANTENNAS]
+    assert rows[-1]["move"] == "sleep"

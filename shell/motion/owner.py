@@ -307,6 +307,29 @@ class MotionOwner:
         DOA re-aim stands down, the microphone is closed."""
         return self._sleep.sleeping
 
+    def _present_antennas(self, mini) -> list[float] | None:
+        """Current antenna joint angles, or None if the SDK will not say. Never raises:
+        telemetry that breaks the movement would be worse than no telemetry."""
+        try:
+            return [round(float(x), 3) for x in mini.get_present_antenna_joint_positions()]
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _journal_pose(self, name: str, before, after) -> None:
+        if self.journal is None:
+            return
+        try:
+            self.journal.write(
+                "motion.sleep_pose",
+                move=name,
+                antennas_before=before,
+                antennas_after=after,
+                target_sleep=[round(float(a), 3) for a in SLEEP_ANTENNAS],
+                target_wake=[round(float(a), 3) for a in INIT_ANTENNAS],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     def exclusive(self, name: str, fn: Callable) -> bool:
         """Run fn(mini) on the motion thread with the loop paused (scripted
         SDK moves: goto_target, sleep, peekaboo). Returns False when there is
@@ -330,7 +353,14 @@ class MotionOwner:
             return False
 
         def go(mini) -> None:
+            before = self._present_antennas(mini)
             mini.goto_target(head=SLEEP_HEAD_POSE, antennas=SLEEP_ANTENNAS, duration=2.0)
+            # Telemetry, not decoration: `SLEEP_ANTENNAS` is byte-identical to the SDK's
+            # own SLEEP_ANTENNAS_JOINT_POSITIONS ([-3.05, 3.05] rad ~ 175 deg) and the
+            # exclusive move reported ok:true in 2.009 s, yet the operator's read was
+            # "the antennas did not go back". Whether they physically arrived is a
+            # number, so journal the number instead of arguing about it tomorrow.
+            self._journal_pose("sleep", before, self._present_antennas(mini))
             with self._lock:
                 self._anims.clear()
                 self._anim = None
@@ -348,7 +378,9 @@ class MotionOwner:
             return False
 
         def go(mini) -> None:
+            before = self._present_antennas(mini)
             mini.goto_target(head=np.eye(4), antennas=INIT_ANTENNAS, duration=1.0)
+            self._journal_pose("wake_up", before, self._present_antennas(mini))
 
         self._queue_move("wake_up", go)
         return True
