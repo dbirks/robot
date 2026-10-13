@@ -81,8 +81,10 @@ ExecStartPre=+/usr/bin/chvt 1
 # `systemd-analyze verify` said nothing because it checks syntax, not paths). scripts/
 # install_kiosk.sh rewrites this line against $HOME at install time; the value below is what
 # /home/david needs, so a bare `cp` also works. -verbose 3 -logfile /dev/null routes X's own
-# output into the journal, because -keeptty otherwise sends it to a console nobody can read.
-ExecStart=/usr/bin/startx /home/david/dev/robot/deploy/kiosk/kiosk.xinitrc -- :0 vt1 -keeptty -verbose 3 -logfile /dev/null
+# output must NOT be captured that way: -keeptty pins it to /dev/tty1 (no keyboard to read it)
+# and -logfile /dev/null deletes the copy. Without both, X writes ~/.local/share/xorg/Xorg.0.log
+# - the one artifact the operator's SSH session can read on a machine with no keyboard.
+ExecStart=/usr/bin/startx /home/david/dev/robot/deploy/kiosk/kiosk.xinitrc -- :0 vt1 -verbose 3
 # The kiosk is decoration. The previous version of this file carried
 # `StopPropagationOfFailedJobsFromThisUnitFile=`, which is not a systemd directive at all (it
 # is in no man page, and `systemd-analyze verify` calls it "Unknown key ... ignoring") - a
