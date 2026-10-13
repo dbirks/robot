@@ -205,7 +205,7 @@ def test_sleep_pose_reports_where_the_antennas_actually_went():
 
         def goto_target(self, head=None, antennas=None, duration=1.0):
             self.moves += 1
-            self.antennas = [float(a) for a in antennas]
+            self.antennas = [float(a) for a in (antennas or [])]
 
         def get_present_antenna_joint_positions(self):
             return list(self.antennas)
@@ -228,7 +228,7 @@ def test_sleep_pose_reports_where_the_antennas_actually_went():
     name, fn = owner._jobs.popleft()
     fn(fake)
     assert fake.moves == 1
-    rows = [p for t, p in j.rows if t == "motion.sleep_pose"]
+    rows = [p for name, p in j.rows if name == "motion.sleep_pose"]
     assert rows, "sleep pose wrote no telemetry"
     assert rows[-1]["antennas_before"] == [-0.17, 0.17]
     assert rows[-1]["antennas_after"] == [round(float(a), 3) for a in SLEEP_ANTENNAS]
