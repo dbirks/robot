@@ -125,6 +125,13 @@ UP_RE = re.compile(
     r"\b(?:(?:much|a lot|way|loads|considerably|even) (?:louder|up)"
     r"|speak up|speak(?:ing)? louder|(?:talk|say that) louder|be louder|get louder"
     r"|louder|turn (?:it|that|the volume|your volume|yourself) up|volume up"
+    # "turn up your volume" - the same verb with the particle in front of the object.
+    # Live at the booth 2026-10-13 18:11:44, journalled as turn.transcript_final:
+    #     "I reach you turn up your volume a bunch, like hundred and twenty."
+    # UP_RE only knew "turn <object> up", so the deterministic path returned None, the
+    # sentence went to the model, and the gate denied its call 1.6 s later (see
+    # shell/attention/manager.py). English accepts both orders; a booth uses both.
+    r"|turn up (?:that|the volume|your volume|your voice|yourself)"
     r"|(?:crank|turn) it(?: all the way)? up|maximum volume|max volume|as loud as (?:it|you|possible))\b",
     re.IGNORECASE,
 )
@@ -132,6 +139,7 @@ DOWN_RE = re.compile(
     r"\b(?:(?:much|a lot|way|considerably|even) (?:quieter|softer|down|lower)"
     r"|speak (?:quieter|softer|low(?:er)?|more softly)|be quieter|be soft(?:er)?"
     r"|turn (?:it|that|the volume|your volume|yourself) down|volume down"
+    r"|turn down (?:that|the volume|your volume|your voice|yourself)"
     r"|quieter|softer|lower (?:it|the volume|your voice)|too loud|that'?s loud"
     r"|(?:tone|turn) it down)\b",
     re.IGNORECASE,
@@ -156,7 +164,18 @@ SELF_LEVEL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The addressee, spelled correctly or mis-heard. NAME_RE above is deliberately only the
+# mis-hearings - it doubles as the rewrite list in shell/llm_proxy.py and shell/conversation.py,
+# where "Reachy" -> "Reachy" would be a no-op worth not writing. Anything that has to know
+# "the guest just named him, don't count it" wants this one instead: the volume cap below used
+# NAME_RE and therefore charged the guest for saying his name correctly.
+ADDRESSEE_RE = re.compile(rf"\b(?:{_NAME})\b", re.IGNORECASE)
+
 VOLUME_MAX_WORDS = 12
+# A word, for the cap above: letters/digits with embedded apostrophes. `str.split()` counts
+# the comma in "Hey Reachy, turn it up" as a word, which silently shortens the budget by
+# whatever punctuation the guest's sentence happens to carry.
+WORD_RE = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?")
 
 
 def volume_request(text: str) -> str | None:
@@ -170,7 +189,11 @@ def volume_request(text: str) -> str | None:
       writes);
     * no negation or self-reference, reusing the same guards as sleep and silence -
       "don't turn it up", "I'll be quieter";
-    * short. Twelve words, because the wake name is usually bolted on the front.
+    * short. Twelve words, because the wake name is usually bolted on the front - which is
+      why the cap is counted on the text with the name already removed. Counting the raw
+      sentence made the cap charge the guest for the very courtesy it exists to absorb:
+      "Hey Reachy, turn up your volume a bunch, like a hundred and twenty" is twelve words
+      of request wearing a fourteen-word transcript.
 
     The remaining ambiguity is real and accepted: "turn it down" could be about somebody's
     phone. The caller's belt is that the shell only reaches this after the turn was
@@ -178,13 +201,13 @@ def volume_request(text: str) -> str | None:
     applies the attention gate, so ambient room speech cannot move the gain.
     """
     t = (text or "").strip()
-    if not t or len(t.split()) > VOLUME_MAX_WORDS:
+    if not t:
         return None
     if ASKING_RE.search(t):
         return None
-    stripped = NAME_RE.sub(" ", t).strip(" .,!?")
-    if not stripped:
-        return None  # "Hey Reachy." is a wake word, not a request
+    stripped = ADDRESSEE_RE.sub(" ", t).strip(" .,!?")
+    if not stripped or len(WORD_RE.findall(stripped)) > VOLUME_MAX_WORDS:
+        return None  # "Hey Reachy." is a wake word; anything past the cap is conversation
     # Strip a courtesy frame so "could you turn it up please" is still recognised as the
     # imperative it is; without this the tier below would have to allow-list every polite
     # phrasing a booth produces.

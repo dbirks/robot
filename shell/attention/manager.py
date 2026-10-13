@@ -66,9 +66,12 @@ class AttentionManager:
         self._window = 60.0
         self.clock = clock
         # Attention, measured when the guest speaks rather than when the model gets around to
-        # acting on it. See tool_confidence().
+        # acting on it. See tool_confidence(). Held for one renew window, for one holder: the
+        # holder is recorded because a lease outliving its speaker must not hand the previous
+        # participant's evidence to whoever walks up next (ADR 0003).
         self._turn_conf = 0.0
         self._turn_until = 0.0
+        self._turn_holder: str | None = None
 
     # ---- duty-cycle tracker ----
 
@@ -177,13 +180,22 @@ class AttentionManager:
 
         Staleness is the whole point of the window: an arm from a previous turn must not be
         revived for whoever is standing there now, so an expired arm is dropped before the new
-        value is maxed against it.
+        value is maxed against it - and so is an arm belonging to a DIFFERENT holder, which is
+        the same bug one step earlier: the lease transferred, it did not continue.
+
+        Arming needs a holder. An ENGAGE decision always arrives with one (every path in this
+        class acquires or renews before it logs), and arming without one would be arming for the
+        room rather than for a person.
         """
         now = (self.clock or _monotonic)()
-        if now > self._turn_until:
+        holder = self.lease.holder
+        if holder is None:
+            return
+        if now > self._turn_until or holder != self._turn_holder:
             self._turn_conf = 0.0
         self._turn_conf = max(self._turn_conf, min(1.0, confidence))
         self._turn_until = now + self.profile.lease_renew_s
+        self._turn_holder = holder
 
     def freeze_for_turn(self) -> None:
         """Called where an accepted user turn is recorded (`lease.note_interaction()`).
@@ -204,14 +216,36 @@ class AttentionManager:
         self._arm(self.lease.confidence())
 
     def tool_confidence(self, _name: str) -> float:
+        """The evidence the guest produced, not the clock since he produced it.
+
+        While the lease is live, held by the participant who produced that evidence, and inside
+        the arm window, this returns the ARMED value and decay may only raise it (`max`). A
+        validly held, actively renewed lease was being compared to a static 0.8 bar as if it were
+        an absence of trust: measured live 2026-10-13, `kws:hey Reachy` armed 1.0 at 18:11:31, the
+        visitor's request was accepted at 18:11:44.834, the model's `set_volume` at 18:11:46.434 -
+        and the gate answered 0.7459746307999922, which is `remaining_s / lease_renew_s` fifteen
+        seconds into a lease that had been renewed twenty-two times in that window. A real turn
+        (someone speaks for 4-8 s, a 4B composes, the call lands) always arrives later than the
+        ~3 s that ratio leaves above the bar, so the timer was not measuring attention at all.
+
+        What still denies, and why the shape is safe:
+
+        * no lease -> 0.0, and the arm is dropped rather than kept for later (18:12:08, and
+          ADR 0003: nobody who never said his name moves this robot's gain);
+        * the lease transferred to a different holder -> the old participant's evidence is gone;
+        * the arm window expired -> the live reading governs again, which is what kept the
+          operator's ambient "...turn volume up tool" denial correct at 0.256 (the gap from his
+          last accepted turn was 23.2 s, longer than one renew).
+        """
         live = self.lease.confidence()
         if not self.lease.active():
             # An expired lease ends the turn's claim too: decay is the mechanism that stops an
             # old participant's session licensing whoever is standing there now (ADR 0003).
             self._turn_conf = 0.0
+            self._turn_holder = None
             return 0.0
         now = (self.clock or _monotonic)()
-        if self._turn_conf and now <= self._turn_until:
+        if self._turn_conf and self._turn_holder == self.lease.holder and now <= self._turn_until:
             return max(live, self._turn_conf)
         return live
 

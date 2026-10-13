@@ -261,12 +261,23 @@ async def amain(cfg: ShellConfig) -> None:
             wake_t[0] = None
             client.drop_next_response()
             return
+        if text and lease.active():
+            # Attention is scored HERE, at the moment the guest's words were accepted, not when
+            # the model finally emits a tool call: the lease's decay alone gave a 3-second budget
+            # for STT + a 4B deliberation, which denied set_volume and play_emotion live on
+            # 2026-10-13 at 13:06 (confidence 0.7527 vs the event profile's 0.8). See
+            # AttentionManager.freeze_for_turn().
+            #
+            # a53869d wrote that sentence and this hook's docstring, and never wrote the call -
+            # `freeze_for_turn()` sat with zero production callers until the same denial came back
+            # at 18:11:46 on a boot that had the fix in it: the wake word's 1.0 arms for one renew
+            # window (15 s) from the WAKE WORD, and the tool call landed 15.32 s later, 0.32 s
+            # past the window (attention.tool_denied confidence 0.746). Re-arming here anchors the
+            # window to the guest's latest accepted turn, which is the turn the tool call answers.
+            # Only while the lease is live and only for a non-empty transcript: an arm cannot be
+            # extended by a turn that was never accepted (ADR 0003).
+            manager.freeze_for_turn()
         lease.note_interaction()
-        # Attention is scored HERE, at the moment the guest's words were accepted, not when
-        # the model finally emits a tool call: the lease's decay alone gave a 3-second budget
-        # for STT + a 4B deliberation, which denied set_volume and play_emotion live on
-        # 2026-10-13 at 13:06 (confidence 0.7527 vs the event profile's 0.8). See
-        # AttentionManager.freeze_for_turn().
         if text and lease.active() and wants_silence(text) and client.last_turn_cut_playback:
             # "stop talking" is an order, not a turn. The interrupt itself already did
             # its work (speaker.cancel_current, before this transcript arrived); what

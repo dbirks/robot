@@ -132,6 +132,49 @@ def test_volume_request_reads_the_booth_phrases():
         assert volume_request(text) == want, f"{text!r} -> {volume_request(text)!r}, want {want!r}"
 
 
+# --- measured live 2026-10-13 18:11:44 (hackday, post-P4): the deterministic path was    ---
+# --- silent on a plain request, so the sentence went to the 4B, whose set_volume call    ---
+# --- the attention gate then denied (attention.tool_denied 0.746 vs 0.8). Two separate   ---
+# --- matcher bugs are pinned here; the gate is a third, covered in test_attention_tool_gate.py.
+
+
+def test_volume_request_reads_the_particle_first_word_order():
+    """'turn up your volume' is the same command as 'turn your volume up'.
+
+    UP_RE only knew verb-object-particle, so the request journalled at 18:11:44
+    ("...turn up your volume a bunch...") matched nothing, and "loudness is deterministic"
+    stopped being true the moment a guest used the other legal English order.
+    """
+    from shell.intents import volume_request
+
+    for text, want in [
+        ("turn up your volume", "louder"),
+        ("turn up the volume", "louder"),
+        ("hey reachy turn up your volume", "louder"),
+        ("turn up it a second, I need to answer this", None),  # 'turn up it' is not English; must not guess
+        ("turn down the volume", "quieter"),
+        ("turn down your volume please", "quieter"),
+        ("don't turn up your volume", None),
+    ]:
+        assert volume_request(text) == want, f"{text!r} -> {volume_request(text)!r}, want {want!r}"
+
+
+def test_volume_request_does_not_charge_the_wake_name_to_the_length_cap():
+    """The cap exists *because* the wake name is bolted on the front (VOLUME_MAX_WORDS' own
+    docstring), but it counted the raw transcript: 12 permitted words of request plus
+    "Hey Reachy" and a comma was 14 tokens and read as conversation. The live 18:11:44
+    request was twelve words once you stopped counting his name.
+    """
+    from shell.intents import VOLUME_MAX_WORDS, volume_request
+
+    assert volume_request("Hey Reachy, turn up your volume a bunch, like a hundred and twenty.") == "louder"
+    assert volume_request("Reachy, could you turn the volume up for the back of the room") == "louder"
+    # The cap still bites: the same sentence without the addressee is over budget by one word,
+    # so this is the name being free, not the cap being gone.
+    assert VOLUME_MAX_WORDS == 12
+    assert volume_request("turn up your volume a bunch, like a hundred and twenty right now please") is None
+
+
 def test_volume_request_stays_out_of_the_other_intents_lane():
     """'stop talking' and friends must never move the gain - that exact misroute was measured
     live on 2026-10-12, four times, which is why the silence intent exists. Bare 'quiet' and
