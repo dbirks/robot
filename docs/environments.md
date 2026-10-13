@@ -171,7 +171,7 @@ in `.env`: `reachy-s2s` reads the same values and one fact must have one source.
       TTS instruct + ack sounds + system prompt, i.e. how he sounds *and* how he behaves.
       Nests under the environment (`persona: obama` / `persona: rickman`). The Alan Rickman
       voice work of 2026-10-08 (`models/voices/marvin-rickman/`) needs its own issue — see
-      `docs/notes/alan-rickman-voice-issue.md`.
+      [issue #35](https://github.com/dbirks/robot/issues/35).
 - [ ] V1 Volume: named levels retuned down 2026-10-12 (cap 2.0 → 1.2, "normal" 1.3 → 0.5) and the
       live sink dropped 1.70 → 0.50. Still open: per-env volume policy (a conference room needs
       headroom the home table does not) and `reachy-audio-init.service`, which hardcodes

@@ -1,5 +1,18 @@
 # Reachy Local Agent
 
+<!-- status-banner -->
+> **What is actually running today (2026-10-12).** The live stack is the realtime
+> shell in [`shell/`](shell/) - pinned `huggingface/speech-to-speech` for VAD/STT/TTS,
+> Qwen 3.5 4B through llama.cpp behind [`shell/llm_proxy.py`](shell/llm_proxy.py), and
+> `python -m shell` owning the microphone, the speaker, attention and tools. Rooms are
+> configuration: `REACHY_ENV` picks `envs/home.yaml` or `envs/hackday.yaml`
+> ([design](docs/environments.md)). Tests: `uv run pytest tests/`.
+> The synchronous turn-based loop in [`app/`](app/) is **legacy** and is being deleted at
+> the Phase 2 cutover ([issue #22](https://github.com/dbirks/robot/issues/22)); the rest
+> of this file still describes parts of it, so read `AGENTS.md` and
+> [`docs/epic-realtime-rebuild.md`](docs/epic-realtime-rebuild.md) for the current truth.
+> Dashboard: `http://localhost:3001`. Before you travel: `scripts/preflight_demo.sh`.
+
 > **Under rebuild.** This repo is mid-way through the realtime rebuild:
 > the canonical spec is [`docs/epic-realtime-rebuild.md`](docs/epic-realtime-rebuild.md),
 > durable decisions live in [`docs/adr/`](docs/adr/), and the new stack is the
