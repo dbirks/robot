@@ -416,9 +416,13 @@ def test_conversation_routes_read_the_live_journal():
     bodies = {n.name: ast.unparse(n) for n in tree.body if isinstance(n, ast.AsyncFunctionDef)}
     for route in ("conversation_page", "partial_conversation"):
         assert "live_turns()" in bodies[route], route
-    # The legacy archive is only reachable with read-only explicitly off.
-    assert "if READONLY:" in bodies["conversation_page"]
-    assert "get_recent_turns()" in bodies["conversation_page"].split("else:")[-1]
+    # The legacy home archive is never rendered on the conversation page, in any
+    # mode - read-only or not. It holds 3552 turns of family talk that the shell
+    # never writes, so the first cut (render the archive when read-only is off,
+    # let the SSE stream overwrite it seconds later) put private conversation on a
+    # public screen and swapped the page's data source mid-demo (#38 review P1).
+    for route in ("conversation_page", "partial_conversation"):
+        assert "get_recent_turns()" not in bodies[route], route
     assert "DB_PATH = ROBOT_DIR / " in src and "sessions.db" in src, "the legacy reader is gone, not gated"
 
 
