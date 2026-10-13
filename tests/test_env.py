@@ -291,6 +291,30 @@ def test_an_empty_greeter_variable_does_not_outrank_the_env_file(clean_env, monk
     assert cfg.greeter_max_per_hour == 6
 
 
+def test_the_search_sweep_is_off_at_home_and_on_at_the_booth(clean_env):
+    """`REACHY_GREETER_SCAN` (docs/knobs.md): off by default everywhere, and this test went
+    red the moment the booth turned it on - which is the point: enabling head motion is a
+    decision with a name on it, not a stray file edit. Neither shipped room sets `behaviour.greeter_scan`,
+    and this goes red the moment one of them does — which is the point: an operator
+    turning the sweep on is a decision with a name and a test, not a stray file edit."""
+    assert load_config("home", envs_dir=ENVS_DIR).greeter_scan is False
+    # hackday switched it on 2026-10-13 at the Hack Day booth, at David's request: "look
+    # around for people. When it finds someone, have it lock on, track them, and then greet
+    # them." Home stays off - a desk robot in a family living room should not swing its head
+    # around at the cat. Watch the first minutes: motion.error rows or a yaw that reverses
+    # faster than one 10-degree step per 1.2 s means flip this back, one line and a restart.
+    assert load_config("hackday", envs_dir=ENVS_DIR).greeter_scan is True
+
+
+def test_the_search_sweep_turns_on_from_either_layer(tmp_path, clean_env):
+    envs = write_env(tmp_path, "lab", "behaviour:\n  greeter_scan: true\n")
+    assert load_config("lab", envs_dir=envs).greeter_scan is True
+    clean_env.setenv("REACHY_GREETER_SCAN", "0")  # the on-site keystroke still wins
+    assert load_config("hackday", envs_dir=ENVS_DIR).greeter_scan is False
+    clean_env.setenv("REACHY_GREETER_SCAN", "on")
+    assert load_config("hackday", envs_dir=ENVS_DIR).greeter_scan is True
+
+
 def test_missing_env_file_is_a_hard_error(tmp_path, clean_env):
     with pytest.raises(EnvFileMissing) as err:
         load_config("ghost", envs_dir=tmp_path / "envs")

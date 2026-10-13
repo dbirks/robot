@@ -112,7 +112,8 @@ behaviour:
   # Suppressed while he is speaking, while a conversation owns him, and while the
   # LLM owes a reply; the one in-conversation exception is the group notice below.
   greeter: true
-  greeter_face_centering: true   # lock on: turn toward the face he dwelling on (greeter.py:348)
+  greeter_face_centering: true
+  greeter_scan: true              # idle sweep +-35 deg, 10 deg steps, empty room only (issue #37)   # lock on: turn toward the face he dwelling on (greeter.py:348)
   greeter_dwell_s: 2.0        # David's call: about two seconds of looking
   greeter_cooldown_s: 120     # global minimum spacing: never nag the room
   greeter_group_cooldown_s: 300  # "hey, a few more people here" is rarer still

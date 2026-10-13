@@ -97,6 +97,12 @@ def test_hysteresis_holds_a_face_the_strict_gate_would_drop():
 def test_gate_constants_are_the_plan_numbers():
     gate = Gate()
     assert (gate.max_yaw_deg, gate.max_pitch_deg, gate.max_roll_deg) == (18.0, 15.0, 20.0)
-    assert gate.min_area_share == 0.04 and gate.min_det_score == 0.70
+    # 0.04 was the plan's guess; 0.025 is tonight's measurement. In data/events.db, 13
+    # `face.present` rows from the live hackday room read min 0.0227 / median 0.0347 / max
+    # 0.0703 - 7 of 13 fell under the plan number, which is why `greeter.fired` and
+    # `greeter.suppressed` were both zero all evening: no face ever got a qualified track,
+    # so there was never a verdict to suppress. False positive = one extra hello (capped 6/h,
+    # 120 s apart); false negative = a robot that ignores the room it is standing in.
+    assert gate.min_area_share == 0.025 and gate.min_det_score == 0.70
     assert gate.relaxed().max_yaw_deg > gate.max_yaw_deg  # hysteresis loosens, never tightens
     assert gate.relaxed().min_area_share < gate.min_area_share

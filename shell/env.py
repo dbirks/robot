@@ -200,6 +200,7 @@ LAYERS: tuple[_Layer, ...] = (
     _Layer("behaviour.greeter_idle_fps", "greeter_idle_fps", "REACHY_GREETER_IDLE_FPS", _number),
     _Layer("behaviour.greeter_engaged_fps", "greeter_engaged_fps", "REACHY_GREETER_ENGAGED_FPS", _number),
     _Layer("behaviour.greeter_face_centering", "greeter_face_centering", "REACHY_GREETER_FACE_CENTERING", _flag),
+    _Layer("behaviour.greeter_scan", "greeter_scan", "REACHY_GREETER_SCAN", _flag),
     _Layer("behaviour.auto_sleep_s", "auto_sleep_s", "REACHY_AUTO_SLEEP_S", _number),
     _Layer("audio.mic", "mic_device", "REACHY_MIC"),
     _Layer("audio.speaker", "speaker_device", "REACHY_SPEAKER"),

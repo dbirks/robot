@@ -69,6 +69,7 @@ MOTION_EXCLUSIVE = "motion.exclusive"  # scripted SDK move ran with the loop pau
 MOTION_ERROR = "motion.error"  # set_target failures, rate-limited
 MOTION_WAKE_TURN = "motion.wake_turn"  # KWS -> head target set; latency_ms from detection
 MOTION_DOA_AIM = "motion.doa_aim"  # in-conversation re-aim toward the talker
+MOTION_SCAN = "motion.scan"  # idle search sweep detent (REACHY_GREETER_SCAN), rate-limited
 EMOTION_PLAYED = "emotion.played"  # a gesture was queued: name, keyframes, duration_s,
 # ok=False + error when the library or the robot refused
 

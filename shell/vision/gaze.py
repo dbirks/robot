@@ -47,7 +47,16 @@ class Gate:
     max_yaw_deg: float = 18.0
     max_pitch_deg: float = 15.0
     max_roll_deg: float = 20.0
-    min_area_share: float = 0.04  # ~1-2 m desk range; area is the only distance proxy
+    # 0.04 was a guess about desk range that cost the booth every greeting it could have
+    # made. Measured live, hackday, 2026-10-13 (13 `face.present` rows in data/events.db):
+    # area_share min 0.0227, MEDIAN 0.0347, max 0.0703 - so 7 of 13 real faces seen in the
+    # room that evening sat below the old floor and never got a qualified track at all, which
+    # is why `greeter.fired` and `greeter.suppressed` were BOTH zero all evening: not one turn
+    # ever reached the verdict. 0.025 admits 11 of those 13 samples and still rejects the two
+    # most peripheral. Asymmetry is deliberate: a false positive here is one extra hello, capped
+    # at 6/hour with 120 s spacing; a false negative is a robot that ignores the room. The
+    # max_area_share guard below is what stops an operator's nose in frame from counting.
+    min_area_share: float = 0.025  # measured median 0.0347; area is the only distance proxy
     max_area_share: float = 0.60  # not an operator's nose in frame
     centre_band: float = 0.60  # bbox centre inside the central 60 % of the frame
     hysteresis: float = 0.70  # relax multiplier applied to a track already locked on

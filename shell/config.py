@@ -272,6 +272,12 @@ class ShellConfig:
     # interaction with the DOA wake turn and the speech sway is the one part of B0
     # that cannot be measured without the robot, so it ships as a hook (see __main__).
     greeter_face_centering: bool = field(default_factory=lambda: _bool_env("REACHY_GREETER_FACE_CENTERING", "0"))
+    # The idle search sweep: when the room is empty and has been for `scan_settle_s`,
+    # pan +-35 deg in ~10 deg steps at >= 1 s per step until a face appears. Off in
+    # both rooms until it has been watched with one person in front of him — the
+    # servos have had about a minute of powered time in their life, and a sweep that
+    # oscillates is a booth failure no log line recovers. See `Greeter._scan`.
+    greeter_scan: bool = field(default_factory=lambda: _bool_env("REACHY_GREETER_SCAN", "0"))
     greeter_idle_fps: float = field(default_factory=lambda: float(_env("REACHY_GREETER_IDLE_FPS", "2")))
     greeter_engaged_fps: float = field(default_factory=lambda: float(_env("REACHY_GREETER_ENGAGED_FPS", "3")))
 

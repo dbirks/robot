@@ -53,6 +53,17 @@ GROUP_CUE = (
 
 REAIM_HOLD_S = 3.0  # face-centring target lifetime, when the motion hook is enabled
 TRACK_LOST_S = 1.5  # unseen this long and the presence is over (identity evaporates)
+
+# The idle search sweep (`REACHY_GREETER_SCAN`, default OFF). The servos have had
+# about one minute of powered time in their life, so every number here is the
+# conservative one, and the whole feature is gated behind `Greeter.scan`.
+SCAN_LIMIT_DEG = 35.0  # clamp: well inside motion's MAX_YAW_DEG (60)
+SCAN_STEP_DEG = 10.0  # one detent per step, so the sweep is a pan, not a saccade
+SCAN_STEP_S = 1.2  # >= 1 s per step: the spring (GAZE_HALFLIFE 0.35) lands each detent
+SCAN_SETTLE_S = 3.0  # quiet after the last sighting before the sweep may move again
+SCAN_HOLD_S = 2.5  # > SCAN_STEP_S, so the target never expires between detents
+SCAN_JOURNAL_S = 30.0  # the booth card wants "he is looking around", not 1 row/step
+SCAN_SOURCE = "scan"  # MotionOwner gaze_source; the bottom of the stack (see `_scan`)
 TRACK_GRACE_S = 0.6  # one dropped poll must not reset a dwell (2 FPS is 0.5 s apart)
 TRACK_MATCH_AZIMUTH = 18.0  # deg: coarse, because a person leans
 TRACK_MATCH_SHARE = 0.75  # multiplicative tolerance on bbox size
@@ -102,8 +113,9 @@ class Track:
 
 @dataclass
 class Greeter:
-    """Dwell gate + rate limiter. `sample(now)` is the whole policy, callable from
-    a test with a fake clock; `start()` only calls it on a thread."""
+    """Dwell gate + rate limiter + (off by default) the idle search sweep. `sample(now)`
+    is the whole policy, callable from a test with a fake clock; `start()` only calls it
+    on a thread."""
 
     # The collaborators are duck-typed on purpose: the greeter must be assemblable
     # without a camera, a model or a robot (see the degrade tests), and shell/camera.py
@@ -115,6 +127,7 @@ class Greeter:
     motion: Any = None  # shell.motion.MotionOwner; only ever asked to look_at
     enabled: bool = True
     face_centering: bool = False  # head centring, off until it is bench-tested (see __main__)
+    scan: bool = False  # the idle search sweep, off until it has been watched on the bench
     is_playing: Callable[[], bool] = lambda: False
     asleep: Callable[[], bool] = lambda: False  # while napping: no frames, no inference at all
     lease_active: Callable[[], bool] = lambda: False
@@ -122,6 +135,10 @@ class Greeter:
     gate: Gate = field(default_factory=Gate)
     clock: Callable[[], float] = time.monotonic
     dwell_s: float = 2.0  # David's call: about two seconds of looking, no less
+    scan_limit_deg: float = SCAN_LIMIT_DEG  # sweep clamp, either side of dead ahead
+    scan_step_deg: float = SCAN_STEP_DEG
+    scan_step_s: float = SCAN_STEP_S
+    scan_settle_s: float = SCAN_SETTLE_S
     min_spacing_s: float = 120.0  # global: never nag the room (docs/environments.md)
     group_min_spacing_s: float = 300.0  # the in-conversation arrival notice is rarer still
     max_per_hour: int = 6
@@ -137,6 +154,11 @@ class Greeter:
         self._last_any = -1e9
         self._last_group = -1e9
         self._last_journal = -1e9
+        self._last_sighting = -1e9  # last sample that detected any face (the sweep's settle clock)
+        self._scan_deg = 0.0  # last absolute head yaw the sweep commanded
+        self._scan_dir = -1.0  # ping-pong direction, so the search starts by looking left
+        self._scan_next = -1e9  # earliest next detent
+        self._last_scan_journal = -1e9
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._warned_no_frames = False
@@ -164,7 +186,9 @@ class Greeter:
         if cand is None:
             if self.debug:
                 self._log_faces(self.tracks.values())
+            self._scan(now)  # the only caller: an empty room is the only thing to search
             return self._quiet("nobody-looking")
+        self._end_scan()  # a face owns the head from this instant, so the sweep stands down
         if self.debug:
             self._log_faces([cand])
         if self.face_centering:
@@ -251,6 +275,8 @@ class Greeter:
 
     def _update(self, now: float, faces: list[Face]) -> list[Track]:
         seen: set[int] = set()
+        if faces:
+            self._last_sighting = now  # the sweep's settle clock runs on sightings, not tracks
         for face in faces:
             engaged = any(t.qualified and t.matches(face.azimuth_deg, face.share) for t in self.tracks.values())
             ok, margins = looking_at_me(
@@ -357,6 +383,83 @@ class Greeter:
             motion.look_at(cand.azimuth_deg, 0.0, hold_s=REAIM_HOLD_S, source="face")
         except Exception as e:
             log.warning("face centring failed: %r", e)
+
+    def _scan(self, now: float) -> None:
+        """The idle search: a slow ping-pong sweep for somebody to look at.
+
+        Reached only from the nobody-looking branch of `sample()`, and it moves the
+        head only while the room is genuinely empty. That restriction is the whole
+        hazard of this feature: `Face.azimuth_deg` is **head-relative** (gaze.py
+        `azimuth_deg` measures the bbox centre against the image centre and the
+        camera is head-mounted), so panning while a track exists moves the bearing
+        we match identity on. One person walking past a still head becomes three
+        tracks (`TRACK_MATCH_AZIMUTH`), their dwell resets, and the head starts
+        chasing the azimuth its own turn invented. So a live track — or a sighting
+        inside `scan_settle_s`, and a track lingers `TRACK_LOST_S` after the last
+        detection — is a hard stop, not a hint.
+
+        It is a gaze target, which is the bottom of the motion stack, so anything
+        else that wants the head simply takes it: a `wake`/`doa` turn or a tool look
+        writes `_gaze_target` over ours, and an emote (Animation priority 0, played
+        without preemption) blends over the base gaze while it runs. We never fight
+        back for the gaze — while a source other than `home`/`scan` holds it, the
+        sweep stands down and re-centres for the next attempt.
+        """
+        motion = self.motion
+        if not self.scan or motion is None:
+            return
+        if self.tracks or now - self._last_sighting < self.scan_settle_s:
+            self._end_scan()
+            return
+        if self.is_playing() or self.lease_active() or self.awaiting_reply():
+            return  # engaged with somebody: this is an idle-room search, not a tic
+        if getattr(motion, "busy", False) or getattr(motion, "sleeping", False):
+            return  # scripted move or the nap — the same rule `_center` keeps
+        if getattr(motion, "gaze_source", "home") not in (SCAN_SOURCE, "home"):
+            self._end_scan()  # a wake turn / tool look / face aim holds the head: yield
+            return
+        if now < self._scan_next:
+            return
+        lim, step = max(0.0, self.scan_limit_deg), abs(self.scan_step_deg)
+        target = self._sweep_to(self._scan_deg + self._scan_dir * step, lim)
+        if target == self._scan_deg:  # parked on the limit: this end of the room is done
+            self._scan_dir = -self._scan_dir
+            target = self._sweep_to(self._scan_deg + self._scan_dir * step, lim)
+        if target == self._scan_deg:
+            return  # degenerate knobs (a zero step): never re-command the same detent
+        self._scan_deg = target
+        self._scan_next = now + max(1.0, self.scan_step_s)  # at least one second per step
+        try:
+            motion.look_at(target, 0.0, hold_s=SCAN_HOLD_S, source=SCAN_SOURCE)
+        except Exception as e:  # the sweep must never take the poll thread down
+            log.warning("greeter scan failed: %r", e)
+            return
+        if self.debug:
+            log.info("greeter scan azimuth=%.1f dir=%s", target, "left" if self._scan_dir < 0 else "right")
+        if self.journal is None or now - self._last_scan_journal < SCAN_JOURNAL_S:
+            return
+        # Rate-limited like the suppression row: the booth card wants to know he is
+        # looking around, and a row per detent would flush the ring in minutes.
+        self._last_scan_journal = now
+        self.journal.write(
+            J.MOTION_SCAN,
+            azimuth_deg=round(target, 1),
+            direction="left" if self._scan_dir < 0 else "right",
+            limit_deg=round(lim, 1),
+            hold_s=SCAN_HOLD_S,
+        )
+
+    @staticmethod
+    def _sweep_to(deg: float, lim: float) -> float:
+        return max(-lim, min(lim, deg))
+
+    def _end_scan(self) -> None:
+        """Give the head back. Nothing is commanded here: `SCAN_HOLD_S` expires on
+        its own and the motion owner springs the gaze home, so abandoning the sweep
+        cannot snap the neck any harder than finishing it."""
+        self._scan_deg = 0.0
+        self._scan_dir = -1.0
+        self._scan_next = -1e9
 
     # ---- reporting ----
 

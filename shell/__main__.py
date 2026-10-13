@@ -382,6 +382,7 @@ async def amain(cfg: ShellConfig) -> None:
             on_greet=greet_hook(client, loop, journal=journal),
             motion=motion,
             face_centering=cfg.greeter_face_centering,
+            scan=cfg.greeter_scan,
             # Fail-closed suppressors (ADR 0003): he is never proactive while he is
             # speaking, asleep, holding a conversation, or owed a reply.
             is_playing=lambda: speaker.playing or sleep.sleeping,
@@ -401,6 +402,10 @@ async def amain(cfg: ShellConfig) -> None:
             log.info("greeter waiting on a camera (daemon holds it, or there is none)")
         if not cfg.greeter_face_centering:
             log.info("greeter head-centring off (REACHY_GREETER_FACE_CENTERING=1 to try it)")
+        if not cfg.greeter_scan:
+            # The tell for a knob that is inert by default: with the name set, this line
+            # stops appearing (docs/knobs.md, `REACHY_GREETER_SCAN`).
+            log.info("greeter search sweep off (REACHY_GREETER_SCAN=1; bench it with one person in frame)")
 
     kws = None
     try:

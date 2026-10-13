@@ -549,4 +549,6 @@ def test_dwell_and_gate_defaults_are_the_decided_numbers():
     assert g.dwell_s == 2.0 and g.min_spacing_s == 120.0
     assert g.group_min_spacing_s == 300.0 and g.max_per_hour == 6
     assert (g.idle_fps, g.engaged_fps) == (2.0, 3.0)
-    assert Gate().min_area_share == 0.04 and math.isclose(g.gate.hysteresis, 0.7)
+    assert Gate().min_area_share == 0.025 and math.isclose(
+        g.gate.hysteresis, 0.7
+    )  # 0.025 measured 2026-10-13, see test_vision_gaze
