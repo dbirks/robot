@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 import shell.__main__ as shell_main
-from shell.config import SHELL_NOTES, ShellConfig, persona_instructions
+from shell.config import SHELL_NOTES, ShellConfig, instructions_without_auto_learn, persona_instructions
 from shell.conversation import FACT_PROMPT, SUMMARY_PROMPT, ConversationMemory, grounded, parse_facts
 from shell.env import (
     ENVS_DIR,
@@ -41,6 +41,18 @@ TODAY_PERSONA = (
 )
 TODAY_INSTRUCTIONS = persona_instructions(TODAY_PERSONA)
 TODAY_ACK_DIR = Path("sounds/acks/obama")
+
+
+def expected_tail(cfg: ShellConfig) -> str:
+    """The shared tail as THIS room receives it.
+
+    `TOOLS_NOTE` lives inside `SHELL_NOTES`, and a room with
+    `behaviour.learn_facts: false` gets that one sentence removed by
+    `reconcile_learn_facts_prompt` (shell/env.py) - so asserting a bare
+    `endswith(SHELL_NOTES)` would demand the very thing the booth must not say.
+    """
+    return SHELL_NOTES if cfg.learn_facts else instructions_without_auto_learn(SHELL_NOTES)
+
 
 # Names/places/relations that are private to this desk (and the ones the reviews
 # found compiled into prompts and tool schemas). Nothing below may appear in
@@ -188,7 +200,7 @@ def test_an_empty_process_env_var_is_no_opinion(tmp_path, clean_env, monkeypatch
 
     cfg = load_config("hackday", envs_dir=ENVS_DIR)
     assert "never mention anyone's family" in cfg.instructions  # the persona survived
-    assert cfg.instructions.endswith(SHELL_NOTES) and cfg.instructions.count("Speak plain words") == 1
+    assert cfg.instructions.endswith(expected_tail(cfg)) and cfg.instructions.count("Speak plain words") == 1
     assert cfg.tools_exclude == [
         "go_to_sleep",
         "reset_conversation",
@@ -322,7 +334,7 @@ def test_hackday_persona_carries_no_home_facts(clean_env):
     assert cfg.attention_profile == "event"
     assert cfg.memory_namespace == "hackday"
     # the notes every persona gets, whatever the room (docs/environments.md schema v1)
-    assert cfg.instructions.endswith(SHELL_NOTES)
+    assert cfg.instructions.endswith(expected_tail(cfg))
 
 
 # --------------------------------------------------------------------------
@@ -796,3 +808,46 @@ def test_both_shipped_rooms_keep_the_greeter_defaults(clean_env):
         cfg = load_config(name, envs_dir=ENVS_DIR)
         assert cfg.greeter_idle_fps == 2.0 and cfg.greeter_engaged_fps == 3.0
         assert cfg.greeter_face_centering is False  # gated off until benched (docs/pins.yaml)
+
+
+def test_the_learn_facts_note_is_removable_without_touching_home():
+    """`instructions_without_auto_learn` works by exact substring, so the day somebody
+    rewords TOOLS_NOTE the booth room silently keeps being told to harvest facts.
+    This fails the moment the two strings drift apart."""
+    from shell.config import LEARN_FACTS_NOTE, TOOLS_NOTE, instructions_without_auto_learn
+
+    assert LEARN_FACTS_NOTE in TOOLS_NOTE, (
+        "the note and the shared tail drifted; the booth prompt still says to auto-remember"
+    )
+    stripped = instructions_without_auto_learn(TOOLS_NOTE)
+    assert LEARN_FACTS_NOTE not in stripped
+    assert "  " not in stripped, "removal leaves a double space in the prompt"
+    # the explicit half survives: being asked to remember is not the same act
+    assert "asks you to remember, recall or forget something" in stripped
+
+
+def test_a_room_that_disables_fact_learning_is_not_also_told_to_do_it(clean_env):
+    """hackday sets behaviour.learn_facts: false while `remember` stays in its tool
+    list by design (a guest asking to be remembered is fine). Before 2026-10-12 the
+    shared prompt tail still instructed him to save lasting facts about 'the user or
+    their family' unprompted - at a booth, a stranger's child's age written down
+    because a prompt said to. Prompt and policy are one decision now."""
+    from shell.config import LEARN_FACTS_NOTE
+
+    booth = load_config("hackday", envs_dir=ENVS_DIR)
+    assert booth.learn_facts is False
+    assert LEARN_FACTS_NOTE not in booth.instructions
+    assert "remember, recall or forget" in booth.instructions
+
+    home = load_config("home", envs_dir=ENVS_DIR)
+    assert home.learn_facts is True
+    assert LEARN_FACTS_NOTE in home.instructions
+    assert len(home.instructions.encode()) == 1568, "home parity is the A2 bar; the note is not a byte to move"
+
+
+def test_reconcile_is_a_noop_when_learning_is_on():
+    from shell.env import reconcile_learn_facts_prompt
+
+    cfg = ShellConfig(env="home")
+    before = cfg.instructions
+    assert reconcile_learn_facts_prompt(cfg).instructions == before

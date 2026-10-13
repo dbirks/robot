@@ -40,7 +40,14 @@ from typing import Any, Callable
 
 import yaml
 
-from .config import DEFAULT_ENV, REACHY_ENV_VAR, ShellConfig, persona_instructions
+from .config import (
+    DEFAULT_ENV,
+    LEARN_FACTS_NOTE,
+    REACHY_ENV_VAR,
+    ShellConfig,
+    instructions_without_auto_learn,
+    persona_instructions,
+)
 
 # Repo root, not cwd: `python -m shell` runs from %h/dev/robot under systemd, but
 # --print-env and the tests must resolve the same files from anywhere.
@@ -227,6 +234,23 @@ def layer_env_file(cfg: ShellConfig, doc: dict) -> ShellConfig:
     return cfg
 
 
+def reconcile_learn_facts_prompt(cfg: ShellConfig) -> ShellConfig:
+    """A room that turns automatic fact-learning off must not also be *told* to do it.
+
+    `behaviour.learn_facts` gates the miner (shell/conversation.py), but the shared
+    `TOOLS_NOTE` in config.py carried a standing instruction to call `remember`
+    unprompted about "the user or their family" - so `hackday` set the flag false and
+    the prompt still said otherwise, and the `remember` tool is deliberately still
+    available there. Prompt and policy are one decision now.
+
+    Home is untouched: `learn_facts` defaults true, so its resolved instructions stay
+    byte-identical (the note is an exact substring; tests/test_env.py pins that).
+    """
+    if not cfg.learn_facts and LEARN_FACTS_NOTE in cfg.instructions:
+        cfg.instructions = instructions_without_auto_learn(cfg.instructions)
+    return cfg
+
+
 def guard_memory_namespace(cfg: ShellConfig) -> None:
     """Hard rule 1 (docs/environments.md): a room that is not `home` may never
     land on the home memory store.
@@ -373,6 +397,7 @@ def load_config(
         doc = merge_persona_doc(doc, load_persona_doc(selected, personas_dir))
     cfg = layer_env_file(ShellConfig(env=name), doc)
     guard_memory_namespace(cfg)
+    reconcile_learn_facts_prompt(cfg)
     return cfg
 
 

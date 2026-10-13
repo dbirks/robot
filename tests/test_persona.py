@@ -83,7 +83,13 @@ def test_obama_is_byte_identical_to_the_persona_home_has_always_used(clean_env):
 
 def test_the_marvin_text_is_the_hackday_persona_of_today(clean_env):
     cfg = shell_env.load_config("hackday")
-    assert cfg.instructions == persona_instructions(persona_text("marvin"))
+    expected = persona_instructions(persona_text("marvin"))
+    if not cfg.learn_facts:
+        # hackday sets behaviour.learn_facts: false, and the reconcile in shell/env.py
+        # then drops the shared tail's unprompted-remember sentence. Comparing against
+        # the raw persona text would demand that sentence back at a public booth.
+        expected = shell_env.instructions_without_auto_learn(expected)
+    assert cfg.instructions == expected
     assert "never mention anyone's family" in cfg.instructions
     assert "hack day" in cfg.instructions.lower()
     # behaviour-only: naming no real person, so a public screen carries no likeness claim

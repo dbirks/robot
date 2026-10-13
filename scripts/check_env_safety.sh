@@ -272,6 +272,25 @@ for retired in ("reachy-agent", "qwen3-tts"):
     assert retired not in units_list, "%s is back on the controllable list" % retired
 PY
 
+run "12. the booth prompt does not tell him to harvest facts unprompted" <<PY
+$PRELUDE
+from shell import config as C
+from shell import env as E
+booth = E.load_config("hackday")
+assert booth.learn_facts is False, "hackday stopped disabling the fact miner"
+assert C.LEARN_FACTS_NOTE not in booth.instructions, (
+    "hackday still instructs him to save 'a name, who someone is, an age, where they "
+    "live, a pet' with nobody asking - and 'remember' is in its tool list by design"
+)
+assert "remember, recall or forget" in booth.instructions, "the explicit-request half must stay"
+home = E.load_config("home")
+assert C.LEARN_FACTS_NOTE in home.instructions, "home lost the behaviour it shipped with"
+assert len(home.instructions.encode()) == 1568, "home persona bytes moved (A2 parity bar)"
+assert C.LEARN_FACTS_NOTE in C.TOOLS_NOTE and C.LEARN_FACTS_NOTE in C.SHELL_NOTES, (
+    "the note and the shared tail drifted: the reconcile now removes nothing at all"
+)
+PY
+
 echo
 if [ "$fails" -ne 0 ]; then
   echo "check_env_safety: $fails check(s) FAILED - do not switch rooms or start the shell"

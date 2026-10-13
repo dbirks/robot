@@ -60,6 +60,28 @@ TOOLS_NOTE = (
     " result, say one short sentence about what happened or what you found."
 )
 
+# The unprompted half of that note, kept as its own string so a room that turns
+# automatic fact-learning OFF can also stop TELLING him to do it. Until 2026-10-12
+# `behaviour.learn_facts: false` only disabled the miner in shell/conversation.py,
+# while this sentence - shared code default, both rooms - still instructed him to
+# save lasting facts about "the user or their family: a name, who someone is, an
+# age, where they live, a pet" without being asked. At a public booth that is a
+# stranger saying "my daughter is five" and him writing it down because a prompt
+# told him to. This must stay an exact substring of TOOLS_NOTE (tested), so the
+# home room stays byte-identical when the note is left in place.
+LEARN_FACTS_NOTE = (
+    "Also call remember on your own, without being asked, when the user tells you "
+    "something lasting about themselves or their family: a name, who someone is, an "
+    "age, where they live, a pet. "
+)
+
+
+def instructions_without_auto_learn(text: str) -> str:
+    """Drop the unprompted-remember sentence from a prompt, leaving the explicit
+    request half ("...or asks you to remember, recall or forget something") alone -
+    an attendee asking to be remembered is a different act from volunteering it."""
+    return text.replace(LEARN_FACTS_NOTE, "")
+
 # Appended to every persona, in every deployment environment.
 SHELL_NOTES = TOOLS_NOTE + TIME_NOTE
 

@@ -73,8 +73,13 @@ def default_devices() -> tuple[str, str]:
     def one(section: str) -> str:
         lines = out.split(f"{section}\n", 1)[-1].splitlines() if section in out else []
         for ln in lines:
-            if ln.strip().startswith("*"):
-                return ln.strip().lstrip("* ").strip()
+            # wpctl draws the selected item as `│ * 53.  Name  [vol: ...]` - the box
+            # character is why this returned "(none)" on a machine whose route was
+            # correct, and a bench that misreads the route tells you the opposite
+            # of the truth about interruptions.
+            s = ln.replace("│", "").replace("|", "").strip()
+            if s.startswith("*"):
+                return s.lstrip("* ").strip()
         return "(none)"
 
     return one("Sinks:"), one("Sources:")
@@ -151,10 +156,19 @@ def main() -> int:
     print("\n== step 1: does echo survive? ==")
     cap = Capture()
     stats: dict = {"route": {"sink": sink, "source": source, "both_reachy": route_ok}}
-    with sd.CallbackInputStream(samplerate=SR, blocksize=BLOCK, channels=2, callback=cap.cb):
+    # sounddevice has no CallbackInputStream - the callback constructor is
+    # InputStream. Two channels if the device exposes them, one if not; the channel
+    # count is printed because "which column is his voice in" is the whole question.
+    try:
+        stream = sd.InputStream(samplerate=SR, blocksize=BLOCK, channels=2, callback=cap.cb)
+    except ValueError:
+        stream = sd.InputStream(samplerate=SR, blocksize=BLOCK, channels=1, callback=cap.cb)
+    stats["capture_channels"] = stream.channels
+    with stream:
         time.sleep(2.0)
         base = cap.drain()
         base_r = [rms(base[:, i : i + 1]) for i in range(base.shape[1])]
+        print(f"  capture channels        {stream.channels}")
         print(f"  room silence rms        L={base_r[0]:.5f}" + (f"  R={base_r[1]:.5f}" if len(base_r) > 1 else ""))
         sd.play(tone(args.tone_seconds), SR)
         time.sleep(args.tone_seconds + 1.0)
@@ -187,7 +201,11 @@ def main() -> int:
                 stats["over_playback_rms"] = over_r
                 _save(Path(args.out or "/tmp/bench-aec"), "over_playback", over)
                 print("  now say the SAME sentence with him silent:")
-                input("  press enter to record 5 s of silence-free capture...")
+                if sys.stdin.isatty():
+                    input("  press enter to record 5 s of capture...")
+                else:
+                    print("  speaking now counts down from 5 (no tty: not waiting on enter)")
+                    time.sleep(5.0)
                 cap.drain()
                 time.sleep(5.0)
                 quiet = cap.drain()
