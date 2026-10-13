@@ -75,3 +75,66 @@ def test_the_tool_path_delegates_instead_of_keeping_its_own_numbers():
     assert "from shell import volume as V" in src, "set_volume stopped reading the shared policy"
     assert '"whisper": 0.2' not in src, "the retired private level table came back"
     assert "min(1.2, target)" not in src, "a second hardcoded ceiling came back"
+
+
+# --- the 2026-10-13 voice-path fixes: reporting, and not claiming inability ---
+
+
+def test_read_words_ask_for_the_level_and_are_not_change_words():
+    assert V.is_read_request("current") and V.is_read_request("How loud are you?")
+    assert V.is_read_request("  what is it  ") and V.is_read_request("status.")
+    assert not V.is_read_request("quieter") and not V.is_read_request("louder")
+    assert not V.is_read_request("150%") and not V.is_read_request("")
+
+
+def test_a_read_word_cannot_shadow_a_level_that_changes_something():
+    """ "level" is a question here and "loud" is a command there; if those sets ever intersect,
+    "set the volume to max" could silently become a status report - the worst kind of robot that
+    answers a request it was given."""
+    change_words = set(V.STEPS) | set(V.NAMED)
+    assert not (V.READ_WORDS & change_words), f"collision: {sorted(V.READ_WORDS & change_words)}"
+
+
+def test_the_read_path_returns_before_anything_is_written():
+    """Order is the contract: the read branch must sit above `set_volume_boost(target)`, or
+    "how loud are you?" changes the room. Asserted structurally because a unit test of this
+    handler needs the whole legacy bridge."""
+    src = (ROOT / "app" / "robot_tools.py").read_text()
+    read = src.index("if V.is_read_request(level):")
+    write = src.index("set_volume_boost(target)")
+    assert read < write, "the report path moved below the write"
+    assert 'changed": False' in src[read:write], "the report stopped saying it changed nothing"
+
+
+def _tool_schema(name: str) -> dict:
+    """A tool schema, without importing the module that owns it.
+
+    `app/robot_tools.py` pulls in cv2, which the bare CI environment does not have, so importing it
+    would turn this file's schema guards into skips - and a skipped guard is how a description
+    regresses back to "I cannot" with nothing going red. TOOLS is constant data, so the AST can
+    read it directly."""
+    import ast
+
+    tree = ast.parse((ROOT / "app" / "robot_tools.py").read_text())
+    for st in ast.walk(tree):
+        # TOOLS is annotated (`TOOLS: list[dict] = [...]`), which is an AnnAssign, not an Assign -
+        # checking only the latter made this guard report "not declared" while the list was right
+        # there on the page.
+        names = [getattr(x, "id", "") for x in getattr(st, "targets", []) or [getattr(st, "target", None)]]
+        if isinstance(st, (ast.Assign, ast.AnnAssign)) and "TOOLS" in names:
+            for tool in ast.literal_eval(st.value):
+                fn = tool.get("function") or {}
+                if fn.get("name") == name:
+                    return fn
+    raise AssertionError(f"{name} is not declared in a TOOLS list")
+
+
+def test_the_schema_does_not_let_him_claim_he_cannot_be_louder():
+    """Live 2026-10-13 13:14, three times: "turn the volume down" produced NO tool call and the
+    sentence "I'm afraid I cannot adjust the volume as you've requested" - on a box where the tool
+    exists, is enabled, and had worked a few seconds earlier. A 4B model that is not told it is
+    allowed will decline politely, and a guest hears a broken robot either way."""
+    fn = _tool_schema("set_volume")
+    assert "never answer that he cannot" in fn["description"], "the authority clause was dropped"
+    level = fn["parameters"]["properties"]["level"]["description"]
+    assert "'current'" in level, "the read word must be reachable from the schema"

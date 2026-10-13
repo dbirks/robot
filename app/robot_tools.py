@@ -197,7 +197,8 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "set_volume",
             "description": (
-                "Adjust the robot's speaking volume. For 'louder', 'speak up', 'turn it up' use 'louder' "
+                "Adjust the robot's speaking volume - this is HIS OWN loudness and he CAN change "
+                "it, so never answer that he cannot. For 'louder', 'speak up', 'turn it up' use 'louder' "
                 "(or 'much louder'); for 'quieter', 'turn it down' use 'quieter' (or 'much quieter'). "
                 "Use a named level or percentage only when the user asks for a specific volume. "
                 "Range is 0% to 200%; 'max' is 200% and is meant for a noisy room. "
@@ -211,8 +212,10 @@ TOOLS: list[dict[str, Any]] = [
                     "level": {
                         "type": "string",
                         "description": (
-                            "'louder', 'much louder', 'quieter', 'much quieter', or a level: "
-                            "'whisper', 'quiet', 'medium', 'loud', 'max', or a percentage like '150%'"
+                            "'louder', 'much louder', 'quieter', 'much quieter', a level: "
+                            "'whisper', 'quiet', 'medium', 'loud', 'max', a percentage like '150%', "
+                            "or 'current' to just report the level he is at (for 'how loud are you?', "
+                            "'what is your volume?')"
                         ),
                     }
                 },
@@ -574,6 +577,18 @@ def make_handlers(
             from .playback import set_volume_boost
 
             current = _get_sink_volume()
+            if V.is_read_request(level):
+                # Report, do not write. `set_volume_boost` is not called on this path at all:
+                # "how loud are you?" must not be allowed to change the room.
+                return {
+                    "ok": True,
+                    "volume_percent": None if current is None else round(current * 100),
+                    "changed": False,
+                    "at_max": current is not None and current >= V.MAX_GAIN,
+                    "at_min": current is not None and current <= V.MIN_GAIN,
+                    "clipping_risk": current is not None and V.clipping_risk(current),
+                    "ceiling_percent": round(V.MAX_GAIN * 100),
+                }
             target = V.resolve(level, current)
             if target is None:
                 known = ", ".join(sorted(set(list(V.STEPS) + list(V.NAMED)))[:12])

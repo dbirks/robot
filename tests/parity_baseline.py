@@ -10,7 +10,11 @@ places disagrees with itself the first time a prompt changes *on purpose*: two f
 updated, one is missed, and the safety gate goes red on an unrelated night. One constant,
 three readers.
 
-2026-10-13: **1765 -> 1938**, deliberately - TOOLS_NOTE now carves play_emotion out of the
+2026-10-13 later again: **1938 -> 2102** - the narration rule was widened past gestures (it said
+"a gesture means CALLING the tool", and the model reasonably concluded loudness was not covered:
+journal shows "I have turned the volume down" with no set_volume call at all), and set_volume's
+own schema now says he may not claim he cannot.
+2026-10-13: **1938 -> 2102**, deliberately - TOOLS_NOTE now carves play_emotion out of the
 "greetings and goodbyes need no tool" ban and says plainly that narrating a tool call is not
 making one. Live measurement (scripts/bench_emotes.py, hackday, qwen3.5-4b): the old pairing
 produced "I am currently playing hello" with no tool call at all - the note told him to narrate
@@ -32,4 +36,4 @@ The stale-stamp cache itself is a separate defect (it still misdates anything
 date-relative) and is deliberately NOT touched the night before a demo.
 """
 
-HOME_PROMPT_BYTES = 1938
+HOME_PROMPT_BYTES = 2102

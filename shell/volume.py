@@ -108,5 +108,18 @@ def resolve(level: str, current: float | None) -> float | None:
     return None if parsed is None else clamp_gain(parsed)
 
 
+#: Words that ask what the loudness IS rather than what it should be. Live evidence 2026-10-13:
+#: asked "what's your volume level?" with no way to read it back, the model confabulated ("my
+#: speaker only has the va..."), and later claimed outright that it could not adjust the volume at
+#: all while never calling the tool. A question that has no path to an answer gets invented, and at
+#: a booth an invented answer about the robot's own state is indistinguishable from a real one.
+READ_WORDS = frozenset({"current", "now", "level", "status", "report", "what is it", "how loud", "how loud are you"})
+
+
+def is_read_request(level: str) -> bool:
+    """True when the word asks for the present level, so nothing must be written."""
+    return str(level).strip().lower().rstrip("?!. ") in READ_WORDS
+
+
 def clipping_risk(gain: float) -> bool:
     return float(gain) > CLIPPING_ABOVE
