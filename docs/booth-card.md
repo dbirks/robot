@@ -9,6 +9,17 @@ assistant** — speech in, conversation out, no cloud inference. One machine:
 a 2016 four-core i7 and an 8 GB GTX 1070, running the chat model, the speech
 recogniser and the voice synthesiser at the same time.
 
+## Reading the journal on this box
+
+`sqlite3` here is built such that `datetime(wall,'localtime')` returns
+`1999-12-31 19:00:00` for a 2026 epoch - it clamps instead of answering. The stored
+`wall` value is correct (`1791857303.45` = a real unix time); only the CLI's
+formatter lies. Read raw epochs in Python (`datetime.fromtimestamp`) or
+`strftime('%s','now')` comparisons will silently match everything.
+`mono` is seconds since the *process* started (ADR 0007), so it resets on every
+restart - never subtract across a restart.
+
+
 ## Talk to him
 
 Say **"Reachy"** — then your question, in the same breath:
