@@ -291,6 +291,46 @@ assert C.LEARN_FACTS_NOTE in C.TOOLS_NOTE and C.LEARN_FACTS_NOTE in C.SHELL_NOTE
 )
 PY
 
+run "13. one room per screen: the dashboard cannot show another room's conversation" <<PY
+$PRELUDE
+# The leak this catches: data/events.db has always been ONE file shared by every
+# deployment environment. Before 2026-10-12 the booth panel asked for "the newest 100
+# conversation rows" and got them - including hours of home talk - until an attendee
+# spoke. Revert the env filter in dashboard/journal_read.py and this goes red.
+import tempfile
+from pathlib import Path
+
+from dashboard import journal_read as jr
+from shell.journal import Journal
+
+with tempfile.TemporaryDirectory() as td:
+    db = Path(td) / "events.db"
+    legacy = Journal(db)
+    legacy.write(jr.TURN_TRANSCRIPT_FINAL, text="old home history")
+    legacy.closed()
+    home = Journal(db, env="home")
+    home.write(jr.TURN_TRANSCRIPT_FINAL, text="Rachel, pass the salt")
+    home.closed()
+    booth = Journal(db, env="hackday")
+    booth.write(jr.TURN_TRANSCRIPT_FINAL, text="what can you do?")
+    booth.closed()
+    conn = jr.open_ro(db)
+    try:
+        room = jr.current_room(conn)
+        assert room == "hackday", room
+        said = [t["content"] for t in jr.turns_from_events(
+            jr.latest_events(conn, limit=50, types=jr.CONVERSATION_TYPES, env=room))]
+        assert said == ["what can you do?"], f"the booth screen is showing other rooms: {said}"
+        streamed = [e["payload"].get("env") for e in jr.events_after(conn, 0, types=jr.CONVERSATION_TYPES, env=room)]
+        assert streamed == ["hackday"], f"the SSE cursor leaks: {streamed}"
+        traced = jr.trace_window(conn, window=500, limit=10, env=room)
+        assert all(t.get("env") in (None, "hackday") for t in traced["traces"]), "traces cross rooms"
+        srv = Path("dashboard/server.py").read_text()
+        assert srv.count("env=room") >= 3, "a dashboard route stopped filtering by room"
+    finally:
+        conn.close()
+PY
+
 echo
 if [ "$fails" -ne 0 ]; then
   echo "check_env_safety: $fails check(s) FAILED - do not switch rooms or start the shell"

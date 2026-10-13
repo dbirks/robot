@@ -112,13 +112,22 @@ def events_after(
     after_id: int = 0,
     limit: int = 500,
     types: tuple[str, ...] | None = None,
+    env: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Ascending rows with id > after_id — the SSE cursor."""
+    """Ascending rows with id > after_id — the SSE cursor.
+
+    `env` matters most here: the SSE stream is what a live screen actually shows, and
+    an unfiltered cursor would push another room's conversation onto the booth display
+    the moment somebody spoke (ADR 0003, issue #38).
+    """
     q = f"SELECT {_EVENT_COLS} FROM events WHERE id > ?"
     args: list[Any] = [after_id]
     if types:
         q += f" AND type IN ({','.join('?' * len(types))})"
         args.extend(types)
+    if env:
+        q += " AND json_extract(payload, '$.env') = ?"
+        args.append(env)
     q += " ORDER BY id ASC LIMIT ?"
     args.append(max(1, int(limit)))
     return [_row_to_event(r) for r in conn.execute(q, args)]
@@ -129,21 +138,48 @@ def latest_events(
     limit: int = 200,
     type_: str | None = None,
     types: tuple[str, ...] | None = None,
+    env: str | None = None,
 ) -> list[dict[str, Any]]:
     """Newest `limit` rows, returned oldest-first (the order turn assembly wants).
 
     `types` is how a conversation window avoids drowning in watchdog samples;
     `type_` stays for the single-type callers (liveness).
+
+    `env` is the room filter (docs/environments.md, ADR 0003). The journal has always
+    been ONE file, so the newest 100 conversation rows were the newest 100 rows of
+    whatever room had last been talking - which meant the booth screen would open on
+    the family's home history until an attendee said something. Only stamped rows can
+    match, so pre-Phase-A rows are excluded from every room view: ambiguous belongs to
+    nobody. `env=None` means unfiltered and is only for the badge probe that decides
+    which room to filter to.
     """
     wanted = tuple(types) if types else ((type_,) if type_ else ())
-    q = f"SELECT {_EVENT_COLS} FROM events"
+    clauses: list[str] = []
     args: list[Any] = []
     if wanted:
-        q += f" WHERE type IN ({','.join('?' * len(wanted))})"
+        clauses.append(f"type IN ({','.join('?' * len(wanted))})")
         args.extend(wanted)
+    if env:
+        clauses.append("json_extract(payload, '$.env') = ?")
+        args.append(env)
+    q = f"SELECT {_EVENT_COLS} FROM events"
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
     q += " ORDER BY id DESC LIMIT ?"
     args.append(max(1, int(limit)))
     return [_row_to_event(r) for r in reversed(conn.execute(q, args).fetchall())]
+
+
+def current_room(conn: sqlite3.Connection, probe: int = 20) -> str | None:
+    """The room the shell is currently writing as: the env stamp on the newest
+    stamped row. Callers filter every view by this, so a screen can never scroll into
+    another room's conversations.
+
+    None means the journal has no stamped row yet - a fresh machine, or history from
+    before the stamp existed. That renders as an empty room rather than "show
+    everything", because "show everything" is exactly the leak.
+    """
+    return env_badge(latest_events(conn, limit=max(1, int(probe))))
 
 
 def _norm(text: object) -> str:
@@ -598,7 +634,11 @@ def _finish_turn(cur: dict[str, Any]) -> dict[str, Any]:
 
 
 def trace_window(
-    conn: sqlite3.Connection, window: int = 2000, limit: int = 12, turn_id: int | None = None
+    conn: sqlite3.Connection,
+    window: int = 2000,
+    limit: int = 12,
+    turn_id: int | None = None,
+    env: str | None = None,
 ) -> dict[str, Any]:
     """The newest turns as traces, plus what the reader had to give up on.
 
@@ -607,7 +647,7 @@ def trace_window(
     itself to be inside the window to be seen (which it is, because a restart writes
     its low `mono` values before it writes the next transcript).
     """
-    events = latest_events(conn, limit=window, types=TRACE_TYPES)
+    events = latest_events(conn, limit=window, types=TRACE_TYPES, env=env)
     traces = build_traces(events)
     newest = traces[-limit:] if limit > 0 else traces
     return {
@@ -620,15 +660,22 @@ def trace_window(
     }
 
 
-def liveness(conn: sqlite3.Connection, now: float | None = None) -> dict[str, Any]:
+def liveness(conn: sqlite3.Connection, now: float | None = None, env: str | None = None) -> dict[str, Any]:
     """Is the shell alive, and how does its audio chain look right now?
 
     `last_wall`/`age_s` come from the newest row of any type; `audio_health` is the
-    newest `audio.health` sample (mic device, drops, levels).
+    newest `audio.health` sample (mic device, drops, levels). With `env` set, both are
+    this room's rows: a home process writing health every 10 s must not keep a
+    "SHELL ALIVE" badge up for a booth screen whose own shell is stopped.
     """
-    head = conn.execute("SELECT MAX(wall) AS wall FROM events").fetchone()
+    if env:
+        head = conn.execute(
+            "SELECT MAX(wall) AS wall FROM events WHERE json_extract(payload, '$.env') = ?", (env,)
+        ).fetchone()
+    else:
+        head = conn.execute("SELECT MAX(wall) AS wall FROM events").fetchone()
     last_wall = head["wall"] if head else None
-    health = latest_events(conn, limit=1, type_=AUDIO_HEALTH)
+    health = latest_events(conn, limit=1, type_=AUDIO_HEALTH, env=env)
     if last_wall is None:
         return {"last_wall": None, "age_s": 0.0, "alive": False, "audio_health": None}
     now = time.time() if now is None else now

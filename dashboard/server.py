@@ -258,16 +258,22 @@ def live_turns(limit: int = 400) -> tuple[list[dict], str | None, dict]:
         log.error("cannot open %s: %s", path, e)
         return [], None, {"journal": str(path), "journal_error": str(e), "liveness": {}}
     try:
-        events = journal_read.latest_events(conn, limit=limit, types=journal_read.CONVERSATION_TYPES)
+        # One room per screen. The journal has always been a single file shared by
+        # every deployment environment, so "the newest 100 rows" was whatever room had
+        # last been talking - at the booth that meant opening on tonight's family
+        # conversation until an attendee spoke. Filtering to the shell's own stamped
+        # room also excludes the ~89k pre-stamp rows, which belong to no room.
+        room = journal_read.current_room(conn)
+        events = journal_read.latest_events(conn, limit=limit, types=journal_read.CONVERSATION_TYPES, env=room)
         turns = journal_read.turns_from_events(events)[-100:]
-        badge = journal_read.env_badge(journal_read.latest_events(conn, limit=20))
         return (
             turns,
-            badge,
+            room,
             {
                 "journal": str(path),
                 "journal_error": None,
-                "liveness": journal_read.liveness(conn),
+                "room": room,
+                "liveness": journal_read.liveness(conn, env=room),
             },
         )
     finally:
@@ -519,7 +525,8 @@ def trace_panel(window: int = 2000, limit: int = 12, turn_id: int | None = None)
         log.error("cannot open %s: %s", path, e)
         return {**blank, "journal_error": str(e)}
     try:
-        panel = journal_read.trace_window(conn, window=window, limit=limit, turn_id=turn_id)
+        room = journal_read.current_room(conn)
+        panel = journal_read.trace_window(conn, window=window, limit=limit, turn_id=turn_id, env=room)
         panel["journal_error"] = None
         return panel
     except Exception as e:  # noqa: BLE001
@@ -919,15 +926,19 @@ async def sse_conversation(request: Request):
                     conn = None
                 if conn is not None:
                     try:
-                        new = journal_read.events_after(conn, last_id, limit=500, types=journal_read.CONVERSATION_TYPES)
+                        room = journal_read.current_room(conn)
+                        new = journal_read.events_after(
+                            conn, last_id, limit=500, types=journal_read.CONVERSATION_TYPES, env=room
+                        )
                         if new:
                             last_id = new[-1]["id"]
                             turns = journal_read.turns_from_events(
-                                journal_read.latest_events(conn, limit=400, types=journal_read.CONVERSATION_TYPES)
+                                journal_read.latest_events(
+                                    conn, limit=400, types=journal_read.CONVERSATION_TYPES, env=room
+                                )
                             )[-100:]
-                            badge = journal_read.env_badge(journal_read.latest_events(conn, limit=20))
                             html = templates.get_template("partials/conversation_body.html").render(
-                                request=request, turns=turns, live_env=badge, readonly=READONLY
+                                request=request, turns=turns, live_env=room, readonly=READONLY
                             )
                             yield {"event": "refresh", "data": html}
                     except Exception as e:  # noqa: BLE001

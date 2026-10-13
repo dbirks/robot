@@ -543,3 +543,83 @@ def test_the_journal_row_itself_is_never_rewritten():
     rows = jr.turns_from_events(events)
     assert _user_rows(rows) == ["Reachy, can you hear me?"]
     assert events[1]["payload"]["text"] == "Hotel, can you hear me?"
+
+
+# --- one room per screen (ADR 0003: home talk must never reach a public display) ---
+
+
+def _mixed_db(tmp_path: Path) -> Path:
+    """Three rooms of history in the one file the journal has always been: unstamped
+    legacy rows, home talk, then a hackday session on top."""
+    db = tmp_path / "events.db"
+    legacy = Journal(db)  # Journal stamps from cfg env; None = no stamp
+    legacy.write(jr.TURN_TRANSCRIPT_FINAL, text="old family conversation")
+    legacy.closed()
+    home = Journal(db, env="home")
+    home.write(jr.TURN_TRANSCRIPT_FINAL, text="Rachel, pass the salt")
+    home.write(jr.AUDIO_HEALTH, muted=False, rms_recent=0.003)
+    home.closed()
+    booth = Journal(db, env="hackday")
+    booth.write(jr.TURN_TRANSCRIPT_FINAL, text="what can you do?")
+    booth.closed()
+    return db
+
+
+def test_the_newest_stamp_decides_which_room_a_screen_shows(tmp_path):
+    with jr.open_ro(_mixed_db(tmp_path)) as conn:
+        assert jr.current_room(conn) == "hackday"
+
+
+def test_a_booth_screen_cannot_see_the_home_room(tmp_path):
+    with jr.open_ro(_mixed_db(tmp_path)) as conn:
+        room = jr.current_room(conn)
+        said = [
+            t["content"]
+            for t in jr.turns_from_events(jr.latest_events(conn, limit=50, types=jr.CONVERSATION_TYPES, env=room))
+        ]
+    assert said == ["what can you do?"], said
+    assert not any("salt" in s or "family" in s for s in said)
+
+
+def test_unstamped_history_belongs_to_no_room(tmp_path):
+    """89k rows predate the env stamp. They must not satisfy "the last 100 turns" for
+    a room that never wrote them - that is exactly how a booth screen opens on the
+    family's history before an attendee has spoken."""
+    with jr.open_ro(_mixed_db(tmp_path)) as conn:
+        rows = jr.latest_events(conn, limit=50, env="hackday")
+        assert all(e["payload"].get("env") == "hackday" for e in rows)
+        assert len(rows) == 1
+        assert jr.latest_events(conn, limit=50, env=None)  # the badge probe still sees everything
+
+
+def test_the_sse_cursor_is_filtered_too(tmp_path):
+    """The refresh stream is what a live screen actually renders; a cursor that
+    ignores the room would push home rows onto the booth the moment someone spoke."""
+    with jr.open_ro(_mixed_db(tmp_path)) as conn:
+        streamed = jr.events_after(conn, 0, types=jr.CONVERSATION_TYPES, env="hackday")
+        assert [e["payload"].get("env") for e in streamed] == ["hackday"]
+
+
+def test_a_stopped_booth_shell_does_not_look_alive_because_home_is_writing(tmp_path):
+    """The badge that lies: home writes `audio.health` every 10 s, so an unfiltered
+    MAX(wall) says "SHELL ALIVE" on a screen whose own room stopped an hour ago - and
+    at the venue that is the difference between "he is asleep" and "he is broken".
+    Rows are aged with SQL because Journal writes real timestamps."""
+    import sqlite3
+
+    db = _mixed_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE events SET wall = wall - 3600 WHERE json_extract(payload, '$.env') = 'hackday'")
+        conn.commit()
+
+    with jr.open_ro(db) as conn:
+        assert jr.liveness(conn)["alive"] is True, "setup: unfiltered liveness IS the bug"
+        assert jr.liveness(conn, env="home")["alive"] is True
+        assert jr.liveness(conn, env="hackday")["alive"] is False, "another room's heartbeat held the badge up"
+
+
+def test_traces_do_not_cross_rooms(tmp_path):
+    with jr.open_ro(_mixed_db(tmp_path)) as conn:
+        panel = jr.trace_window(conn, window=500, limit=10, env="hackday")
+        assert panel["env"] == "hackday"
+        assert all(t["env"] in (None, "hackday") for t in panel["traces"])
