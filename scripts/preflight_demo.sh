@@ -155,5 +155,27 @@ fi
 command -v chromium >/dev/null 2>&1 && ok "chromium present (kiosk #37 installable)" || warn "chromium absent: kiosk not installed yet (#37)"
 
 head_ "summary"
+head_ "gesture library (play_emotion)"
+# Read-only. The tool loads with local_files_only=True, so the booth cannot fetch these; if a
+# name is missing here it is missing at the venue, and the honest answer there is "in words".
+EMOTES=$($PY - <<'PYIN' 2>/dev/null
+try:
+    from shell.motion import emotes
+    st = emotes.status()
+    print(f"{len(st['cached'])} {len(emotes.EMOTE_NAMES)} {','.join(st['missing'])}")
+except Exception as e:
+    print(f"import-error 0 0 {type(e).__name__}")
+PYIN
+)
+set -- $EMOTES
+CACHED=${1:-0}; WANT=${2:-10}; MISSING=${3:-unknown}
+if [ "$CACHED" = "$WANT" ] && [ "$WANT" != "0" ]; then
+    ok "all $WANT gestures resolve offline (no network at the venue is fine)"
+elif [ "$1" = "import-error" ] || [ "$WANT" = "0" ]; then
+    warn "could not check the gesture library ($MISSING) - huggingface_hub missing, or this is the bare CI env"
+else
+    bad "only $CACHED/$WANT gestures cached: $MISSING - run scripts/fetch_emotions.py at home"
+fi
+
 printf '  %d pass, %d warn, %d fail\n\n' "$PASS" "$WARN" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -54,6 +54,31 @@ models:
     runtime: s2s --tts qwen3 ggml backend + qwentts.cpp 6fae929 built for sm_61 (scripts/build_qwentts.sh)
     never: PyPI qwentts wheel (sm_75+ only), BF16 quant (no BF16 on Pascal), torch fp32 (OOM beside llama)
     measured: TTFA 0.25s streaming, RTF 0.31 offline, ~1.2 GB; total GPU 6.7 GB with llama + Parakeet(CPU)
+  emotions:
+    # The gesture library behind `play_emotion` (shell/motion/emotes.py). A data dependency of a
+    # tool, so it gets a pin like any model: ADR 0006 does not exempt JSON. Block scalars below
+    # are deliberate - a plain scalar whose continuation contains ": " is not valid YAML, and
+    # this file was unparseable on exactly that until 2026-10-13 (see face_detection's runtime).
+    id: pollen-robotics/reachy-mini-emotions-library   # repo_type=dataset, the vendor's own org
+    revision: 873ae49f0b89114b7e535eff0c1f7560d21d9357   # resolved OFFLINE from this box 2026-10-13
+    files: >-
+      10 of the ~250 cached, the ones EMOTE_FILES names; 618,573 B for those ten.
+    runtime: >-
+      hf_hub_download with local_files_only=True, read from the DEFAULT HF_HOME only. Measured
+      both ways: the shell unit sets no HF_HOME and resolves all ten, while under the s2s unit's
+      HF_HOME this dataset is NOT cached - so the tool must stay in the shell process (it does)
+      and scripts/fetch_emotions.py is a travel step, never a runtime step.
+    measured: >-
+      10/10 parse. Each gesture takes its own length from the file's time axis (surprised 2.5 s,
+      hello 3.5 s, sad 9.7 s, curious 11.8 s raw) and is scaled, not truncated, to
+      REACHY_EMOTE_MAX_S (default 7.0 s), because the MotionOwner plays queued animations in
+      order and a 12 s feeling parks the head past a booth turn. CPU only, no VRAM, no GPU
+      context, no new dependency.
+    licence: >-
+      NOT verified. The dataset card was not read for this pin; pollen-robotics is Polargib's own
+      org so this is likely vendor demo content, but "likely" is not a licence. Check before the
+      library leaves a demo, and note the .wav files shipped beside the JSON are a separate
+      question from the keyframes.
   face_detection:
     id: insightface/buffalo_sc        # det_500m.onnx = SCRFD-500MF, 2.5 MB (cached in ~/.insightface)
     revision: insightface 0.7.3, onnxruntime 1.24.4, cv2 4.13.0 (all in uv.lock; no new deps)
@@ -62,7 +87,7 @@ models:
     # so no embedding of anybody is ever computed, held or written (B1 is not this).
     runtime: onnxruntime CPUExecutionProvider, intra_op_num_threads=2 / inter_op=1 set
       per session (shell/vision/tracker.py). NEVER OMP_NUM_THREADS -- ADR 0006 plus
-      app/face_tracker.py:24-31: process-global, import-order dependent, lands on torch.
+      app/face_tracker.py:24-31 - process-global, import-order dependent, lands on torch.
     measured: i7-6700K beside the live stack, 2 threads, no GPU. Re-run 2026-10-12
       (same harness as shell/vision/tracker.py, 64 synthetic frames @1280x720 -> det_size
       320, detection-only): p50 2.87 ms, p95 2.97 ms. Scout run (plans/face-lockon.md,

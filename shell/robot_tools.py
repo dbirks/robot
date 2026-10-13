@@ -231,7 +231,8 @@ def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | N
     as soon as the intent is queued; the owner plays it out."""
     import random
 
-    from .motion import nod_animation, shake_animation
+    from . import journal as J
+    from .motion import emotes, nod_animation, shake_animation
     from .motion.kinematics import pose6, pose_matrix
     from .motion.owner import SLEEP_ANTENNAS, SLEEP_HEAD_POSE
 
@@ -319,6 +320,78 @@ def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | N
             return {"ok": True, "action": "already_sleeping"}
         return {"ok": True, "action": "sleeping"}
 
+    @_guard
+    def play_emotion(emotion: str = "", **_kw: Any) -> dict:
+        """Whole-body gesture from the emotion library, on the one motion owner.
+
+        Replaces the legacy bridge handler (issue #22 deletes `app/robot_tools.py`, whose version
+        also had to load keyframes through `app/emotion_loader.py` and the legacy keyframe type).
+        Three behaviours changed on the way over, each because the old one would have hurt us at
+        the booth:
+
+        * an unreadable library no longer reports `Unknown emotion`. The old message told the
+          model the word it used does not exist, which invites a retry - and a retry queues
+          behind an animation that is already in flight, the same shape as tonight's snapshot
+          pile-in;
+        * it does not preempt. `preempt=True, priority=1` used to yank the head off whoever he was
+          looking at, mid-sentence;
+        * the result says what was reserved (keyframes, real duration, whether it woke him), and
+          the failure path is offline-only by construction - "ok: true" over an unpowered servo
+          bus is exactly how the camera tool lied earlier tonight.
+        """
+        if err := _ready():
+            return err
+        name = str(emotion or "").strip().lower()
+        if not name:
+            return {
+                "ok": False,
+                "error": "No emotion specified",
+                "available": list(emotes.EMOTE_NAMES),
+            }
+        journal = getattr(motion, "journal", None)
+        try:
+            anim = emotes.load(name)
+        except emotes.UnknownEmote:
+            # Says nothing about the library, because it isn't the library's problem; the model
+            # just picks a word from `available`.
+            return {
+                "ok": False,
+                "error": f"Unknown emotion: {name}",
+                "available": list(emotes.EMOTE_NAMES),
+            }
+        except emotes.EmoteUnavailable as e:
+            # Names the real fault and forbids the retry: this is a box-setup problem
+            # (scripts/fetch_emotions.py), not a wrong word, and no other emotion will work
+            # either while the library cannot be read.
+            error = (
+                f"The emotion library is not readable on this box ({e.name}); do not try another "
+                "emotion - answer in words instead"
+            )
+            if journal is not None:
+                journal.write(J.EMOTION_PLAYED, name=name, ok=False, error=error[:120])
+            return {"ok": False, "error": error, "retry": False}
+
+        was_asleep = bool(getattr(motion, "sleeping", False))
+        _woken()  # issue #36: a request that needs the head reopens the microphone as well
+        motion.play(anim)
+        seconds = round(sum(kf.duration for kf in anim.keyframes), 2)
+        if journal is not None:
+            journal.write(
+                J.EMOTION_PLAYED,
+                name=name,
+                ok=True,
+                keyframes=len(anim.keyframes),
+                duration_s=seconds,
+                woke=was_asleep,
+            )
+        return {
+            "ok": True,
+            "action": "play_emotion",
+            "emotion": name,
+            "duration_s": seconds,
+            "woke": was_asleep,
+        }
+
     return {
         "look_left": look_left,
         "look_right": look_right,
@@ -327,6 +400,7 @@ def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | N
         "shake_head": shake_head,
         "peekaboo": peekaboo,
         "go_to_sleep": go_to_sleep,
+        "play_emotion": play_emotion,
     }
 
 
@@ -358,4 +432,13 @@ def build_handlers(
         names = {t["function"]["name"] for t in MEMORY_TOOLS}
         tools = [t for t in tools if t.get("function", {}).get("name") not in names] + MEMORY_TOOLS
         handlers.update(make_memory_handlers(memories))
+    # play_emotion is shell-native now - it was the last tool still leaning on
+    # app/emotion_loader.py and the legacy MovementManager keyframe type. Same replacement dance
+    # as the memory tools: drop the legacy schema, add ours, and keep exactly ONE definition of
+    # the name in the array. Two entries for one tool means the service picks whichever it feels
+    # like, and the two descriptions disagree about the vocabulary.
+    from .motion import emotes as _emotes
+
+    names = {t["function"]["name"] for t in _emotes.EMOTE_TOOLS}
+    tools = [t for t in tools if t.get("function", {}).get("name") not in names] + _emotes.EMOTE_TOOLS
     return tools, handlers
