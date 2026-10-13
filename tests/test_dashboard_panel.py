@@ -447,16 +447,18 @@ def test_a_refusal_is_returned_as_an_html_405():
 
 
 def test_the_kiosk_cannot_outrank_the_room_ceiling():
-    """`/settings/volume` used to clamp at 5.0 with a slider to 300% while the tool
-    path has capped at 1.2 since the desk retune (b5cca5c): a visitor with a slider
-    should not be able to make him louder than the operator decided."""
+    """The page clamps to the same ceiling the tool path uses, read from one module.
+    Two copies of this number is how a visitor with a slider got louder than the
+    operator decided (2026-10-12)."""
     from dashboard.env_panel import VOLUME_MAX_DEFAULT, clamp_volume
+    from shell.volume import MAX_GAIN
 
-    assert clamp_volume(3.0) == VOLUME_MAX_DEFAULT
+    assert clamp_volume(9.0) == VOLUME_MAX_DEFAULT
     assert clamp_volume(-1) == 0.0
     assert clamp_volume(0.85) == 0.85
     assert clamp_volume(float("nan")) == 0.0
-    assert VOLUME_MAX_DEFAULT <= 1.2, "raising the page ceiling means raising the tool ceiling too"
+    assert VOLUME_MAX_DEFAULT == MAX_GAIN, "the page and the tool must read one ceiling, not two copies"
+    assert MAX_GAIN == 2.0, "headroom to 200% was measured as the crowd requirement; above it the card clips"
 
 
 def test_settings_shows_the_voice_that_is_actually_loaded():

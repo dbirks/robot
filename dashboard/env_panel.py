@@ -43,9 +43,29 @@ SERVICE_UNITS: tuple[str, ...] = (
 # is one line — `REACHY_DASHBOARD_READONLY=1` — and this process has no auth, so a room
 # that ever serves this page beyond the kiosk wants it on. Same shape as DASHBOARD_HOST.
 READONLY_VAR = "REACHY_DASHBOARD_READONLY"
-# The ceiling the room was tuned to (b5cca5c): 1.7 was painful at a desk, the tool
-# path caps at 1.2, and a kiosk slider must not outrank the operator's ceiling.
-VOLUME_MAX_DEFAULT = 1.2
+
+
+def _volume_ceiling(repo_root: Path | str | None = None) -> float:
+    """Read MAX_GAIN out of shell/volume.py without importing it.
+
+    This module must import only the standard library - the dashboard runs in a
+    minimal environment where `shell` may not be importable at all (a test enforces
+    it). The file's existing idiom for a number owned elsewhere is to read the
+    source with `ast`, the same way it reads TOOLS and STATE_CHANGING, so the
+    ceiling stays single-sourced instead of copied. 2.0 is the fallback if the
+    source shape changes: a dashboard that refuses to render is worse than one
+    showing a slightly wrong slider maximum, and the tool path still enforces real.
+    """
+    root = Path(__file__).resolve().parent.parent if repo_root is None else Path(repo_root)
+    tree = _parse(root, "shell/volume.py")
+    if tree is not None:
+        node = _assign_node(tree, "MAX_GAIN")
+        value = getattr(node, "value", None)
+        if isinstance(value, ast.Constant) and isinstance(value.value, (int, float)):
+            return float(value.value)
+    return 2.0
+
+
 TRUTHY = {"1", "true", "yes", "on"}
 
 # `--print-env` resolves config from disk; that is milliseconds of work but it is
@@ -349,3 +369,9 @@ def build_panel(
         "llm_base_url": cfg.get("llm_base_url") or "",
         "services": list(SERVICE_UNITS),
     }
+
+
+# Assigned last: _volume_ceiling() reads the source of shell/volume.py with the
+# `ast` helpers defined below, and a module-level call before they exist is an
+# ImportError-shaped landmine at import time.
+VOLUME_MAX_DEFAULT = _volume_ceiling()

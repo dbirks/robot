@@ -194,7 +194,8 @@ TOOLS: list[dict[str, Any]] = [
             "description": (
                 "Adjust the robot's speaking volume. For 'louder', 'speak up', 'turn it up' use 'louder' "
                 "(or 'much louder'); for 'quieter', 'turn it down' use 'quieter' (or 'much quieter'). "
-                "Use a named level or percentage only when the user asks for a specific volume."
+                "Use a named level or percentage only when the user asks for a specific volume. "
+                "Range is 0% to 200%; 'max' is 200% and is meant for a noisy room."
             ),
             "parameters": {
                 "type": "object",
@@ -552,58 +553,32 @@ def make_handlers(
             return {"ok": False, "error": str(e)}
 
     def set_volume(level: str = "louder", **_kwargs: Any) -> dict:
-        # The Reachy's hardware gain is already at max; this is the PipeWire
-        # sink gain. Retuned down 2026-10-12 (user: "turn the volume down a
-        # bunch" - the desk sits close and 1.7 was painful in a small room).
-        # The old 1.0 = "medium-quiet" note predates the s2s/Qwen3-TTS output
-        # path, which is hotter than the legacy Kokoro one. Relative steps read
-        # the current level so "louder" always does something. Capped at 1.2:
-        # measured distortion territory, and a per-env volume policy (loud
-        # conference room vs. quiet home) is planned - see docs/environments.md.
+        # One policy, defined in shell/volume.py and read here so the tool and the
+        # dashboard cannot disagree about the room. The Reachy's hardware gain is
+        # already at max (ADR 0005), so this is PipeWire sink gain on a Qwen3-TTS
+        # stream that runs hotter than the retired Kokoro path: 2026-10-12's desk
+        # retune went to 1.2, and the same night a crowd made 0.5 inaudible, so the
+        # ceiling is 2.0 with a start near 1.1 and a flag above the measured
+        # distortion point instead of a silent lie about headroom.
         try:
+            from shell import volume as V
+
             from .playback import set_volume_boost
 
-            levels = {
-                "mute": 0.0,
-                "whisper": 0.2,
-                "quiet": 0.35,
-                "low": 0.35,
-                "medium": 0.5,
-                "normal": 0.5,
-                "loud": 0.8,
-                "high": 0.8,
-                "max": 1.2,
-            }
-            steps = {
-                "louder": 0.1,
-                "up": 0.1,
-                "much louder": 0.25,
-                "quieter": -0.1,
-                "down": -0.1,
-                "softer": -0.1,
-                "much quieter": -0.25,
-            }
             current = _get_sink_volume()
-            key = level.strip().lower()
-            if key in steps:
-                if current is None:
-                    return {"ok": False, "error": "Could not read the current volume"}
-                target = current + steps[key]
-            elif key in levels:
-                target = levels[key]
-            else:
-                try:
-                    target = float(key.rstrip("%")) / (100.0 if key.endswith("%") else 1.0)
-                except ValueError:
-                    return {"ok": False, "error": f"Unknown volume level: {level}"}
-            target = round(max(0.0, min(1.2, target)), 2)
+            target = V.resolve(level, current)
+            if target is None:
+                known = ", ".join(sorted(set(list(V.STEPS) + list(V.NAMED)))[:12])
+                return {"ok": False, "error": f"Unknown volume level: {level}. Try: {known}, or '150%'"}
             set_volume_boost(target)
             log.info("Volume %s -> %.2f (level=%s)", current, target, level)
             return {
                 "ok": True,
                 "volume_percent": round(target * 100),
                 "previous_percent": None if current is None else round(current * 100),
-                "at_max": target >= 1.2,
+                "at_max": target >= V.MAX_GAIN,
+                "at_min": target <= V.MIN_GAIN,
+                "clipping_risk": V.clipping_risk(target),
             }
         except Exception as e:
             return {"ok": False, "error": str(e)}
