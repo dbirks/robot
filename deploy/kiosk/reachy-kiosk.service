@@ -49,8 +49,15 @@ UnsetEnvironment=TERM
 UtmpIdentifier=tty1
 UtmpMode=user
 TTYReset=yes
-TTYVHangup=yes
-TTYVTDisallocate=yes
+# Deliberately NOT TTYVHangup=yes / TTYVTDisallocate=yes, which kiosk guides copy freely.
+# Both take the console away from you on the way out, and on the PROPRIETARY nvidia driver
+# without nvidia_drm.modeset=1 on the kernel command line (measured: nvidia_drm is loaded,
+# /proc/cmdline carries no modeset parameter, and the param itself is unreadable to us)
+# that is the classic way to end up with a permanently black text console - unrecoverable
+# at this machine, because the booth has NO KEYBOARD and the only seatbelt is SSH.
+# The kernel param is the real fix and it needs a reboot, so tonight we keep the console.
+TTYVHangup=no
+TTYVTDisallocate=no
 Nice=10
 
 # The `+` prefix runs this one line as root: chvt needs to be the foreground-VT owner or
