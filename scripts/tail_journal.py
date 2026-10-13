@@ -29,8 +29,11 @@ is demonstrably open and saying otherwise is just wrong on a live booth screen.
     scripts/tail_journal.py --grep volume   # only rows mentioning volume
     scripts/tail_journal.py --json          # machine-readable
 
-NOTE on this box: the sqlite3 CLI's datetime() returns 1999-12-31 for 2026 epochs
-(see docs/booth-card.md). Everything here is computed in Python from the raw epoch.
+Timestamps: `wall` is a unix epoch and `mono` is seconds since the writing process
+started (never subtract across a restart). Hand-written SQL needs
+`datetime(wall,'unixepoch','localtime')` - without `unixepoch` SQLite reads the number as
+a Julian day and answers 1999-12-31, which is a wrong query, not a broken CLI. Everything
+here is computed in Python from the raw epoch, so it cannot make that mistake.
 """
 
 from __future__ import annotations

@@ -11,13 +11,20 @@ recogniser and the voice synthesiser at the same time.
 
 ## Reading the journal on this box
 
-`sqlite3` here is built such that `datetime(wall,'localtime')` returns
-`1999-12-31 19:00:00` for a 2026 epoch - it clamps instead of answering. The stored
-`wall` value is correct (`1791857303.45` = a real unix time); only the CLI's
-formatter lies. Read raw epochs in Python (`datetime.fromtimestamp`) or
-`strftime('%s','now')` comparisons will silently match everything.
-`mono` is seconds since the *process* started (ADR 0007), so it resets on every
-restart - never subtract across a restart.
+`sqlite3` here is NOT broken, and the note I first wrote here was. What fails is
+`datetime(wall,'localtime')`: without the `unixepoch` modifier SQLite reads the number as
+a Julian day and returns `1999-12-31 19:00:00`, which looks exactly like a broken clock.
+The stored `wall` is a correct unix epoch (`1791857303.45`); the working form is
+
+    sqlite3 -readonly data/events.db \
+      "select datetime(wall,'unixepoch','localtime'), type from events order by id desc limit 5"
+
+`mono` is separate and genuinely treacherous: seconds since the *writing process* started
+(ADR 0007), so it resets on every restart - never subtract across one. Same symptom, two
+different causes, and mine was the rarer of the two: I had written the wrong query and
+blamed the tool. Three tool calls and a wrong doc note to learn it, so the correct
+diagnosis is written down: (a) missing `unixepoch` -> bogus 1999 date, (b) real clock
+reset -> absurd durations.
 
 
 ## Talk to him
