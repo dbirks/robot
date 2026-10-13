@@ -144,8 +144,12 @@ def test_the_chain_fires_end_to_end_and_the_hello_is_a_greeter_transcript():
         {"kind": "solo", "track": 1, "dwell_s": 2.0, "azimuth_deg": 15.0, "area_share": 0.05}
     ]
     assert journal.types() == [J.FACE_PRESENT, J.GREETER_FIRED]
-    # lock-on runs on the way to the verdict: the head turns toward the face it dwelled on
-    assert motion.aims[0] == (15.0, 0.0, G.REAIM_HOLD_S, "face")
+    # lock-on runs on the way to the verdict: the head turns toward the face it dwelled on.
+    # Negative because `Face.azimuth_deg` is positive to the right of the image and
+    # `MotionOwner.look_at` is positive to the robot's LEFT (`look_left` sends +30,
+    # `look_right` -30: shell/robot_tools.py, tests/test_robot_tools.py:205-206), and
+    # 0.6 of the way because of `FACE_FOLLOW_GAIN`. See tests/test_vision_greeter_lockon.py.
+    assert motion.aims[0] == (-9.0, 0.0, G.REAIM_HOLD_S, "face")
 
 
 def test_dwell_under_the_gate_leaves_the_room_ungreeted_but_journalled():
@@ -173,7 +177,7 @@ def test_the_head_centres_a_face_he_then_declines_to_greet():
         verdict = g.sample(t)
     assert verdict == "suppressed:spacing"
     assert cues.cues == []
-    assert motion.aims[0] == (20.0, 0.0, G.REAIM_HOLD_S, "face")
+    assert motion.aims[0] == (-12.0, 0.0, G.REAIM_HOLD_S, "face")
 
 
 def test_120s_spacing_blocks_the_next_person_and_the_hourly_cap_is_the_backstop():
@@ -440,9 +444,20 @@ GOLDEN_OFF = {
     "cues": [SOLO_CUE],
 }
 
-# `behaviour.greeter_face_centering: true` is what hackday actually runs: the head turns
-# toward the dwelled face at poll rate, and keeps tracking it after the hello is spent.
-GOLDEN_CENTERING = dict(GOLDEN_OFF, aims=[(12.0, 0.0, 3.0, "face")] * 4 + [(-35.0, 0.0, 3.0, "face")])
+# `behaviour.greeter_face_centering: true` is what hackday actually runs: the head locks on
+# the face and keeps tracking it. The numbers are the lock-on command, not the raw azimuth:
+# `-0.6 * azimuth` (sign = the motion owner's positive-left convention, gain = the legacy
+# OVERSHOOT_SCALE) added to where the head already points, which this fake never moves.
+# The first two rows are the passer-by: an unqualified face is still worth turning toward,
+# and at azimuth 0.0 the correction is inside the deadband, so the aim is where the head
+# already is (a hold refresh, no movement). Seven rows for the greeted person because the
+# aim now runs from the first sighting, not from the close of the dwell; the three at +21.0
+# are the second person on the OTHER side of the frame, and `suppressed:spacing` never
+# stopped the head.
+GOLDEN_CENTERING = dict(
+    GOLDEN_OFF,
+    aims=[(0.0, 0.0, 3.0, "face")] * 2 + [(-7.2, 0.0, 3.0, "face")] * 7 + [(21.0, 0.0, 3.0, "face")] * 3,
+)
 
 
 def test_scan_off_is_byte_identical_to_today():
