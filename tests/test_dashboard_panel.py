@@ -475,7 +475,12 @@ def test_the_kiosk_cannot_outrank_the_room_ceiling():
     assert clamp_volume(0.85) == 0.85
     assert clamp_volume(float("nan")) == 0.0
     assert VOLUME_MAX_DEFAULT == MAX_GAIN, "the page and the tool must read one ceiling, not two copies"
-    assert MAX_GAIN == 2.0, "headroom to 200% was measured as the crowd requirement; above it the card clips"
+    assert MAX_GAIN == 1.5, (
+        "200% came from 2026-10-12 assuming a linear scale. wpctl's number is cubic, so 2.0 "
+        "is +18 dB (8x amplitude) on ack audio already peaking at -1.94 dBFS with the card's "
+        "hardware PCM at maximum: not headroom, just clipping, and clamp_gain answered ok:true "
+        "at +0.00 dB for every request above it. Measured 2026-10-13 (scripts/probe_volume.py)."
+    )
 
 
 def test_settings_shows_the_voice_that_is_actually_loaded():
@@ -496,3 +501,21 @@ def test_settings_shows_the_voice_that_is_actually_loaded():
         dotenv, {"S2S_QWEN3_TALKER_GGUF": "/x/kokoro-is-not-this.bin", "S2S_TTS": "kokoro", "KOKORO_VOICE": "bm_george"}
     )
     assert forced["engine"] == "kokoro" and forced["voice"] == "bm_george" and forced["source"] == "persona.env"
+
+
+def test_the_pages_ceiling_follows_the_source_not_a_lucky_constant(tmp_path):
+    """The parity assert above was satisfied for a month by two independent 2.0s: the AST
+    read had been falling through to its fallback the whole time. A test that compares two
+    numbers cannot tell "single-sourced" from "coincidence" - so feed the reader a different
+    number and require it to move.
+    """
+    from dashboard.env_panel import _volume_ceiling
+
+    vol = tmp_path / "shell" / "volume.py"
+    vol.parent.mkdir(parents=True)
+    vol.write_text("MIN_GAIN = 0.0\nMAX_GAIN = 1.25\nDEFAULT_GAIN = 1.0\n")
+    assert _volume_ceiling(tmp_path) == 1.25, "the ceiling is not being read; it is being defaulted"
+
+    vol.write_text("MAX_GAIN = not_a_number\n")
+    assert _volume_ceiling(tmp_path) == 2.0, "a malformed source must fall back, not crash the page"
+    assert _volume_ceiling(tmp_path / "nowhere") == 2.0

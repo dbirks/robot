@@ -59,8 +59,12 @@ def _volume_ceiling(repo_root: Path | str | None = None) -> float:
     root = Path(__file__).resolve().parent.parent if repo_root is None else Path(repo_root)
     tree = _parse(root, "shell/volume.py")
     if tree is not None:
-        node = _assign_node(tree, "MAX_GAIN")
-        value = getattr(node, "value", None)
+        # `_assign_node` returns the VALUE node, not the Assign - taking `.value` again
+        # yielded a plain float, failed the isinstance below, and dropped to the 2.0
+        # fallback. The page's ceiling has therefore NEVER come from shell/volume.py: it
+        # only agreed because both were 2.0 by coincidence, and the parity test could not
+        # see it. Found 2026-10-13 the moment MAX_GAIN actually moved to 1.5.
+        value = _assign_node(tree, "MAX_GAIN")
         if isinstance(value, ast.Constant) and isinstance(value.value, (int, float)):
             return float(value.value)
     return 2.0

@@ -5,10 +5,23 @@ to type anything. Attendees can click around, refresh, read the resolved system
 prompt and switch personas (#38). Deliberately **not** locked down: we stand
 next to it.
 
-**Status: staged, not installed, never verified on a screen.** As of
-2026-10-12 this box has no X, no Wayland, no browser and every connector
-(`card1-HDMI-A-1`, `DP-1..3`, `DVI-D-1`) reads `disconnected`, so the hotplug
-path is untested physics. The install is behind `--run` for that reason.
+**Status: installed and partially working, 2026-10-13.** What the night taught us, replacing the
+guesses below:
+
+- **The hotplug watcher works.** It saw `DP-2 connected` and fired within seconds. (The screen
+  was on the GTX 1070's DisplayPort; the motherboard's ports are dead on this box because the
+  iGPU is disabled, and every connector read `disconnected` until the cable moved to the GPU.)
+- **The user service cannot show anything, and that is structural.** `reachy-kiosk.service`
+  crash-looped on `/usr/lib/Xorg.wrap: Only console users are allowed to run the X server`: a
+  systemd **user** service is not the owner of the foreground VT, so rootless X refuses it. No
+  amount of env in the unit fixes that. The watcher was therefore disabled (it is still a good
+  sensor with an impossible action).
+- **The kiosk starts from the console session instead.** `deploy/kiosk/10-autologin.conf` + a
+  marked hook in `~/.bash_profile` that runs `startx ... :0 vt1 -keeptty` when `tty` is
+  `/dev/tty1`. Ctrl+Alt+F2 is the escape hatch; delete the hook to stop it.
+- **The proper fix, still open:** a *system* unit with `User=david`, `PAMName=login`,
+  `TTYPath=/dev/tty1` (and getty masked on that VT), which gives the service a real session and
+  seat - that is the shape that would let the watcher's detection drive a real start again.
 
 ## Install (needs sudo — David's call)
 

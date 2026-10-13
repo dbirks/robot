@@ -6,23 +6,43 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from shell import volume as V
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_relative_words_move_from_the_current_level():
-    assert V.resolve("louder", 1.0) == 1.1
-    assert V.resolve("quieter", 1.0) == 0.9
-    assert V.resolve("much louder", 1.5) == 1.75
-    assert V.resolve("volume down", 0.5) == 0.4
+def test_relative_words_are_ratios_so_the_word_means_one_thing():
+    """The property, not the arithmetic: one press of "louder" must buy the same decibels at
+    0.6 and at 1.4. Absolute steps on PipeWire's cubic volume shrank from +4.75 dB at the
+    bottom to +0.85 dB near the top - the same word, six times less response, which is what
+    the operator described as "it stopped changing" (measured 2026-10-13, probe_volume.py)."""
+    import math
+
+    def db(g):
+        return 60 * math.log10(g)
+
+    for start in (0.5, 0.9, 1.2):
+        got = db(V.resolve("louder", start)) - db(start)
+        assert (
+            abs(got - db(V.STEP_RATIO)) < 0.25
+        )  # 2-dp rounding at wpctl's precision, f"{start}: step worth {got:.2f} dB"
+        got_big = db(V.resolve("much louder", start)) - db(start)
+        assert abs(got_big - db(V.BIG_STEP_RATIO)) < 0.25, f"{start}: big step {got_big:.2f} dB"
+    # and down is the reciprocal, not a subtraction
+    assert V.resolve("quieter", 1.12) == pytest.approx(1.0, rel=1e-6)
+    # at the ceiling a step must stop, not overshoot into distortion we refused to advertise
+    assert V.resolve("much louder", V.MAX_GAIN) == V.MAX_GAIN
 
 
 def test_a_relative_word_still_works_when_the_mixer_is_unreadable():
     """`current=None` is the booth state when somebody plugged the card in muted.
     Refusing there was the old behaviour: it made 'louder' a robot that ignores you
     twice. Now it steps from the boot default."""
-    assert V.resolve("louder", None) == round(V.DEFAULT_GAIN + V.STEP, 2)
+    # 1.1 * 1.12 = 1.232, and clamp_gain rounds to 2 decimals because that is all `wpctl`
+    # accepts - asserted at the rounding, not through it, so a change in either place shows up.
+    assert V.resolve("louder", None) == 1.23
     assert V.resolve("max", None) == V.MAX_GAIN
 
 
@@ -38,8 +58,10 @@ def test_named_levels_are_loud_enough_for_a_crowd():
 
 def test_percentages_survive_the_way_people_say_them():
     assert V.resolve("150%", 0.5) == 1.5
-    assert V.resolve("200%", 0.5) == 2.0
-    assert V.resolve("200", 0.5) == 2.0  # nobody means two hundredths of a percent
+    # 200% is understood as a request for 200% - and then clamped, because the measured
+    # ceiling is 1.5: the handler reports at_max rather than pretending the room got louder.
+    assert V.resolve("200%", 0.5) == V.MAX_GAIN
+    assert V.resolve("200", 0.5) == V.MAX_GAIN  # nobody means two hundredths of a percent
     assert V.resolve("1.4", 0.5) == 1.4
     assert V.resolve("40", 0.5) == 0.4
     assert V.resolve("300%", 0.5) == V.MAX_GAIN  # out of range, clamped not refused
@@ -60,10 +82,15 @@ def test_the_ceiling_is_the_ceiling_everywhere():
 
 
 def test_clipping_is_flagged_not_hidden():
-    """Between 1.2 (measured distortion) and 2.0 (asked for, for a crowd) the tool
-    is allowed to obey, but it must say so, so 'he sounds awful' has an answer."""
+    """Between the measured clean ceiling (1.08, from the ack assets peaking at -1.94 dBFS
+    with the card's hardware PCM already at maximum) and the 1.5 we allow, the tool obeys but
+    must say so, so "he sounds awful" has an answer in the journal. The number moved from 1.2
+    to 1.08 because it is now derived from a measurement instead of eyeballed."""
     assert V.clipping_risk(V.resolve("max", 1.0) or 0) is True
-    assert V.clipping_risk(V.resolve("normal", None) or 0) is False
+    assert V.clipping_risk(0.9) is False  # below the clean ceiling: honest gain
+    assert V.clipping_risk(V.DEFAULT_GAIN) is True, (
+        "the boot default is deliberately just past the clean ceiling - the flag must be true there or it is decoration"
+    )
     assert V.CLIPPING_ABOVE < V.MAX_GAIN, "if the ceiling drops below the distortion point the flag is dead code"
 
 

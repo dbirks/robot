@@ -192,7 +192,14 @@ than the prose elsewhere in this file; the whole knob list is [`docs/knobs.md`](
 - **Direct intents** (`shell/intents.py`): bare wake word, sleep and "stop talking" are
   matched on the transcript and executed by the shell — the 4B model narrates them instead
   of acting.
-- **Volume** (`shell/volume.py`): 200% ceiling, ~110% at boot; above 120% it is allowed but
+- **Volume** (`shell/volume.py`): 150% ceiling and ~110% at boot, both measured. `wpctl`'s number
+  is *cubic* volume (printed 1.10 = 1.33× amplitude = +2.5 dB), the ack audio peaks at -1.94 dBFS
+  and the card's hardware PCM is already at maximum, so the clean ceiling is 1.08 - above it
+  is software gain, which is distortion rather than loudness, and the tool says `clipping_risk`.
+  Steps are ratios (+2.95 dB, +5.58 dB) so "louder" means the same thing at every level; the old
+  2.0 ceiling was +18 dB of gain on a stream with no headroom, and `clamp_gain` made every
+  request above it return `ok: true` at +0.00 dB - a control that had stopped working while
+  reporting success.
   flagged `clipping_risk`. Enforcement is `set_volume` in `app/robot_tools.py` and the
   slider in `dashboard/env_panel.py`.
 - **Per-tool timeouts** (`shell/tools.py`): `CAMERA_TOOLS` get 35 s, every other tool 12 s.

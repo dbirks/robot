@@ -57,8 +57,19 @@ run chmod +x "$REPO/deploy/kiosk/kiosk.xinitrc" "$REPO/deploy/kiosk/watch_hotplu
 run systemctl --user daemon-reload
 # The watcher is the only piece enabled at install time: it starts the kiosk
 # when a screen appears and leaves it off when one does not.
-run systemctl --user enable --now reachy-kiosk-watch.service
+# NOT enabled, as of the first real screen on 2026-10-13. The watcher's *sensor* is good -
+# it saw DP-2 connect and fired within seconds - but its only action is to start a user
+# service that cannot open the VT, so it put reachy-kiosk.service into a restart loop.
+# The login hook owns the screen. The proper home for this is a SYSTEM unit with
+# User=david + PAMName=login + TTYPath=/dev/tty1 (getty masked on that VT), which gives the
+# service a real session; then the watcher has something it can actually start.
+# run systemctl --user enable --now reachy-kiosk-watch.service
 
 say ""
-say "done. Verify with a real screen: plug HDMI into card1-HDMI-A-1 and wait <=10 s."
+say "done. The kiosk starts from the tty1 CONSOLE session (the hook in ~/.bash_profile),"
+say "  because a systemd user service cannot own the foreground VT and Xorg.wrap refuses"
+say "  it - measured 2026-10-13: the unit crash-looped on 'Only console users are allowed'.
+say "Verify: Ctrl+Alt+F1, log in as $USER -> the page appears in ~10 s. Escape: Ctrl+Alt+F2."
+say "No typing at all: sudo systemctl restart getty@tty1.service   (applies the autologin drop-in)"
+say "If X itself fails: journalctl -b -k | grep -i -E 'drm|xorg' and ~/.local/share/xorg/*.log"
 say "Escape hatch: Ctrl+Alt+F2 -> tty2. Kill the kiosk: systemctl --user stop reachy-kiosk"

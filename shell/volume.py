@@ -19,11 +19,38 @@ flagged (`clipping_risk`) instead of being silently normal.
 from __future__ import annotations
 
 MIN_GAIN = 0.0
-MAX_GAIN = 2.0  # 200% - loud enough to carry across a room; the card clips beyond
-DEFAULT_GAIN = 1.1  # where a boot should land (~110%): heard over a crowd, not screaming
-STEP = 0.1  # one "louder"
-BIG_STEP = 0.25  # one "much louder"
-CLIPPING_ABOVE = 1.2  # measured distortion threshold, kept as a number, not folklore
+
+# Measured on this box 2026-10-13 (scripts/probe_volume.py, live node), not estimated.
+# Three facts decided these numbers:
+#
+#   1. `wpctl`'s number is CUBIC volume: printed 1.10 is 1.10^3 = 1.331x amplitude, i.e.
+#      +2.48 dB, and the dB arithmetic for it is 60*log10, not 20*log10. Every dB figure
+#      quoted about this control before today was understated threefold.
+#   2. The ack audio peaks at -1.94 dBFS (11 real assets) and the TTS stream is the same
+#      neighbourhood; the card's hardware PCM is ALREADY at its maximum 60/60, 0.00 dB
+#      (ADR 0005); the graph is S16LE with no dither. So the clean gain ceiling is
+#      10^(1.94/60) = 1.077. Above that, more "volume" is not more loudness - it is digital
+#      clipping, and there is no hardware headroom left to spend.
+#   3. With the old ceiling of 2.0, clamp_gain() returned 2.0 for every request above it:
+#      ok: true, +0.00 dB, no change whatsoever. That is precisely what the operator
+#      reported hearing ("at a certain point it doesn't change much at all") - the tool had
+#      been reporting success for a control that could not move. 2.0 was also a promise of
+#      +18 dB (8x amplitude) on a stream with no headroom, i.e. distortion sold as loudness.
+#
+# 1.5 is where the last press is still worth something (+0.88 dB from 1.45); past it the curve
+# is flat, the sound is only worse, and clamp_gain would keep answering ok:true for no change.
+MAX_GAIN = 1.5
+DEFAULT_GAIN = 1.1  # +2.5 dB: a deliberate hair over the clean ceiling. A crowded room
+# beats a clean desk recording, and this is the point where that trade is still worth
+# making rather than surrendering.
+#
+# Steps are RATIOS now, so "louder" means the same thing at 0.6 and at 1.4. On a cubic
+# scale, absolute steps shrink as you climb: +0.10 was worth +4.75 dB at 0.50 and +0.85 dB
+# at 1.50 - the same word, six times less response, which is what "it stopped changing"
+# sounds like from across a booth.
+STEP_RATIO = 1.12  # +2.95 dB per "louder" (60*log10)
+BIG_STEP_RATIO = 1.25  # +5.58 dB per "much louder"
+CLIPPING_ABOVE = 1.08  # 10^(1.94/60): the cube volume at which a full-scale ack first clips
 
 # Absolute levels the model can name. Retuned into the new range: "medium" is no
 # longer 0.5, because at a desk with people around, 0.5 is not medium any more.
@@ -43,20 +70,25 @@ NAMED: dict[str, float] = {
     "full": MAX_GAIN,
 }
 
+#: Multipliers, not increments: >1 raises, <1 lowers. The table still owns the words so the
+#: arithmetic lives in one place; STEP/BIG_STEP keep their names as the reciprocal ("quieter")
+#: side of the same two ratios.
+STEP = 1.0 / STEP_RATIO
+BIG_STEP = 1.0 / BIG_STEP_RATIO
 STEPS: dict[str, float] = {
-    "louder": STEP,
-    "up": STEP,
-    "raise": STEP,
-    "volume up": STEP,
-    "much louder": BIG_STEP,
-    "way louder": BIG_STEP,
-    "quieter": -STEP,
-    "down": -STEP,
-    "softer": -STEP,
-    "lower": -STEP,
-    "volume down": -STEP,
-    "much quieter": -BIG_STEP,
-    "way quieter": -BIG_STEP,
+    "louder": STEP_RATIO,
+    "up": STEP_RATIO,
+    "raise": STEP_RATIO,
+    "volume up": STEP_RATIO,
+    "much louder": BIG_STEP_RATIO,
+    "way louder": BIG_STEP_RATIO,
+    "quieter": STEP,
+    "down": STEP,
+    "softer": STEP,
+    "lower": STEP,
+    "volume down": STEP,
+    "much quieter": BIG_STEP,
+    "way quieter": BIG_STEP,
 }
 
 
@@ -101,7 +133,9 @@ def resolve(level: str, current: float | None) -> float | None:
     key = str(level).strip().lower()
     if key in STEPS:
         base = DEFAULT_GAIN if current is None else float(current)
-        return clamp_gain(base + STEPS[key])
+        # Ratio, not increment: one press of "louder" buys the same decibels at the top of
+        # the dial as at the bottom, which is what the word promises.
+        return clamp_gain(base * STEPS[key])
     if key in NAMED:
         return clamp_gain(NAMED[key])
     parsed = parse_level(key)
