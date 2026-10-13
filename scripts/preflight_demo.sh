@@ -46,12 +46,36 @@ if [ -z "$MEDIA" ]; then
   bad "daemon /api/media/status unreachable: the greeter and camera tools cannot work"
 else
   echo "        $MEDIA"
-  if grep -qE '"available":[[:space:]]*true|"released":[[:space:]]*true' <<<"$MEDIA"; then
-    ok "daemon reports the camera usable (greeter and describe_scene can work)"
-  elif grep -qE '"no_media":[[:space:]]*true' <<<"$MEDIA"; then
-    warn "daemon started with no_media: every camera feature is off by configuration"
+  # Ask the camera owner its own question. Two string-matching guesses at this were
+  # both wrong - available:false does NOT mean no camera, daemon_holds_camera() reads
+  # it as free - so the check calls the same function the shell calls, then PROVES
+  # the answer by grabbing a real frame.
+  CAM=$($PY -c "
+from shell.camera import CameraGrabber, daemon_holds_camera, find_reachy_camera
+st = CameraGrabber('http://localhost:8000')._media_status()
+print('held' if daemon_holds_camera(st) else 'free', find_reachy_camera())" 2>/dev/null || echo "unknown -1")
+  set -- $CAM
+  CAMSTATE="$1"
+  CAMNODE="$2"
+  if [ "$CAMSTATE" = held ]; then
+    warn "the daemon holds the camera: the shell will not open it (no greeter, no describe_scene). At the booth that is the eye-contact feature missing."
+  elif [ "$CAMSTATE" = unknown ]; then
+    bad "could not ask shell.camera (import failed) - run: $PY -c 'import shell.camera'"
+  elif [ "$CAMNODE" = "-1" ]; then
+    bad "no Reachy camera node under /sys/class/video4linux: is the robot powered on and enumerated?"
   else
-    bad "daemon reports NO camera (available=false): the greeter sits inert and describe_scene fails. Usually the robot is powered off, or the daemon needs a restart after it was powered on."
+    FRAME=$($PY -c "
+from shell.camera import CameraGrabber
+try:
+    f = CameraGrabber('http://localhost:8000').grab()
+    print('ok', getattr(f, 'shape', None))
+except Exception as e:
+    print('fail', e)" 2>/dev/null || echo "fail import")
+    if [ "${FRAME%% *}" = ok ]; then
+      ok "camera usable by the shell - grabbed a real frame${FRAME#ok}"
+    else
+      bad "camera node exists but the shell's own grab failed: ${FRAME#fail }"
+    fi
   fi
 fi
 # The daemon only logs motor errors while it is polling, so an empty recent
