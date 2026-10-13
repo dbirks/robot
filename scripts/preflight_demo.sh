@@ -36,6 +36,38 @@ grep -qE '^REACHY_(MIC|SPEAKER)=.+' .env 2>/dev/null \
   && echo "        note: .env pins REACHY_MIC/REACHY_SPEAKER - those override the system default" \
   || ok "no device pin in .env (uses system default, which is what the AEC reference needs)"
 
+head_ "the robot answers (an ALSA node is not a speaker)"
+# The card keeps enumerating over USB while the robot is powered OFF, so the
+# device check above can pass on a dead speaker. This is the check that catches
+# it - found the hard way the night before the demo, when the route section
+# reported PASS on a machine with no robot switched on.
+MEDIA=$(curl -s -m 2 http://localhost:8000/api/media/status 2>/dev/null || true)
+if [ -z "$MEDIA" ]; then
+  bad "daemon /api/media/status unreachable: the greeter and camera tools cannot work"
+else
+  echo "        $MEDIA"
+  if grep -qE '"available":[[:space:]]*true|"released":[[:space:]]*true' <<<"$MEDIA"; then
+    ok "daemon reports the camera usable (greeter and describe_scene can work)"
+  elif grep -qE '"no_media":[[:space:]]*true' <<<"$MEDIA"; then
+    warn "daemon started with no_media: every camera feature is off by configuration"
+  else
+    bad "daemon reports NO camera (available=false): the greeter sits inert and describe_scene fails. Usually the robot is powered off, or the daemon needs a restart after it was powered on."
+  fi
+fi
+# The daemon only logs motor errors while it is polling, so an empty recent
+# window proves nothing: report the LAST occurrence instead, with a judgement.
+LASTMOTOR=$(journalctl --user -u reachy-mini-daemon --since "-6 hours" --no-pager -o short-iso 2>/dev/null | grep -iE "motor communication error|no response from the robot" | tail -1 | cut -d' ' -f1-2)
+if [ -n "$LASTMOTOR" ]; then
+  RECENT=$(journalctl --user -u reachy-mini-daemon --since "-30 min" --no-pager -o cat 2>/dev/null | grep -icE "motor communication error|no response from the robot" || true)
+  if [ "${RECENT:-0}" -gt 0 ]; then
+    bad "daemon says the robot is not answering (last at $LASTMOTOR) - power it on, then restart reachy-mini-daemon"
+  else
+    warn "daemon reported the robot unresponsive at $LASTMOTOR. If you have powered it on since, the daemon does NOT reattach by itself: systemctl --user restart reachy-mini-daemon"
+  fi
+else
+  ok "no motor communication errors in the last 6 hours"
+fi
+
 head_ "the room this box will boot into"
 RESOLVE=$($PY -m shell --print-env 2>&1) || true
 if [ -z "$RESOLVE" ]; then bad "python -m shell --print-env failed (fix before anything else)"; else

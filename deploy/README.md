@@ -24,6 +24,22 @@ Services, in startup order:
 Phase 2 (issue #22) will fold the legacy `reachy-agent` / `qwen3-tts` units
 away and teach the dashboard about these names.
 
+## Powering the robot back on (travel day)
+
+The daemon does not reliably reattach to a robot that was powered off while it was
+running: it keeps serving `/api/media/status` with `available:false` and the greeter
+and camera tools go quietly inert. After any power cycle, at the venue, in this order:
+
+```bash
+systemctl --user restart reachy-mini-daemon   # re-enumerate the robot, camera, audio
+scripts/preflight_demo.sh                     # must be clean before you trust anything
+systemctl --user start reachy-shell
+```
+
+`scripts/preflight_demo.sh` checks for the stale-daemon state and tells you so; do not
+skip it because the audio devices "look present" - the ALSA card enumerates over USB
+even with the robot switched off.
+
 ## Before the doors open
 
 ```bash
