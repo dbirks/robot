@@ -96,19 +96,31 @@ def test_schema_enum_is_the_vocabulary_is_the_file_map():
     assert len(enum) == len(set(enum)) > 0
 
 
-def test_the_description_bounds_frequency_not_just_meaning():
-    """Tonight's tool-description audit found the 4B model's failure mode is not ignorance, it is
-    enthusiasm: a description that says what a tool does, without saying how often, gets it called
-    every turn. The boundary ("at most once") and the prohibition ("never say you are doing it")
-    are the parts worth pinning."""
+def test_the_description_says_a_gesture_is_a_movement_and_only_the_call_makes_one():
+    """Written after measuring, not before. Live routing (scripts/bench_emotes.py, hackday,
+    qwen3.5-4b) produced two distinct refusals: "I am a machine, I cannot feel surprise" - a dry
+    persona declining an instruction to *express a feeling* - and "I am currently playing hello"
+    with no tool call at all, narration standing in for the movement. Each clause below targets
+    one of them; "at most once" targets the third failure mode from the description audit, which
+    is enthusiasm rather than ignorance."""
     text = emotes.EMOTE_TOOL["function"]["description"]
+    assert "MOVEMENT" in text, "an instruction to express a feeling is what dry personas decline"
+    assert "ONLY way his body moves" in text, "narrating a gesture must be named as doing nothing"
     assert "at most once" in text
-    assert "never say that you are doing it" in text
     for name in emotes.EMOTE_NAMES:
         assert name in text, f"{name} is callable but never mentioned in the description"
 
 
-# --- parsing ----------------------------------------------------------------
+def test_the_shared_prompt_carves_gestures_out_of_the_greeting_ban():
+    """TOOLS_NOTE said greetings and goodbyes need no tool while the emote tool said to use hello
+    and goodbye for exactly those. Measured consequence: 0 of 4 greetings produced a gesture, on
+    every repeat, and the model instead said "I am currently playing hello" while standing still -
+    because the same note tells him to narrate tool use. The two instructions had to stop
+    contradicting each other; this is the gate that keeps them from starting again."""
+    from shell.config import TOOLS_NOTE
+
+    assert "except play_emotion" in TOOLS_NOTE
+    assert "narrating a tool call is not" in TOOLS_NOTE
 
 
 def test_parse_uses_the_files_own_clock_not_a_default_duration():

@@ -96,11 +96,15 @@ def emote_max_s(raw: str | None = None) -> float:
 #: request, and tonight's tool-description audit found the 4B model does not need an essay - it
 #: needs a boundary ("at most once") and a prohibition ("do not narrate it").
 EMOTE_WHEN = (
-    "Move his whole head and ears to express a feeling: one of "
-    "hello, goodbye, cheerful, curious, surprised, confused, laughing, sad, attentive, dance. "
-    "Use it when the guest's own words clearly call for it - a greeting, good news, a joke, a "
-    "farewell - at most once in a turn, and never say that you are doing it: the movement is the "
-    "point, and narrating it ruins it."
+    "Perform one of his stock physical gestures - a whole-head and ear movement, the same kind "
+    "of thing as nodding: hello, goodbye, cheerful, curious, surprised, confused, laughing, sad, "
+    "attentive, dance. This is a MOVEMENT, not a claim about what he feels, so a modest or dry "
+    "persona can still perform it: declining because he cannot truly feel something is wrong, the "
+    "gesture is a greeting, not a confession. Calling this tool is the ONLY way his body moves - "
+    'saying "I am waving" or "I shall look curious" moves nothing, so never describe a '
+    "gesture instead of performing it. Use it when the guest's own words call for it (a greeting, "
+    "good news, a joke, a farewell) or whenever they ask directly, at most once in a turn, and let "
+    "the movement speak rather than announcing it."
 )
 
 

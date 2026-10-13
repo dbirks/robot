@@ -10,7 +10,12 @@ places disagrees with itself the first time a prompt changes *on purpose*: two f
 updated, one is missed, and the safety gate goes red on an unrelated night. One constant,
 three readers.
 
-2026-10-13: **1853 -> 1765**, deliberately - the shared `TIME_NOTE` lost its stamp language
+2026-10-13: **1765 -> 1938**, deliberately - TOOLS_NOTE now carves play_emotion out of the
+"greetings and goodbyes need no tool" ban and says plainly that narrating a tool call is not
+making one. Live measurement (scripts/bench_emotes.py, hackday, qwen3.5-4b): the old pairing
+produced "I am currently playing hello" with no tool call at all - the note told him to narrate
+tool use and to avoid tools at greetings, so it narrated a gesture it never performed. 3/10
+explicit emote requests moved. Earlier the same day: **1853 -> 1765**, deliberately - the shared `TIME_NOTE` lost its stamp language
 when `shell/llm_proxy.py` stopped injecting a per-message timestamp (see below; #45). Earlier
 the same day: **1568 -> 1853**.
 
@@ -27,4 +32,4 @@ The stale-stamp cache itself is a separate defect (it still misdates anything
 date-relative) and is deliberately NOT touched the night before a demo.
 """
 
-HOME_PROMPT_BYTES = 1765
+HOME_PROMPT_BYTES = 1938
