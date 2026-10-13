@@ -72,6 +72,9 @@ MOTION_DOA_AIM = "motion.doa_aim"  # in-conversation re-aim toward the talker
 MOTION_SCAN = "motion.scan"  # idle search sweep detent (REACHY_GREETER_SCAN), rate-limited
 EMOTION_PLAYED = "emotion.played"  # a gesture was queued: name, keyframes, duration_s,
 # ok=False + error when the library or the robot refused
+DANCE_PLAYED = "dance.played"  # a routine was queued: same fields, from the dances library.
+# Repeats of ONE name inside shell.motion.dances.DANCE_JOURNAL_S are dropped the way the scan
+# detents are (`MOTION_SCAN`); a failure row is always written.
 
 SLEEP_ENTER = "sleep.enter"  # one state moved: head down AND microphone closed
 SLEEP_EXIT = "sleep.exit"  # reason names what woke him (kws:<word>, tool, ...)

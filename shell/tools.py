@@ -66,6 +66,25 @@ STATE_CHANGING = {
     "play_emotion",
 }
 
+# `dance` (shell/motion/dances.py) is deliberately NOT in the set above, and this is a decision,
+# not an oversight: a 1.8-5.0 s solo is longer than anything else ungated here. Two reasons, one
+# physical and one mechanical.
+#
+# Physically it is smaller than it sounds. Measured across all 19 files in the pack before any of
+# them were wired: |yaw| <= 45 deg, |roll| <= 25 deg, |pitch| <= 20 deg and body_yaw is 0.0 in
+# every clip, so the base never turns - it is the same head-and-ear envelope `play_emotion`
+# already drives, capped at REACHY_DANCE_MAX_S and queued at priority 0 behind the gaze.
+#
+# Mechanically, the gate cannot see it yet. `dashboard/env_panel.py` resolves every
+# STATE_CHANGING member against the tool names it reads with `ast` from
+# `app/robot_tools.py:TOOLS` and `shell/memories.py:MEMORY_TOOLS` (tests/test_dashboard_panel.py
+# asserts that subset holds), and a shell-native motion schema is in neither source. Adding the
+# name here would either go red or put an attention gate on the booth's tool card that the card
+# cannot display - the documented-knob-with-no-row failure class, in the other direction. It
+# gates for free at the Phase 2 cutover, when the motion tools land in a source the panel reads.
+# Until then a room that does not want a dance booth uses `tools.exclude: [dance]`, which drops
+# the schema AND the handler (apply_tool_policy) and needs no new code path.
+
 # Tools whose result gets no spoken follow-up. Empty since 2026-10-11: the
 # user wants to hear progress after every call ("Turning left.", "There you
 # go."), not silence after physical actions. Kept as a hook.

@@ -193,5 +193,28 @@ else
     bad "only $CACHED/$WANT gestures cached: $MISSING - run scripts/fetch_emotions.py at home"
 fi
 
+head_ "dance library (dance)"
+# Same shape, same reason, one pack over: the tool loads with local_files_only=True and the s2s
+# unit runs HF_HUB_OFFLINE=1, so a pack that is not on this disk when the car is loaded is not
+# there at the table either. Read-only - no download, no network, no motor.
+DANCES=$($PY - <<'PYIN' 2>/dev/null
+try:
+    from shell.motion import dances
+    st = dances.status()
+    print(f"{len(st['cached'])} {len(dances.DANCE_NAMES)} {','.join(st['missing'])}")
+except Exception as e:
+    print(f"import-error 0 0 {type(e).__name__}")
+PYIN
+)
+set -- $DANCES
+CACHED=${1:-0}; WANT=${2:-19}; MISSING=${3:-unknown}
+if [ "$CACHED" = "$WANT" ] && [ "$WANT" != "0" ]; then
+    ok "all $WANT dances resolve offline (no network at the venue is fine)"
+elif [ "$1" = "import-error" ] || [ "$WANT" = "0" ]; then
+    warn "could not check the dance library ($MISSING) - huggingface_hub missing, or this is the bare CI env"
+else
+    bad "only $CACHED/$WANT dances cached: $MISSING - run scripts/fetch_dances.py at home"
+fi
+
 printf '  %d pass, %d warn, %d fail\n\n' "$PASS" "$WARN" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -158,12 +158,16 @@ def _path_for(name: str) -> Path:
     return Path(local)
 
 
-def parse_emote(name: str, payload: dict, *, fallback_seconds: float = 2.4) -> Animation:
+def parse_emote(name: str, payload: dict, *, fallback_seconds: float = 2.4, max_s: float | None = None) -> Animation:
     """Frames -> an Animation in our own keyframe format (no legacy `AnimationKeyframe`).
 
     `payload` is the parsed JSON: {"time": [...], "set_target_data": [{head: 4x4, antennas: [2],
     body_yaw: float}]}. Splitting the file's real duration across the subsampled keyframes is
     what keeps a slow emote slow and a fast one fast.
+
+    `max_s` is the queue-hold ceiling. It is a parameter rather than a call to `emote_max_s()`
+    because `shell/motion/dances.py` shares this parser - one keyframe format, one scaling rule,
+    two packs with different length budgets and therefore different knobs.
     """
     frames = payload.get("set_target_data") or []
     times = payload.get("time") or []
@@ -172,7 +176,7 @@ def parse_emote(name: str, payload: dict, *, fallback_seconds: float = 2.4) -> A
         raise EmoteUnavailable(name, "(the library file has no keyframes)")
 
     total = float(times[-1]) if len(times) >= 2 and float(times[-1]) > 0 else fallback_seconds
-    ceiling = emote_max_s()
+    ceiling = emote_max_s() if max_s is None else max_s
     if ceiling and total > ceiling:
         total = ceiling  # scaled below, so the gesture keeps its shape and loses its drag
     keyframes: list[Keyframe] = []

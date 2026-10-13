@@ -226,17 +226,22 @@ def load_sdk_sound(name: str, rate: int = 16000):
     return np.clip(data * 32767.0, -32768, 32767).astype(np.int16)
 
 
-def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | None = None, rng=None):
+def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | None = None, rng=None, clock=None):
     """Motion tools on the single MotionOwner. Fire-and-forget: they return
-    as soon as the intent is queued; the owner plays it out."""
+    as soon as the intent is queued; the owner plays it out.
+
+    `clock` exists for the dance journal rate-limit, which is the one behaviour here that
+    depends on wall time; the tests inject a fake rather than sleeping (same reason as `rng`).
+    """
     import random
 
     from . import journal as J
-    from .motion import emotes, nod_animation, shake_animation
+    from .motion import dances, emotes, nod_animation, shake_animation
     from .motion.kinematics import pose6, pose_matrix
     from .motion.owner import SLEEP_ANTENNAS, SLEEP_HEAD_POSE
 
     rng = rng or random.Random()
+    clock = clock or time.monotonic
 
     def _ready() -> dict | None:
         if not robot.connected or motion is None:
@@ -392,6 +397,74 @@ def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | N
             "woke": was_asleep,
         }
 
+    _dance_journal_t: dict[str, float] = {}
+
+    @_guard
+    def dance(move: str = "", **_kw: Any) -> dict:
+        """A dance routine from the vendor's dances library, on the same owner and the same
+        keyframe math as `play_emotion`.
+
+        Deliberately NOT in `shell.tools.STATE_CHANGING` - see the comment on that set. The
+        containment is physical rather than attentional and all of it is inherited from the
+        emote path: priority 0 with no preemption (it overlays the gaze instead of yanking it),
+        `REACHY_DANCE_MAX_S` scaling a too-long routine, and `tools.exclude: [dance]` per room
+        for an operator who wants the option gone entirely.
+        """
+        if err := _ready():
+            return err
+        name = str(move or "").strip().lower()
+        if not name:
+            return {
+                "ok": False,
+                "error": "No dance specified",
+                "available": list(dances.DANCE_NAMES),
+            }
+        journal = getattr(motion, "journal", None)
+        try:
+            anim = dances.load(name)
+        except dances.UnknownDance:
+            return {
+                "ok": False,
+                "error": f"Unknown dance: {name}",
+                "available": list(dances.DANCE_NAMES),
+            }
+        except dances.DanceUnavailable as e:
+            # The same lie must not be available here twice: an unreadable pack reported as a bad
+            # word gets retried, and a retry queues behind the animation already in flight.
+            error = (
+                f"The dance library is not readable on this box ({e.name}); do not try another "
+                "dance - answer in words instead"
+            )
+            if journal is not None:
+                # Never rate-limited: "the pack is missing" arriving once is exactly the row
+                # someone needs to see at the table.
+                journal.write(J.DANCE_PLAYED, name=name, ok=False, error=error[:120])
+            return {"ok": False, "error": error, "retry": False}
+
+        was_asleep = bool(getattr(motion, "sleeping", False))
+        _woken()  # issue #36: a request that needs the head reopens the microphone as well
+        motion.play(anim)  # no preempt: it queues behind the live gaze
+        seconds = round(sum(kf.duration for kf in anim.keyframes), 2)
+        now = clock()
+        if journal is not None and now - _dance_journal_t.get(name, -1e9) >= dances.DANCE_JOURNAL_S:
+            # Rate-limited per name, the way MOTION_SCAN and the greeter suppression row are.
+            _dance_journal_t[name] = now
+            journal.write(
+                J.DANCE_PLAYED,
+                name=name,
+                ok=True,
+                keyframes=len(anim.keyframes),
+                duration_s=seconds,
+                woke=was_asleep,
+            )
+        return {
+            "ok": True,
+            "action": "dance",
+            "move": name,
+            "duration_s": seconds,
+            "woke": was_asleep,
+        }
+
     return {
         "look_left": look_left,
         "look_right": look_right,
@@ -401,6 +474,7 @@ def make_motion_handlers(robot, motion, *, play_sound: Callable[[str], None] | N
         "peekaboo": peekaboo,
         "go_to_sleep": go_to_sleep,
         "play_emotion": play_emotion,
+        "dance": dance,
     }
 
 
@@ -441,4 +515,10 @@ def build_handlers(
 
     names = {t["function"]["name"] for t in _emotes.EMOTE_TOOLS}
     tools = [t for t in tools if t.get("function", {}).get("name") not in names] + _emotes.EMOTE_TOOLS
+    # Same replacement dance for `dance`, which has no legacy schema to drop - it is purely
+    # additive, and `make_motion_handlers` already supplies the handler above.
+    from .motion import dances as _dances
+
+    dance_names = {t["function"]["name"] for t in _dances.DANCE_TOOLS}
+    tools = [t for t in tools if t.get("function", {}).get("name") not in dance_names] + _dances.DANCE_TOOLS
     return tools, handlers

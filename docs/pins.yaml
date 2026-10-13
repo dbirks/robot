@@ -79,6 +79,52 @@ models:
       org so this is likely vendor demo content, but "likely" is not a licence. Check before the
       library leaves a demo, and note the .wav files shipped beside the JSON are a separate
       question from the keyframes.
+  dances:
+    # The `dance` tool's pack (shell/motion/dances.py). Same reasoning as `emotions` above: a data
+    # dependency of a tool gets a pin like any model, and the block scalars are deliberate because
+    # a plain scalar whose continuation contains ": " is not valid YAML (issue #51 - do not
+    # "fix" this file's syntax from inside a diff that only adds a row).
+    id: pollen-robotics/reachy-mini-dances-library   # repo_type=dataset, the vendor's own org -
+      # existence PROVEN over HTTP before any of this was written:
+      # GET https://huggingface.co/api/datasets/pollen-robotics/reachy-mini-dances-library
+      # -> HTTP 200, "sha":"3564295e72d41c1271f46bf5540a3fcad9d5f669",
+      # "license:apache-2.0", tag reachy_mini_community_moves, usedStorage 383089
+    revision: 3564295e72d41c1271f46bf5540a3fcad9d5f669   # refs/main on this box AND the Hub HEAD, 2026-07-28 cache
+    files: >-
+      19, every <dance>.json at the repo root, 420,505 B read through the cache symlinks; all 19
+      resolve offline and all 19 parse. This is the whole pack, not a subset -
+      tests/test_dances.py fails if the enum and the snapshot directory disagree.
+    runtime: >-
+      hf_hub_download with local_files_only=True via shell/motion/dances.py, sharing
+      shell/motion/emotes.py's parse_emote keyframe math (one parser, two packs). Cached in the
+      DEFAULT HF_HOME - the same place the shell resolves the emotion pack, and the same caveat
+      applies: this is NOT cached under the s2s unit's HF_HOME, so the tool stays in the shell
+      process and scripts/fetch_dances.py remains a travel step, never a runtime step. The SDK
+      already knew about this repo (reachy_mini/motion/recorded_move.py DEFAULT_DATASETS, and the
+      daemon dashboard's "Dances" option), so the daemon may have put it here; the fetch script is
+      what makes that an invariant instead of a coincidence.
+    measured: >-
+      19/19 parse at 15 keyframes. Raw lengths 1.82 s (simple_nod, uh_huh_tilt) to 5.00 s
+      (jackson_square, side_peekaboo), so REACHY_DANCE_MAX_S (default 6.0) trims nothing today -
+      it is a ceiling for the pack, not a trim for it, and it exists because the pack is
+      upstream-owned. Envelope, measured from the real head matrices through pose6_from_matrix:
+      |yaw| <= 45 deg, |roll| <= 25 deg, |pitch| <= 20 deg, antennas <= 1.047 rad, and body_yaw is
+      0.0 in every file, so the base never turns - the whole library is head and ears only, inside
+      the 60 deg the owner already clamps gaze to. CPU only, no VRAM, no GPU context, no new
+      dependency. NOT PLAYED ON HARDWARE: minutes of powered servo history in total and a live
+      audience at the table, so nothing here was actuated; the numbers above are from parsing the
+      files, not from watching them.
+    gating: >-
+      NOT attention-gated (deliberately absent from shell/tools.py STATE_CHANGING, with both
+      reasons written into that file and pinned by tests/test_dances.py - see
+      test_dance_is_ungated_by_decision_and_the_reason_is_still_true). Physical containment
+      instead: priority 0 with no preemption, the ceiling above, and
+      tools.exclude: [dance] per room.
+    licence: >-
+      apache-2.0 per the dataset card quoted above (12 likes, 2409 downloads).
+      The card says motion-only, no audio tracks, and asks that the reachy_mini_community_moves
+      tag be kept in derivatives. That is the card's claim, read from the API response, not a
+      lawyer's reading - same caveat as the emotions pack.
   face_detection:
     id: insightface/buffalo_sc        # det_500m.onnx = SCRFD-500MF, 2.5 MB (cached in ~/.insightface)
     revision: insightface 0.7.3, onnxruntime 1.24.4, cv2 4.13.0 (all in uv.lock; no new deps)
