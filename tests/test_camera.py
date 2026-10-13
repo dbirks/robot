@@ -17,7 +17,14 @@ import pytest
 from conftest import RecJournal
 
 from shell import camera as camera_module
-from shell.camera import WARMUP_FRAMES, CameraGrabber, CameraStream, daemon_holds_camera, warmup_deadline_s
+from shell.camera import (
+    WARM_MAX_READS,
+    WARM_POLL_GAP_S,
+    CameraGrabber,
+    CameraStream,
+    daemon_holds_camera,
+    warmup_deadline_s,
+)
 
 
 class FakeGrabber:
@@ -283,7 +290,7 @@ class FakeCv2:
         return self.capture
 
 
-def _device(monkeypatch, capture, *, index=3, deadline=6.0, clock=None):
+def _device(monkeypatch, capture, *, index=3, deadline=6.0, clock=None, sleep=None):
     """A real `CameraGrabber` whose /dev/videoN is `capture`: the real warm-up loop and
     the real reason string, with no cv2, no device and no sleeping."""
     cv2 = FakeCv2(capture)
@@ -291,7 +298,13 @@ def _device(monkeypatch, capture, *, index=3, deadline=6.0, clock=None):
     capture.clock = clock  # the fake charges its blocked reads to the grabber's clock
     monkeypatch.setitem(sys.modules, "cv2", cv2)
     monkeypatch.setattr(camera_module, "find_reachy_camera", lambda *a, **k: index)
-    grabber = CameraGrabber("http://localhost:1", mode="auto", deadline_s=deadline, clock=clock)
+    grabber = CameraGrabber(
+        "http://localhost:1",
+        mode="auto",
+        deadline_s=deadline,
+        clock=clock,
+        sleep=sleep if sleep is not None else (lambda _s: None),
+    )
     monkeypatch.setattr(grabber, "_fetch_media_status", lambda: {"available": False})  # daemon not holding
     return grabber, clock, cv2
 
@@ -318,13 +331,42 @@ def test_a_silent_device_costs_one_blocked_read_not_five(monkeypatch):
     assert cap.released == 1
 
 
-def test_a_device_that_opens_and_says_nothing_quickly_uses_its_frame_budget(monkeypatch):
-    cap = FakeCapture(FakeClock())
-    grabber, _clock, _cv2 = _device(monkeypatch, cap)
+def test_an_instantly_refusing_device_spends_its_wall_clock_window_not_its_read_budget(monkeypatch):
+    """A cold UVC camera answers `(False, None)` *instantly* for its first seconds - auto-exposure
+    settling, measured 2.7-3.0 s to the first frame on this box. The lane that added the wall-clock
+    deadline left the read cap at 5, so five free reads burned ~0 s and the shell journalled
+    `camera.disabled` at start-up: no greeter, no vision tools, for the session. The name of the
+    test it replaces - "uses its frame budget" - is precisely the bug.
+
+    Reads are now paced, so the deadline is what actually expires. `clock` and `sleep` are the same
+    fake clock here: that is the whole point, the retries have to cost the warm-up its seconds.
+    """
+    clock = FakeClock()
+
+    def paced_sleep(seconds):
+        clock.advance(seconds)
+
+    cap = FakeCapture(clock)  # never yields a frame, and never blocks
+    grabber, _clock, _cv2 = _device(monkeypatch, cap, clock=clock, sleep=paced_sleep)
     with pytest.raises(RuntimeError) as e:
         grabber.grab()
-    assert cap.reads == WARMUP_FRAMES  # no deadline pressure when the reads are cheap
-    assert "no frames from /dev/video3 in 0.0s (device opened; check the robot is powered" in str(e.value)
+    assert cap.reads > 20, f"only {cap.reads} reads: it gave up on a free-retry device again"
+    assert cap.reads < WARM_MAX_READS, "the backstop cap, not the deadline, ended the warm-up"
+    assert 5.5 <= _clock.t <= 6.6, f"the 6 s deadline was not the bound: {_clock.t:.2f}s"
+    assert "no frames from /dev/video3 in 6.0s" in str(e.value)
+    assert cap.released == 1
+
+
+def test_a_cold_camera_that_needs_three_seconds_is_not_called_dead(monkeypatch):
+    """The one that would have cost the booth its greeter: first good frame at ~2.8 s, well inside
+    the 6 s window and well outside the old 5-read budget."""
+    clock = FakeClock()
+    cap = FakeCapture(clock, block_s=0.4, frame_after=7)  # 7 x 0.4 s of settling, then a frame
+    grabber, _clock, _cv2 = _device(monkeypatch, cap, clock=clock)
+    assert grabber.grab() == "frame-8", "a healthy cold open was abandoned"
+    assert cap.reads == 8
+    assert 2.4 <= _clock.t <= 3.4, f"the frame arrived at {_clock.t:.2f}s, not the measured ~2.8s"
+    assert cap.released == 1
 
 
 def test_the_deadline_is_configurable_and_a_blank_override_does_not_crash(monkeypatch):

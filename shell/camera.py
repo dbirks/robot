@@ -48,7 +48,12 @@ from . import journal as J
 
 log = logging.getLogger("shell.camera")
 
-WARMUP_FRAMES = 5  # UVC auto-exposure needs a few frames before one is usable
+# A backstop only. With the pacing below it, 400 gaps is 20 s, so on the shipped 6.0 s deadline
+# the wall clock always binds first (120 reads); the cap exists to survive an operator who sets
+# REACHY_CAMERA_WARMUP_DEADLINE_S huge - and tests/test_tool_timeouts.py pins the deadline
+# against CAMERA_TIMEOUT_S, so that operator goes red in a test rather than at the booth.
+WARM_MAX_READS = 400
+WARM_POLL_GAP_S = 0.05  # only paid when a read refuses instantly - a cold UVC device does
 WARMUP_DEADLINE_S = 6.0  # wall-clock for the whole warm-up, not per read
 WARMUP_DEADLINE_ENV = "REACHY_CAMERA_WARMUP_DEADLINE_S"
 V4L2_SELECT_TIMEOUT_S = 10.0  # measured: one blocked `cap.read()` on an unpowered Reachy
@@ -78,23 +83,44 @@ def warmup_worst_case_s(deadline_s: float | None = None) -> float:
     return (WARMUP_DEADLINE_S if deadline_s is None else deadline_s) + V4L2_SELECT_TIMEOUT_S
 
 
-def warm_up(read, *, index: int, deadline_s: float, clock=time.monotonic, max_frames: int = WARMUP_FRAMES):
+def warm_up(
+    read,
+    *,
+    index: int,
+    deadline_s: float,
+    clock=time.monotonic,
+    max_frames: int = WARM_MAX_READS,
+    sleep=time.sleep,
+    gap_s: float = WARM_POLL_GAP_S,
+):
     """First good frame from an opened capture, or None: `(frame, elapsed_s, reads)`.
 
     Stops at the FIRST good frame and at the WALL-CLOCK deadline, whichever comes first.
-    Bounding it in reads was tonight's bug: each `cap.read()` on an opened-but-silent
+    Bounding it in reads was tonight's first bug: each `cap.read()` on an opened-but-silent
     device (unpowered Reachy - an ALSA/UVC node existing is not proof the device works)
-    blocks on the V4L2 select() timeout, so 5 reads cost ~50 s of a tool call that the
+    blocks on the ~10 s V4L2 select() timeout, so 5 reads cost ~50 s of a tool call that the
     guest experienced as "the robot is having trouble".
+
+    Leaving the read cap at 5 then broke the opposite way, and that one is worse for a booth:
+    a *cold but healthy* camera answers `read()` with an instant (False, None) for seconds -
+    2.7-3.0 s to the first frame measured on this box, auto-exposure settling - so five cheap
+    reads spent ~0 s and the shell journalled `camera.disabled` at start-up, taking the greeter
+    and every vision tool with it. A budget of reads is not a warm-up; the wall clock is. So the
+    cap is now a backstop, and an instant refusal is followed by a short gap - without the gap,
+    retrying costs nothing and the deadline is never reached. A read that blocks is not paced:
+    it is already waiting, and the deadline refuses the next one.
     """
     start = clock()
     stop = start + deadline_s
     reads = 0
     while reads < max_frames and clock() < stop:
         reads += 1
+        before = clock()
         ok, frame = read()
         if ok:
             return frame, clock() - start, reads
+        if clock() - before < gap_s:
+            sleep(gap_s)
     return None, clock() - start, reads
 
 
@@ -158,11 +184,13 @@ class CameraGrabber:
         mode: str | None = None,
         deadline_s: float | None = None,
         clock=time.monotonic,
+        sleep=time.sleep,
     ) -> None:
         self.daemon_url = daemon_url.rstrip("/")
         self.mode = (mode or os.getenv("REACHY_CAMERA", "auto")).lower()
         self.warmup_deadline_s = deadline_s if deadline_s is not None else warmup_deadline_s()
         self.clock = clock  # wall-clock seam: the deadline and the backoff share it
+        self.sleep = sleep  # the warm-up pacing seam, so tests spend no real time
         self._lock = threading.Lock()  # one open/read/close at a time
         self._cap = None  # the held capture, owned by CameraStream via open_stream()
         self._index: int | None = None  # the node the held handle is on, for the reason
@@ -202,8 +230,14 @@ class CameraGrabber:
         return cap
 
     def _warm(self, cap, index: int):
-        """The one warm-up call, on this grabber's deadline and clock."""
-        return warm_up(cap.read, index=index, deadline_s=self.warmup_deadline_s, clock=self.clock)
+        """The one warm-up call, on this grabber's deadline, clock and pacing seam."""
+        return warm_up(
+            cap.read,
+            index=index,
+            deadline_s=self.warmup_deadline_s,
+            clock=self.clock,
+            sleep=self.sleep,
+        )
 
     def grab(self):
         """BGR frame (numpy) or raises RuntimeError with a speakable reason."""
