@@ -82,7 +82,12 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_time",
-            "description": "Get the current date and time",
+            "description": (
+                "Get the current local date and time, spelled out. This is the ONLY way to learn"
+                " the time or the date: you have no clock and nothing in the conversation carries"
+                " one. Call it for any question about the time, the date, the day of the week or"
+                " how late it is, then say exactly what it returns."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },

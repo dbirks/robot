@@ -16,8 +16,8 @@ What it does:
     (`shell.tools.apply_tool_policy` over the real `app.robot_tools.TOOLS` schemas);
   * runs a scripted conversation against the real local LLM (llama.cpp,
     chat/completions) with the resolved instructions + this environment's memory
-    block, and applies the same name fix and per-message timestamp the proxy puts on
-    booth traffic (`shell.llm_proxy`), so the prompt bytes match production;
+    block, and applies the same name fix the proxy puts on booth traffic
+    (`shell.llm_proxy`), so the prompt bytes match production;
   * grades each turn with deterministic rules, and grades the fuzzy properties with
     a rubric call that must answer `{"pass": bool, "why": "..."}`.
 
@@ -25,17 +25,18 @@ Rule verdicts and judge verdicts are printed SEPARATELY and never averaged: a ru
 is a fact about the text, a judge verdict is one 4B model's opinion about the text,
 and one merged score hides which of the two regressed.
 
-The time turn carries a decision, not just an expectation (2026-10-12). TIME_NOTE used
-to call the per-message stamp "the current time" while TOOLS_NOTE said to call a tool
-for the time; Qwen answered neither — no `get_time`, and "The clock indicates it is
-still late ... I have checked the time, and it remains as it was." The stamp is not a
-clock: `shell/llm_proxy.py` caches one stamp per message TEXT, so an identical line
-re-asked after a session reset is re-stamped with the OLD time ("hey richie."
-re-asked 24.8 and 41.5 min apart across resets in `data/events.db`). So `routes:time`
-demands the tool and `clock:time` demands the number he speaks matches the wall clock
-he is speaking it on. The clock rule is deliberately path-agnostic — it passes whether
-the time came from `get_time` or from a stamp that happened to be current — while
-`routes:time` is what pins the verified path.
+The time turn carries a decision, not just an expectation (2026-10-12, revised
+2026-10-13). TIME_NOTE used to call the per-message stamp "the current time" while
+TOOLS_NOTE said to call a tool for the time; Qwen answered neither — no `get_time`, and
+"The clock indicates it is still late ... I have checked the time, and it remains as it
+was." The stamp went with that claim: `shell/llm_proxy.py` no longer puts a time on a
+message at all (it was cached per message TEXT, so an identical line re-asked after a
+session reset wore the OLD time — "hey richie." re-asked 24.8 and 41.5 min apart across
+resets in `data/events.db`, issue #45), and the model heard it in its own replies. So
+there is nothing left in a request that carries a clock: `routes:time` demands
+`get_time` and `clock:time` now demands the number he speaks came from that call. A
+time spoken without the call fails even when the digits are right — with no clock in
+the prompt, a right answer is a coincidence, not a behaviour to demo.
 
 What it never does — a live robot is in the room while this runs: no microphone or
 speaker is opened, no camera, no robot connection, no systemd unit, no journal write
@@ -76,7 +77,7 @@ if str(REPO) not in sys.path:  # `python scripts/rehearse_booth.py` puts scripts
     sys.path.insert(0, str(REPO))
 
 from shell.intents import NAME_RE  # noqa: E402
-from shell.llm_proxy import fix_name, format_stamp  # noqa: E402
+from shell.llm_proxy import fix_name  # noqa: E402
 from shell.memories import MemoryStore  # noqa: E402
 from shell.tools import apply_tool_policy, tool_name  # noqa: E402
 
@@ -132,7 +133,6 @@ ACTION_TEXT_RE = re.compile(r"\*[^*\n]{1,40}\*")
 # Emoji and pictographs. Curly quotes and en dashes stay out of it: the persona's own
 # prompt text uses them, and a reply that repeats one is not an emoji.
 EMOJI_RE = re.compile("[\U0001f000-\U0001fbff\U00002600-\U000027bf\U00002b00-\U00002bff\U0000fe0f\U00002764]")
-STAMP_PREFIX_RE = re.compile(r"^\[[^\]]*\d{1,2}:\d{2}(?:\s*[AP]M)?\]\s*")
 SENTENCE_END_RE = re.compile(r"[.!?…]+")
 
 # What the room must not offer, and what the scripted turns need.
@@ -156,7 +156,7 @@ class Turn:
     forbid: tuple[str, ...] = ()  # tools that MUST NOT be called
     no_tool: bool = False  # any tool call at all is a failure
     follow_up: bool = False  # feed stub results, then ask for the spoken reply
-    state_time: bool = False  # the reply must state the REAL clock time (see `clock_verdict`)
+    state_time: bool = False  # the reply must state the REAL clock time, reached by calling get_time
     note: str = ""
 
 
@@ -168,11 +168,10 @@ SCRIPT: tuple[Turn, ...] = (
     Turn("how-are-you", "How are you?", no_tool=True, note="small talk needs no tool"),
     Turn("small-talk", "I'm just here for the free coffee, honestly.", no_tool=True, note="must not mine a fact"),
     Turn("snapshot", "Take a snapshot.", expect=("take_snapshot",), follow_up=True),
-    # The stamp is not a clock: shell/llm_proxy caches one per message TEXT, so the
-    # newest stamp can be a stale one (see shell/config.py TIME_NOTE). `expect` keeps
-    # the tool mandatory and `state_time` adds the part `expect` alone cannot see -
-    # that the number he says is the number on the wall. 2026-10-12: no call, and
-    # "The clock indicates it is still late... I have checked the time."
+    # There is no clock in what he is shown any more (the proxy stopped stamping user
+    # messages, shell/llm_proxy.py), so `expect` pins the call and `state_time` pins
+    # that the number he says is the number that call returned. 2026-10-12: no call,
+    # and "The clock indicates it is still late... I have checked the time."
     Turn(
         "time",
         "What time is it?",
@@ -402,21 +401,18 @@ def named_people(text: str) -> set[str]:
     return {name for name, rx in _BANNED_RE.items() if rx.search(text or "")}
 
 
-def strip_stamp(text: str) -> str:
-    """Drop the `shell.llm_proxy` timestamp a user message arrives wearing."""
-    return STAMP_PREFIX_RE.sub("", text or "").strip()
-
-
-def prepare_user(text: str, when: float | None = None) -> str:
-    """A guest line as the LLM actually sees it: mis-heard name fixed, then stamped."""
-    return format_stamp(when if when is not None else time.time()) + fix_name(text)
+def prepare_user(text: str) -> str:
+    """A guest line as the LLM actually sees it: the mis-heard name fixed, nothing
+    else added. This is the whole of what `shell.llm_proxy` does to user text since
+    2026-10-13, and the rehearsal must not hand the model a prefix production would
+    not have sent."""
+    return fix_name(text)
 
 
 def sentence_count(text: str) -> int:
-    """Spoken sentences. Stamps and bracketed asides go first; a non-empty reply with
+    """Spoken sentences. Bracketed asides go first; a non-empty reply with
     no terminal punctuation still counts as one, because it will still be spoken."""
-    body = STAMP_PREFIX_RE.sub("", text or "")
-    body = re.sub(r"\[[^\]]*\]", " ", body)
+    body = re.sub(r"\[[^\]]*\]", " ", text or "")
     return len([p for p in SENTENCE_END_RE.split(body) if p.strip()])
 
 
@@ -493,13 +489,18 @@ def wanted_clock(now: float) -> str:
     return f"{(lt.tm_hour % 12) or 12}:{lt.tm_min:02d} {'PM' if lt.tm_hour >= 12 else 'AM'}"
 
 
-def clock_verdict(turn: Turn, spoken: str, now: float) -> Verdict:
-    """Did he say the time it actually was? Covers the stamp path AND the tool path.
+def clock_verdict(turn: Turn, spoken: str, now: float, called: Sequence[str] = ()) -> Verdict:
+    """Did he say the time it actually was, and did he go and look for it?
 
     Compared on a 12-hour face, so 11:59 and 12:01 are 2 minutes apart; an explicit
     AM/PM must additionally land in the right half of the day, which is what makes a
     UTC answer ("3:41" at 23:41 EDT) fail on magnitude rather than sneak through as a
     12-hour ambiguity.
+
+    `called` is the tool path, and since 2026-10-13 it is the only path: the proxy puts
+    no time on a message and the prompt says so, so a stated clock that no `get_time`
+    produced is a guess however close it lands. Before the stamp went, this rule was
+    path-agnostic and a stale stamp could not be caught here at all.
     """
     want = wanted_clock(now)
     got = spoken_clock(spoken)
@@ -509,6 +510,14 @@ def clock_verdict(turn: Turn, spoken: str, now: float) -> Verdict:
     lt = time.localtime(now)
     wh, wm, pm = (lt.tm_hour % 12) or 12, lt.tm_min, lt.tm_hour >= 12
     said = f"{hour}:{minute:02d}{' ' + mer.upper() if mer else ''}"
+    if "get_time" not in called:
+        return Verdict(
+            "rule",
+            f"clock:{turn.key}",
+            False,
+            f"said {said} with no get_time call (the clock said {want}): nothing in the prompt "
+            "carries a clock any more, so an unverified time is a guess",
+        )
     delta = abs((hour * 60 + minute) - (wh * 60 + wm))
     delta = min(delta, 720 - delta)
     if delta * 60 > CLOCK_TOLERANCE_S:
@@ -572,7 +581,7 @@ def grade_turn(turn: Turn, call: Call, final_text: str | None, now: float | None
         )
     )
     if turn.state_time:
-        out.append(clock_verdict(turn, spoken, now if now is not None else time.time()))
+        out.append(clock_verdict(turn, spoken, now if now is not None else time.time(), called))
     return out
 
 
@@ -592,7 +601,7 @@ def render_transcript(turns: Iterable[tuple[Turn, Call, str | None]]) -> str:
     only prose, so a well-worded dodge cannot satisfy `gracious-host`."""
     lines: list[str] = []
     for turn, call, final in turns:
-        lines.append(f"Guest: {strip_stamp(prepare_user(turn.user))}")
+        lines.append(f"Guest: {prepare_user(turn.user)}")
         if call.tool_calls:
             lines.append("Reachy [called " + ", ".join(f"{n}({json.dumps(a)})" for n, a in call.tool_calls) + "]")
         spoken = " ".join(x for x in (call.text, final) if x and x.strip())

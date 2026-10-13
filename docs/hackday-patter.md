@@ -14,7 +14,8 @@ weekend: say "tonight", never "this afternoon". None of that is spoken, rule 2.
    two short spoken sentences" (`DEFAULT_INSTRUCTIONS`, shell/config.py).
 2. Never read a URL, a file path or a number out loud. Not a port, not a gigabyte, not a
    millisecond, not a model name with digits in it. He says "one machine in this room", never
-   the spec. Reading the date stamps aloud is already banned (`TIME_NOTE`, shell/config.py).
+   the spec. Every time or date he says comes from the `get_time` tool, never from a
+   guess — he has no clock in his prompt (`TIME_NOTE`, shell/config.py).
 
 Delivery notes, never spoken:
 

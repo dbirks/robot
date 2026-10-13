@@ -1,3 +1,22 @@
+"""What the proxy between s2s and llama.cpp may do to a request - and what it may not.
+
+Two rewrites, and nothing else: the mis-heard name in user text, and s2s's
+voice-channel wrapper on the system prompt. Everything else passes through byte for
+byte, which is what keeps llama.cpp's prompt-prefix cache hitting; the shape tests
+below are the guard on that claim.
+
+The per-message time stamp is gone (2026-10-13). It had two independent failures, both
+about the prefix itself: the model started working the stamps into its own spoken
+replies, and the cache behind them keyed on the message TEXT for the life of the proxy
+process, so a repeated line arrived wearing an OLD time (issue #45, measured 24.8 and
+41.5 minutes stale across session resets). `
+test_a_repeated_line_arrives_with_no_time_at_all` is the regression that keeps #45 from
+coming back as a "fixed" stamp.
+"""
+
+import json
+import re
+
 from shell.llm_proxy import fix_name, rewrite_body
 
 
@@ -31,51 +50,6 @@ def test_chat_completions_shape_and_string_input():
     assert body["messages"][0]["content"] == "Reachy!"
 
 
-def test_timestamps_are_stable_across_resent_history():
-    from shell.llm_proxy import Timestamper
-
-    clock = [1_800_000_000.0]
-    st = Timestamper(clock=lambda: clock[0])
-
-    def req(*texts):
-        body = {"input": [{"role": "user", "content": [{"type": "input_text", "text": t}]} for t in texts]}
-        return [i["content"][0]["text"] for i in rewrite_body(body, st)["input"]]
-
-    first = req("How bad is the economy?")
-    clock[0] += 2 * 3600  # two hours later
-    second = req("How bad is the economy?", "What do you think?")
-    assert second[0] == first[0]  # old turn keeps its original stamp
-    assert second[0].split("]")[0] != second[1].split("]")[0]  # new turn is stamped later
-    assert second[1].endswith("] What do you think?")
-
-
-def test_repeated_text_gets_its_own_time():
-    from shell.llm_proxy import Timestamper
-
-    clock = [1_800_000_000.0]
-    st = Timestamper(clock=lambda: clock[0])
-    a = st.stamp("Okay.", 0)
-    clock[0] += 3600
-    b = st.stamp("Okay.", 1)
-    assert a != b and st.stamp("Okay.", 0) == a
-
-
-def test_stamp_carries_the_full_date():
-    import re
-    import time
-
-    from shell.llm_proxy import STAMP_RE, Timestamper
-
-    t = time.mktime((2026, 10, 11, 11, 40, 0, 0, 0, -1))
-    s = Timestamper(clock=lambda: t).stamp("what year is it?", 0)
-    assert s == "[Sunday, October 11, 2026, 11:40 AM] what year is it?"
-    assert STAMP_RE.match(s) and STAMP_RE.match("[Mon 17:38] old-style")
-    assert STAMP_RE.match("[Sun 11 Oct 2026 11:40] previous-style")
-    assert not STAMP_RE.match("[laughs] hello")
-    assert Timestamper().stamp(s, 0) == s  # never double-stamped
-    assert re.search(r"2026", s)
-
-
 def test_s2s_voice_wrapper_is_stripped_to_our_instructions():
     wrapped = (
         "You are in a spoken conversation. The user speaks and hears you.\n"
@@ -98,68 +72,128 @@ def test_s2s_voice_wrapper_is_stripped_to_our_instructions():
     assert other["messages"][0]["content"] == "Summarize this."  # not the s2s wrapper: untouched
 
 
-# ------------------------------------------------------------------ stamp authority
-# The booth rehearsal (scripts/rehearse_booth.py, 2026-10-12) turned "What time is
-# it?" into a disagreement between shell/config.py TIME_NOTE ("the newest [stamp] is
-# ... the current time") and the get_time tool. These two tests are the evidence that
-# settled it: the stamp is a LOCAL clock reading, which is what makes it good for the
-# date, and it is cached per message TEXT, which is what disqualifies it as a clock.
+# ---------------------------------------------------------------- no time on a message
 
 
-def test_the_stamp_is_local_wall_time_and_never_an_iso_instant():
-    """The recorded bug (app/robot_tools.py get_time): "a bare UTC ISO string made the
-    model give tomorrow's date every evening after 20:00 EDT". The stamp must not
-    repeat it — local, spelled out, no ISO/Z/offset for the model to reinterpret.
+MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
+A_TIME_SHAPE = re.compile(rf"\d{{1,2}}:\d{{2}}|\b(?:AM|PM|UTC|GMT)\b|\b(?:{MONTHS})\b", re.IGNORECASE)
+
+
+def test_the_stamp_and_everything_it_needed_are_gone():
+    """Nothing named `stamp`/`Timestamper`/`format_stamp` survives on the live path.
+
+    Half of #45's fix is that there is no cache to go stale: the proxy keeps no state
+    per message at all, so a repeat cannot arrive wearing an old reading.
     """
-    import time
+    import shell.llm_proxy as proxy
 
-    from shell.llm_proxy import format_stamp
-
-    evening = time.mktime((2026, 10, 11, 21, 30, 0, 0, 0, -1))  # 9:30 PM local
-    stamp = format_stamp(evening)
-    lt = time.localtime(evening)
-    assert f"{lt.tm_year}" in stamp and time.strftime("%A", lt) in stamp and time.strftime("%B", lt) in stamp
-    assert " 9:30 PM]" in stamp  # 12-hour, unpadded hour, exactly what the note quotes
-    for utc_shape in ("T", "Z", "+00:00", "UTC", "GMT"):
-        assert utc_shape not in stamp
-    if time.timezone:  # any zone but UTC: the same instant must read local, not Zulu
-        gt = time.gmtime(evening)
-        assert time.strftime("%A %B %Y", lt) != time.strftime("%A %B %Y", gt) or gt.tm_hour == lt.tm_hour
-        assert f", {(gt.tm_hour % 12) or 12}:{gt.tm_min:02d} " not in stamp
+    for name in ("Timestamper", "format_stamp", "STAMP_RE", "_stamper"):
+        assert not hasattr(proxy, name), f"{name} is back: the proxy would stamp again"
+    with open(proxy.__file__, encoding="utf-8") as f:
+        src = f.read()
+    below_docstring = src.split('"""', 2)[2].lower()
+    assert "stamp" not in below_docstring, "code below the docstring still mentions stamping"
 
 
-def test_a_fresh_session_re_sends_a_repeated_line_with_its_old_stamp():
-    """The stamp is per message TEXT and survives every session reset, so the newest
-    stamp in a request is NOT guaranteed to be recent.
+def test_a_repeated_line_arrives_with_no_time_at_all():
+    """The behaviour #45 left behind.
 
-    `Timestamper` keys on text and hands occurrence k the k-th recorded time; the proxy
-    is its own long-lived process (deploy/systemd/reachy-llm-proxy.service) and
-    `ConversationMemory.on_wake` starts a FRESH s2s session (50 `realtime.session_reset`
-    rows in data/events.db), so the new session's first "What time is it?" is
-    occurrence 0 again — and comes back wearing the time of the old one. The journal
-    shows the identical-line precondition over and over: "hey richie." re-asked 24.8 and
-    41.5 minutes apart across resets (2026-10-11 14:19 -> 15:00).
-
-    This is pinned as a KNOWN LIMIT, not an aspiration: it is why shell/config.py
-    TIME_NOTE may tell him the date and the gap, but must never tell him a stamp is
-    "the current time" he is allowed to say out loud.
+    s2s re-sends the whole history on every request, and a fresh `realtime.session_reset`
+    starts at occurrence 0 again, which is what used to make the failure: the old
+    `Timestamper` handed a re-sent line the time recorded for its TEXT months-of-process
+    earlier, so the newest stamp in a request was not necessarily recent (journal:
+    "hey richie." re-asked verbatim 24.8 and 41.5 minutes apart across resets,
+    2026-10-11 14:19 -> 15:00). What remains, and what must stay true, is that the proxy
+    is a pure function of the request: the same text re-sent in a later session comes
+    back identical and carries no clock reading of any kind, stale or fresh.
     """
-    import time
+    first = {"input": [{"role": "user", "content": [{"type": "input_text", "text": "What time is it?"}]}]}
+    again = json.loads(json.dumps(first))  # a fresh session holding the same one line
 
-    from shell.llm_proxy import Timestamper
+    got = rewrite_body(first)["input"][0]["content"][0]["text"]
+    later = rewrite_body(again)["input"][0]["content"][0]["text"]
 
-    clock = [time.mktime((2026, 10, 11, 22, 0, 0, 0, 0, -1))]  # 10:00 PM local
-    st = Timestamper(clock=lambda: clock[0])
+    assert got == "What time is it?"  # not stamped, not paraphrased, not quoted
+    assert later == got  # and re-sending it changes nothing
+    assert not A_TIME_SHAPE.search(got), got
+    assert got.startswith("W") and "[" not in got  # no prefix at all, so nothing to read aloud
 
-    def request(*texts: str) -> list[str]:
-        body = {"input": [{"role": "user", "content": t} for t in texts]}
-        return [m["content"] for m in rewrite_body(body, st)["input"]]
 
-    asked = request("What time is it?")
-    clock[0] += 40 * 60  # 10:40 PM: the room went quiet, the session reset
-    after_reset = request("What time is it?")  # a FRESH session holds one occurrence
-    assert after_reset == asked  # same stamp, 40 minutes stale
-    assert " 10:00 PM]" in after_reset[0] and "10:40" not in after_reset[0]
-    # ... while inside one session the history grows, and the second ask is stamped fresh
-    in_session = request("What time is it?", "What time is it?")
-    assert " 10:40 PM]" in in_session[1]
+def test_no_message_in_the_history_can_carry_a_stale_reading():
+    """The multi-turn case: history grows, old turns re-send, and no line picks up a
+    time from anywhere. This is the property `TIME_NOTE` now relies on - the model has
+    no clock to be lied to about, so every time question has to reach the tool."""
+    body = {
+        "instructions": "You are Reachy.",
+        "input": [
+            {"role": "user", "content": "Hey Richie, are you awake?"},
+            {"role": "assistant", "content": "Barely."},
+            {"role": "user", "content": [{"type": "input_text", "text": "What time is it?"}]},
+            {"type": "function_call_output", "output": '{"date": "Monday, October 12, 2026", "time": "11:09 PM"}'},
+        ],
+    }
+    out = rewrite_body(body)
+    assert [i["role"] for i in out["input"][:3]] == ["user", "assistant", "user"]
+    assert out["input"][0]["content"] == "Hey Reachy, are you awake?"
+    assert out["input"][2]["content"][0]["text"] == "What time is it?"
+    # the tool result is the one place a time legitimately appears, and it is his to say
+    assert out["input"][3]["output"] == body["input"][3]["output"]
+
+
+# ------------------------------------------------------------------ byte stability
+
+
+def captured_body() -> dict:
+    """A request in the shape s2s actually sends (the keys `data/llm_last_request.json`
+    on the booth box carries, kept inline so CI never has to read a gitignored dump)."""
+    return {
+        "input": [
+            {
+                "type": "message",
+                "role": "system",
+                "content": [{"type": "input_text", "text": "You are Reachy, a small desk robot."}],
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Er Richie, can you go to sleep now?"}],
+            },
+            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Certainly."}]},
+            {"type": "function_call", "name": "go_to_sleep", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": '{"ok": true}'},
+        ],
+        "model": "qwen3.5-4b",
+        "reasoning": {"effort": "low"},
+        "stream": True,
+        "tools": [{"type": "function", "function": {"name": "go_to_sleep", "description": "d", "parameters": {}}}],
+    }
+
+
+def test_the_only_change_is_the_name_in_user_text():
+    """The contract the proxy is allowed to keep: same keys in the same order, same
+    values everywhere except user text. A stamp was a violation of exactly this."""
+    raw = captured_body()
+    out = rewrite_body(json.loads(json.dumps(raw)))
+
+    assert list(out) == list(raw)  # no key added, dropped, or reordered
+    assert out["model"] == raw["model"] and out["stream"] == raw["stream"] and out["tools"] == raw["tools"]
+    assert out["input"][0] == raw["input"][0]  # system text: unwrapped only, and it is not wrapped
+    assert out["input"][2:] == raw["input"][2:]  # assistant, tool call, tool result: untouched
+    assert out["input"][1]["content"][0]["text"] == "Er Reachy, can you go to sleep now?"
+    # every other user turn re-sends byte for byte, which is what the prefix cache needs
+    assert json.dumps(out["input"][1:]) == json.dumps(rewrite_body(json.loads(json.dumps(out)))["input"][1:])
+
+
+def test_a_request_body_is_stable_across_re_sends():
+    """Rewriting an already-rewritten request is a no-op: the prompt prefix for old
+    turns cannot drift between calls, which is the property the stamp used to be
+    carefully (and expensively) engineered to provide."""
+    once = rewrite_body(captured_body())
+    twice = rewrite_body(json.loads(json.dumps(once)))
+    assert json.dumps(once, sort_keys=False) == json.dumps(twice, sort_keys=False)
+
+
+def test_unwrap_system_leaves_other_system_prompts_alone():
+    from shell.llm_proxy import unwrap_system
+
+    assert unwrap_system("Summarize this.") == "Summarize this."

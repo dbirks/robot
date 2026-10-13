@@ -1,23 +1,19 @@
-"""The prompt/tool pair for "what time is it?" (2026-10-12 booth rehearsal).
+"""The prompt/tool pair for "what time is it?" (2026-10-12 booth rehearsal, closed
+2026-10-13 by taking the clock out of the prompt).
 
-Three things used to disagree in front of a crowd:
+What used to be wrong was a system prompt that disagreed with itself in front of a
+crowd: TIME_NOTE called the per-message stamp "the current time" and ended with
+"Never read the stamps aloud", while TOOLS_NOTE said to call a tool for the time.
+Qwen 3.5 4B resolved that by doing neither half — no `get_time` call, and "It is still
+late ... I have checked the time, and it remains as it was." (verbatim, 23:41 run of
+`scripts/rehearse_booth.py`): a time asserted, never verified.
 
-  * `shell/config.py` TIME_NOTE told the model the newest per-message stamp "is
-    today's date and the current time - use it",
-  * the same note ended with "Never read the stamps aloud",
-  * TOOLS_NOTE said to call a tool when the guest "asks for the time".
-
-Qwen 3.5 4B resolved that by doing neither half: no `get_time` call, and
-"It is still late ... I have checked the time, and it remains as it was." (verbatim in
-the 23:41 run of `scripts/rehearse_booth.py`) — a time asserted, never verified, and a
-save claim nobody could audit.
-
-The settled answer, proven in `tests/test_llm_proxy.py::
-test_a_fresh_session_re_sends_a_repeated_line_with_its_old_stamp`: a stamp is a LOCAL
-clock reading taken when the guest SPOKE and cached per message text for the life of
-the proxy process, so it can be minutes-to-hours stale and is authoritative for the
-DATE and the GAP only. The speakable time comes from `get_time`, which reads the same
-local clock at the moment he answers.
+The settled answer is a denial rather than a rule. `shell/llm_proxy.py` stamps nothing
+any more (the cache keyed on message TEXT could hand a re-sent line a stamp 24.8 / 41.5
+minutes old — issue #45 — and the model was reading them aloud), so the note can simply
+tell the truth: he has no clock, and a time or date question is a `get_time` call. The
+tests below pin the denial, the single path, and the fact that no prompt in the repo
+still claims a message carries a time.
 
 CI-safe: strings and pure functions only. No model, no network, no clock waits.
 """
@@ -39,23 +35,43 @@ from shell.config import (
 
 REPO = Path(__file__).resolve().parent.parent
 
-# The claim that started it: the stamp as "the current time". Re-adding it re-opens the
-# bluff, so the exact wording is pinned, not paraphrased.
-STAMP_IS_CLOCK_CLAIM = "and the current time - use it"
+# Wording that would re-open the contradiction, pinned exactly rather than paraphrased.
+# Each one either claimed a stamp was a clock, or referred to a stamp that no longer
+# exists anywhere in the stack.
+STAMP_CLAIMS: tuple[str, ...] = (
+    "Each user message begins",  # the old opening of TIME_NOTE
+    "and the current time - use it",  # the claim that started the bluff
+    "read off a stamp",
+    "Never read the stamps aloud",  # a rule about a feature that is gone
+)
 
 PROMPT_FILES = tuple(sorted((REPO / "envs").glob("*.yaml"))) + tuple(sorted((REPO / "personas").glob("*.yaml")))
 
 
-def test_the_stamp_is_not_called_the_current_time_anymore():
-    assert STAMP_IS_CLOCK_CLAIM not in TIME_NOTE
-    assert "is not the time now" in TIME_NOTE
+def test_the_note_says_plainly_that_he_has_no_clock():
+    assert "You have no clock" in TIME_NOTE
+    assert "nothing in what you are shown tells you" in TIME_NOTE
+    for claim in STAMP_CLAIMS:
+        assert claim not in TIME_NOTE
+        assert claim not in SHELL_NOTES
 
 
-def test_a_spoken_time_is_routed_to_the_tool():
-    """The half that makes the pair agree: the note names the tool, in the sentence
-    where it used to name the stamp."""
-    assert "never state a time you only read off a stamp" in TIME_NOTE
-    assert "When anyone asks the time, call get_time" in TIME_NOTE
+def test_the_note_never_names_the_removed_feature():
+    """`get_time` is now the only time word in the prompt; a note that still talked
+    about stamps would send him looking for something the proxy no longer sends."""
+    assert "stamp" not in TIME_NOTE.lower()
+    assert "message begins" not in TIME_NOTE.lower()
+
+
+def test_every_time_or_date_question_is_routed_to_the_tool():
+    """Not just "the time": with no stamp the model cannot see the DATE either, so the
+    note has to cover date and day as well or he guesses those, which is the very
+    failure the stamp was originally added for (2026-10-10/11: "October 14, 2023",
+    weather for "May 2025")."""
+    for asks in ("the time", "the date", "the day of the week", "how late it"):
+        assert asks in TIME_NOTE, asks
+    assert "calling get_time" in TIME_NOTE
+    assert "When anyone asks the time, call get_time" not in TIME_NOTE  # the stamp-era sentence
 
 
 def test_the_tool_result_is_repeated_verbatim_not_re_derived():
@@ -63,33 +79,35 @@ def test_the_tool_result_is_repeated_verbatim_not_re_derived():
     an instant re-derives a date, and every evening after 20:00 EDT it derived
     tomorrow's. get_time already answers in local `date`/`time` fields, so the note
     sends him to those words, not to arithmetic over an offset."""
-    assert "say the date and time it returns exactly as it" in TIME_NOTE
+    assert "saying the date and time it returns exactly as it returns them" in TIME_NOTE
+    assert "calling get_time" in TIME_NOTE  # and saying it, not re-doing it
     assert "already the local clock, read just now" in TIME_NOTE
-    for iso_shape in ("UTC", "iso", "timezone", "convert"):
+    for iso_shape in ("UTC", "iso", "timezone", "convert", "offset"):
         assert iso_shape not in TIME_NOTE  # nothing here invites him to read an offset
 
 
-def test_the_stamp_keeps_the_two_jobs_it_is_good_at():
-    """Date and freshness — the 2026-10-05 and 2026-10-10/11 fixes. Dropping either to
-    fix the time question would trade one recorded regression for another."""
-    assert "today's date" in TIME_NOTE and "never guess the date" in TIME_NOTE
-    assert "how long ago the guest spoke" in TIME_NOTE
-    assert "treat it as a fresh conversation" in TIME_NOTE  # the dangling-question fix
-    assert "Never read the stamps aloud." in TIME_NOTE  # unchanged: still not a script
+def test_guessing_is_closed_off_from_both_ends():
+    """The 4B may not invent a time, and may not recycle one from earlier in the
+    conversation - the shape #45 produced when a stale stamp made "still late" sound
+    defensible."""
+    assert "Never guess" in TIME_NOTE and "or a date" in TIME_NOTE
+    assert "already" in TIME_NOTE and "stale" in TIME_NOTE  # an earlier time is expired
+    assert "how long ago" not in TIME_NOTE  # no stamp, so no gap he could measure
 
 
-def test_the_note_still_asks_for_no_time_guessing_from_the_model_either():
-    """The contradiction had a second edge: 'use it' next to 'never read it aloud'. The
-    replacement must not read as permission to speak the stamp, nor as permission to
-    invent."""
-    assert "is how you know today's date" in TIME_NOTE  # scoped to the date, not the minute
-    assert "guess the time" not in TIME_NOTE  # the ban is the tool call, not a hedge
+def test_the_newest_message_is_still_the_one_he_answers():
+    """The dangling-question half (2026-10-05, a 40-minute-old question answered late)
+    survives as an instruction; the MEASURING half of it moved to the shell, which
+    compacts after `compact_after_s` and resets the session after `reset_after_s` of
+    silence (shell/conversation.py)."""
+    assert "Answer only the newest message" in TIME_NOTE
+    assert "do not bring back old, unanswered topics" in TIME_NOTE
 
 
 def test_tools_note_and_time_note_point_at_the_same_tool():
-    """TOOLS_NOTE keeps "asks for the time" in its list, now unambiguously: the
-    qualifier there is "you are unsure of", and TIME_NOTE is what tells him a stamp
-    never makes him sure of the minute. Both notes name the same tool."""
+    """TOOLS_NOTE keeps "asks for the time" in its list, now unambiguously: TIME_NOTE
+    is what tells him nothing in the transcript makes him sure of the minute. Both
+    notes name the same tool, once."""
     assert "asks for the time" in TOOLS_NOTE
     assert "get_time" in TIME_NOTE
     joined = persona_instructions(DEFAULT_INSTRUCTIONS)
@@ -97,7 +115,20 @@ def test_tools_note_and_time_note_point_at_the_same_tool():
     assert joined.endswith(SHELL_NOTES)  # appending still works byte for byte
 
 
-def test_a_booth_prompt_cannot_carry_a_baked_copy_of_the_old_claim():
+def test_the_tool_itself_is_worded_as_the_only_path():
+    """With no stamp there is nothing to compete with, so the description can say it:
+    one way to learn a time, and it is this call. Schema text only - the handler's
+    local rendering is pinned where it lives."""
+    tools = pytest.importorskip("app.robot_tools").TOOLS
+    got = {t["function"]["name"]: t["function"]["description"] for t in tools}
+    desc = got["get_time"]
+    assert "ONLY way to learn" in desc
+    assert "no clock" in desc
+    assert "the date" in desc and "day of the week" in desc
+    assert "stamp" not in desc.lower()  # no rule left pointing at the removed feature
+
+
+def test_no_prompt_in_the_repo_carries_a_baked_copy_of_the_stamp_claims():
     """The documented verify-then-paste flow (deploy/README.md) hands an operator the
     RESOLVED instructions, and an inline `instructions:` block in envs/<env>.yaml
     OUTRANKS the code default. A stale paste would keep the contradiction alive in the
@@ -106,10 +137,11 @@ def test_a_booth_prompt_cannot_carry_a_baked_copy_of_the_old_claim():
         pytest.skip("no envs/ or personas/ files in this checkout")
     for path in PROMPT_FILES:
         text = path.read_text(encoding="utf-8")
-        assert STAMP_IS_CLOCK_CLAIM not in text, f"{path.relative_to(REPO)} carries a stale prompt paste"
+        for claim in STAMP_CLAIMS:
+            assert claim not in text, f"{path.relative_to(REPO)} carries a stale prompt paste"
     env_file = REPO / ".env"
     if env_file.exists():  # gitignored, so this only bites on the deployment box
-        assert STAMP_IS_CLOCK_CLAIM not in env_file.read_text(encoding="utf-8")
+        assert not any(claim in env_file.read_text(encoding="utf-8") for claim in STAMP_CLAIMS)
 
 
 def test_the_booth_room_resolves_with_the_fixed_wording():
@@ -122,5 +154,6 @@ def test_the_booth_room_resolves_with_the_fixed_wording():
 
     instructions = load_config("hackday").instructions
     assert instructions_without_auto_learn(SHELL_NOTES)[-40:] in instructions
-    assert STAMP_IS_CLOCK_CLAIM not in instructions
-    assert "When anyone asks the time, call get_time" in instructions
+    assert "You have no clock" in instructions
+    assert "calling get_time" in instructions
+    assert "stamp" not in instructions.lower()  # the room cannot be told about a stamp

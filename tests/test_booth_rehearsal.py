@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -301,17 +302,32 @@ def test_the_name_check_is_case_and_punctuation_independent():
 
 
 def test_a_guest_line_arrives_the_way_the_booth_sends_it():
-    """shell/llm_proxy fixes the mis-heard name and stamps the time; the grader must
-    see through that wrapper, or every reply would read as a three-sentence ramble."""
-    prepared = rb.prepare_user("Richie, take a snapshot, please.", when=1_791_860_000.0)
-    assert prepared.startswith("[") and "Reachy" in prepared and "Richie" not in prepared
-    assert rb.strip_stamp(prepared) == "Reachy, take a snapshot, please."
+    """What production actually sends since 2026-10-13: the mis-heard name fixed, and
+    NOTHING else. The old version of this test asserted a `[date, time]` prefix, which
+    is precisely the behaviour we removed - a stamp cached per message TEXT can be
+    hours old (#45), and it was leaking into spoken replies (David, 2026-10-13)."""
+    prepared = rb.prepare_user("Richie, take a snapshot, please.")
+    assert prepared == "Reachy, take a snapshot, please."
     assert rb.sentence_count(prepared) == 1
     assert rb.shape_issues(prepared) == []
 
 
-def test_strip_stamp_leaves_a_plain_reply_alone():
-    assert rb.strip_stamp("It is ten fourteen at night.") == "It is ten fourteen at night."
+def test_no_timestamp_of_any_kind_reaches_the_model():
+    """The regression, stated as an invariant rather than a diff: if anybody re-adds a
+    stamp to the rehearsal path or to the proxy, this goes red before a guest hears
+    "It is 10:14 PM" quoted from a line they said forty minutes ago."""
+    for line in ("what time is it", "Hey Richie.", "is it still morning?"):
+        prepared = rb.prepare_user(line)
+        assert "[" not in prepared and "]" not in prepared, prepared
+        assert not re.search(r"\d{1,2}:\d{2}\s*(AM|PM)|\b(19|20)\d\d\b", prepared, re.I), prepared
+
+
+def test_a_reply_stating_a_time_is_graded_on_its_words_not_on_a_prefix():
+    """`strip_stamp` existed because the grader had to see through a stamp. There is no
+    stamp to see through now, so the clock rule reads the spoken span directly - and a
+    reply that quotes a time is graded like any other reply."""
+    assert rb.sentence_count("It is ten fourteen at night.") == 1
+    assert rb.sentence_count("Let me check. It is 10:14 PM on Monday.") == 2
 
 
 @pytest.mark.parametrize(
@@ -673,13 +689,18 @@ def test_the_clock_rule_grades_the_said_minute_against_the_wall_clock(text, pass
     assert "10:00 PM" in verdict.detail  # the true clock, on the pass line and the fail line
 
 
-def test_a_correct_time_from_the_stamp_passes_the_clock_rule_but_not_the_route_rule():
-    """The clock rule is path-agnostic on purpose (a stamp that happens to be current
-    is not a wrong answer); `routes:time` is what pins the verified path, so the two
-    together say "right number AND go look" without ever crediting a stale stamp."""
-    stamped = checks(rb.grade_turn(TIME_TURN, call("It is 10:00 PM."), None, now=TEN_TO_ELEVEN))
-    assert stamped["clock:time"] is True
-    assert stamped["routes:time"] is False
+def test_a_correct_time_the_model_did_not_look_up_fails_the_clock_rule():
+    """The 2026-10-13 bar, and the sharpest argument for removing the stamp: with no
+    clock in the prompt and no stamp on the message, a right time with no `get_time`
+    behind it is a lucky guess, so it does not pass. `routes:time` stays True - the
+    rules separate "he went and looked" from "the number happened to be right", which
+    is what lets one red line tell you WHICH half broke at the booth."""
+    lucky = checks(rb.grade_turn(TIME_TURN, call("It is 10:00 PM."), None, now=TEN_TO_ELEVEN))
+    assert lucky["clock:time"] is False
+    assert lucky["routes:time"] is False
+    # ... and the same words, with the call, pass both. The digits were never the problem.
+    looked = checks(rb.grade_turn(TIME_TURN, call("It is 10:00 PM.", [("get_time", {})]), None, now=TEN_TO_ELEVEN))
+    assert looked["clock:time"] is True and looked["routes:time"] is True
 
 
 def test_narration_and_answer_are_one_spoken_span_for_the_clock_rule():

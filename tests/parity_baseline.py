@@ -10,7 +10,9 @@ places disagrees with itself the first time a prompt changes *on purpose*: two f
 updated, one is missed, and the safety gate goes red on an unrelated night. One constant,
 three readers.
 
-2026-10-12: **1568 -> 1853**, deliberately.
+2026-10-13: **1853 -> 1765**, deliberately - the shared `TIME_NOTE` lost its stamp language
+when `shell/llm_proxy.py` stopped injecting a per-message timestamp (see below; #45). Earlier
+the same day: **1568 -> 1853**.
 
 The shared `TIME_NOTE` told the model that the stamp on the newest message "is today's
 date and the current time - use it". But `shell/llm_proxy.py`'s Timestamper caches the
@@ -25,4 +27,4 @@ The stale-stamp cache itself is a separate defect (it still misdates anything
 date-relative) and is deliberately NOT touched the night before a demo.
 """
 
-HOME_PROMPT_BYTES = 1853
+HOME_PROMPT_BYTES = 1765

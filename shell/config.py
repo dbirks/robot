@@ -28,44 +28,41 @@ DEFAULT_INSTRUCTIONS = (
     "and slightly charming."
 )
 
-# Appended to every persona. shell/llm_proxy.py stamps user messages with the
-# time they were said; without this the model can't use (or might read) them.
+# Appended to every persona. This is the whole story the model is told about time,
+# and it is a denial: he has no clock. Nothing in what he receives carries a time -
+# no per-message stamp since 2026-10-13, no date in the persona - so every question
+# about the time or the date has exactly one answer path, which is the tool.
 #
-# What a stamp is FOR, settled 2026-10-12 against the booth rehearsal. Until now
-# this note claimed the newest stamp is "the current time" while TOOLS_NOTE tells
-# him to call a tool when asked for the time - so the same system prompt both said
-# "the stamp is the clock" and "go check". Qwen 4B resolved the contradiction the
-# worst way (`scripts/rehearse_booth.py`, 23:41 run): no `get_time` call, and the
-# words "The clock indicates it is still late... I have checked the time, and it
-# remains as it was." A bluff, because this note also forbids reading the stamp
-# aloud, so the only time he was allowed to speak was the one he had not verified.
-#
-# The stamp is not a clock, and it cannot be one:
-#   - shell/llm_proxy.py `Timestamper` keys the stamp on the message TEXT and reuses
-#     the first-seen time for every re-send, so an identical line asked again after a
-#     session reset (50 of them in data/events.db) is stamped with the OLD time. In
-#     the journal, "hey richie." is re-used verbatim across resets 24.8 and 41.5 min
-#     apart (2026-10-11 14:19 -> 15:00), which is the parent's 22:00/22:40 case: he
-#     is not "picking the newest stamp", he is being handed a stale one.
-#   - The stamp is also only ever when the guest SPOKE, not when he answers (a
-#     tool-carrying turn ran 31.7 s behind its transcript, 2026-10-12 22:36:32).
-# So the stamp keeps the two jobs it is good at - which day it is, and how long ago
-# the last message was (2026-10-05: it answered a 40-minute-old dangling question)
-# - and the spoken time comes from get_time, the one source that reads the clock at
-# the moment he answers. Same local clock either way: `time.localtime` here vs
-# `datetime.now().astimezone()` in app/robot_tools.py:get_time, whose "bare UTC ISO
-# gave tomorrow's date every evening after 20:00 EDT" bug is why that tool spells
-# the local zone out - and why the note below says to repeat its fields verbatim
-# instead of letting a 4B re-derive a date from an offset it cannot see.
+# Why the stamp went, settled the night before the booth (two independent reasons):
+#   - David heard it live: the model started working the stamps into its own replies.
+#     A prefix on a transcript line is an artefact of our transport, not something a
+#     guest said, and `TIME_NOTE` had spent a clause ("Never read the stamps aloud.")
+#     trying to keep it out of the spoken half. That clause went with the feature.
+#   - issue #45: `shell/llm_proxy.py` cached one stamp per message TEXT inside a
+#     long-lived process, so an identical line re-asked after a `realtime.session_reset`
+#     arrived wearing the OLD time - "hey richie." re-used 24.8 and 41.5 minutes apart
+#     (2026-10-11 14:19 -> 15:00). A clock that can be hours stale is worse than none,
+#     and it was the reason "What time is it?" got answered without a tool call at all
+#     (`scripts/rehearse_booth.py`, 2026-10-12 23:41: "The clock indicates it is still
+#     late ... I have checked the time, and it remains as it was.").
+# What is lost with it, and where it went:
+#   - "which day is it" -> `get_time`, the same local clock read at answer time. Its
+#     result spells the local date and zone out (`app/robot_tools.py`:431) because a
+#     bare UTC ISO string made him give tomorrow's date every evening after 20:00 EDT,
+#     so the note below sends him to those words verbatim rather than to arithmetic
+#     over an offset a 4B cannot see.
+#   - "how long ago the guest spoke" (2026-10-05: a dangling question answered 40
+#     minutes late) -> the shell, which compacts after `compact_after_s` and starts a
+#     fresh s2s session after `reset_after_s` of silence (shell/conversation.py). That
+#     was always a timer's job; a stale cached string could not do it anyway.
 TIME_NOTE = (
-    " Each user message begins with the date and time it was said, like"
-    " [Sunday, October 11, 2026, 5:38 PM]; the newest one is how you know today's date and"
-    " how long ago the guest spoke, so never guess the date. A stamp is not the time now: it"
-    " can be minutes or hours old, so never state a time you only read off a stamp. When"
-    " anyone asks the time, call get_time and say the date and time it returns exactly as it"
-    " returns them - they are already the local clock, read just now. Never read the stamps"
-    " aloud. Answer only the newest message; if a lot of time has passed since the previous"
-    " one, treat it as a fresh conversation and do not bring back old, unanswered topics."
+    " You have no clock and you cannot see one: nothing in what you are shown tells you"
+    " what day or hour it is, and a time mentioned earlier in the conversation is already"
+    " stale. So any question about the time, the date, the day of the week, or how late it"
+    " is gets answered by calling get_time and saying the date and time it returns exactly"
+    " as it returns them - they are already the local clock, read just now. Never guess,"
+    " estimate or reason out a time or a date, and never repeat one as if it still held."
+    " Answer only the newest message; do not bring back old, unanswered topics."
 )
 
 # When to call tools. Granite 4.1 3B (2026-10-10/11) both over-calls (a bare
@@ -117,12 +114,31 @@ def instructions_without_auto_learn(text: str) -> str:
 SHELL_NOTES = TOOLS_NOTE + TIME_NOTE
 
 
+# The notes' opening words. `persona_instructions()` appends the notes last, so this is
+# the boundary. A constant with an assert below rather than a slice of TOOLS_NOTE, so a
+# rewording that moves the opening has to be noticed here.
+NOTES_SENTINEL = " Speak plain words:"
+assert TOOLS_NOTE.startswith(NOTES_SENTINEL), "NOTES_SENTINEL must be how TOOLS_NOTE opens"
+
+
 def without_shell_notes(persona: str) -> str:
-    """Undo persona_instructions(): drop a trailing SHELL_NOTES if one is there."""
-    text = persona.rstrip()
-    if text.endswith(SHELL_NOTES):
-        return text[: -len(SHELL_NOTES)].rstrip()
-    return text
+    """Undo persona_instructions(): drop the behaviour notes wherever they sit.
+
+    This used to compare against a trailing `SHELL_NOTES`, and that quietly broke the
+    day the notes became room-dependent: in a `learn_facts: false` room
+    `reconcile_learn_facts_prompt()` replaces the auto-learn sentence *inside*
+    TOOLS_NOTE, so the rendered prompt no longer ends with the literal constant, and the
+    documented verify-then-paste flow re-appended the entire contract a second time.
+    `scripts/check_env_safety.sh` check 7 caught it on 2026-10-13 - in hackday
+    specifically, which is the room we demo in.
+
+    Cutting at the first occurrence of the notes' opening words is idempotent for every
+    room variant, because the notes go last and always open the same way. A persona that
+    quotes that sentence verbatim loses its quote; the only way to get one there is to
+    paste `--print-env` output, which is exactly the case being defended.
+    """
+    cut = persona.find(NOTES_SENTINEL)
+    return (persona if cut < 0 else persona[:cut]).rstrip()
 
 
 def persona_instructions(persona: str) -> str:

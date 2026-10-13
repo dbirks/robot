@@ -10,15 +10,26 @@ streamed responses - passes through byte for byte.
 
     s2s --responses_api_base_url http://127.0.0.1:8081/v1 -> here -> llama :8080
 
-It also stamps each user message with the local time it was first seen
-("[Sunday, October 11, 2026, 5:38 PM] ..."), so the model can tell a fresh question from
-one asked hours ago (2026-10-05: it answered a 40-minute-old dangling
-question). The full date matters: with only "[Sun 11:40]" Granite said
-"October 14, 2023" and searched weather for "May 2025" (2026-10-10/11); with
-"[Sun 11 Oct 2026 11:47]" it once said "Sunday, November 11". Spelled out.
+Each user message used to arrive wearing the local time it was first seen
+("[Sunday, October 11, 2026, 5:38 PM] ..."). That prefix is gone (2026-10-13), for two
+independent reasons, both about this one string:
+  - the model started reading the stamps out inside its own replies, and a stamp is a
+    transcript artefact nobody asked to hear; and
+  - the cache behind it keyed on the message TEXT inside this long-lived process
+    (deploy/systemd/reachy-llm-proxy.service), so a line repeated after an s2s session
+    reset came back wearing the OLD time - 24.8 and 41.5 minutes stale in the journal
+    (issue #45). A stamp that can be hours old is not a clock.
+What the stamp was really for - stopping the 4B model guessing a date ("[Sun 11:40]"
+bought "October 14, 2023" and a weather search for "May 2025", 2026-10-10/11) - is now
+handled by the one source that reads the clock at the moment he answers: shell/config.py
+TIME_NOTE says he has no clock and routes every time and date question to `get_time`.
+The other job the stamp carried, "how long ago the guest spoke" (2026-10-05: a dangling
+question answered 40 minutes later), was never the model's to measure from a cached
+string; the shell starts a fresh session after `reset_after_s` of silence
+(shell/conversation.py).
 
-Both rewrites are deterministic per message, so llama.cpp's prompt-prefix
-cache still hits.
+Both rewrites here are deterministic per message, so llama.cpp's prompt-prefix cache
+still hits.
 """
 
 from __future__ import annotations
@@ -27,8 +38,6 @@ import json
 import logging
 import os
 import re
-import time
-from collections import OrderedDict
 
 import httpx
 from fastapi import FastAPI, Request
@@ -45,36 +54,6 @@ DUMP_PATH = os.getenv("LLM_PROXY_DUMP", "data/llm_last_request.json")
 
 def fix_name(text: str) -> str:
     return NAME_RE.sub("Reachy", text)
-
-
-STAMP_RE = re.compile(r"^\[(?:[A-Z][a-z]+,? )+[^\]]*\d{1,2}:\d{2}(?: [AP]M)?\] ")
-
-
-def format_stamp(t: float) -> str:
-    lt = time.localtime(t)
-    return time.strftime(f"[%A, %B {lt.tm_mday}, %Y, {(lt.tm_hour % 12) or 12}:%M %p] ", lt)
-
-
-class Timestamper:
-    """Remembers when each user message was first seen. s2s re-sends the whole
-    history every request, so the k-th occurrence of a given text keeps its
-    original time and the rendered prompt never changes for old turns."""
-
-    def __init__(self, clock=time.time, max_texts: int = 2000) -> None:
-        self.clock = clock
-        self.max_texts = max_texts
-        self._seen: OrderedDict[str, list[float]] = OrderedDict()
-
-    def stamp(self, text: str, occurrence: int) -> str:
-        if STAMP_RE.match(text):
-            return text
-        times = self._seen.setdefault(text, [])
-        self._seen.move_to_end(text)
-        while len(times) <= occurrence:
-            times.append(self.clock())
-        while len(self._seen) > self.max_texts:
-            self._seen.popitem(last=False)
-        return format_stamp(times[occurrence]) + text
 
 
 # s2s v1.0.0 wraps the session instructions in its own "voice channel" system
@@ -95,12 +74,15 @@ def unwrap_system(text: str) -> str:
     return m.group("session").strip() if m else text
 
 
-def rewrite_body(body: dict, stamper: Timestamper | None = None) -> dict:
-    """Fix the name in user-authored text of a Responses or Chat request,
-    (with a stamper) prefix each user message with when it was said, and
-    strip s2s's voice-channel wrapper from the system prompt."""
+def rewrite_body(body: dict) -> dict:
+    """Fix the name in user-authored text of a Responses or Chat request, and strip
+    s2s's voice-channel wrapper from the system prompt.
+
+    Nothing else in a request is touched - no time prefix, no added or reordered key -
+    so the prompt bytes the model sees stay byte-stable for llama.cpp's prefix cache
+    (proved against a captured live request in tests/test_llm_proxy.py).
+    """
     items = body.get("input")
-    counts: dict[str, int] = {}
     if isinstance(body.get("instructions"), str):
         body["instructions"] = unwrap_system(body["instructions"])
     if isinstance(items, str):
@@ -108,10 +90,10 @@ def rewrite_body(body: dict, stamper: Timestamper | None = None) -> dict:
     elif isinstance(items, list):
         for item in items:
             _unwrap_message(item)
-            _fix_message(item, stamper, counts)
+            _fix_message(item)
     for msg in body.get("messages") or []:  # chat-completions shape
         _unwrap_message(msg)
-        _fix_message(msg, stamper, counts)
+        _fix_message(msg)
     return body
 
 
@@ -127,31 +109,19 @@ def _unwrap_message(msg) -> None:
                 part["text"] = unwrap_system(part["text"])
 
 
-def _fix_message(msg, stamper: Timestamper | None = None, counts: dict | None = None) -> None:
+def _fix_message(msg) -> None:
     if not isinstance(msg, dict) or msg.get("role") != "user":
         return
     content = msg.get("content")
     if isinstance(content, str):
-        msg["content"] = _fix_text(content, stamper, counts)
+        msg["content"] = fix_name(content)
     elif isinstance(content, list):
-        stamped = False
         for part in content:
             if isinstance(part, dict) and isinstance(part.get("text"), str):
-                part["text"] = _fix_text(part["text"], None if stamped else stamper, counts)
-                stamped = True
-
-
-def _fix_text(text: str, stamper: Timestamper | None, counts: dict | None) -> str:
-    text = fix_name(text)
-    if stamper is None or counts is None:
-        return text
-    n = counts.get(text, 0)
-    counts[text] = n + 1
-    return stamper.stamp(text, n)
+                part["text"] = fix_name(part["text"])
 
 
 app = FastAPI()
-_stamper = Timestamper()
 _client = httpx.AsyncClient(base_url=UPSTREAM, timeout=httpx.Timeout(300.0, connect=5.0))
 _HOP = {"host", "content-length", "transfer-encoding", "connection", "accept-encoding"}
 
@@ -161,7 +131,7 @@ async def proxy(path: str, request: Request):
     raw = await request.body()
     if raw and request.headers.get("content-type", "").startswith("application/json"):
         try:
-            raw = json.dumps(rewrite_body(json.loads(raw), _stamper)).encode()
+            raw = json.dumps(rewrite_body(json.loads(raw))).encode()
             if DUMP_PATH:
                 with open(DUMP_PATH, "wb") as f:
                     f.write(raw)

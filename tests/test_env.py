@@ -863,3 +863,33 @@ def test_reconcile_is_a_noop_when_learning_is_on():
     cfg = ShellConfig(env="home")
     before = cfg.instructions
     assert reconcile_learn_facts_prompt(cfg).instructions == before
+
+
+def test_pasting_resolved_instructions_back_never_doubles_the_contract(tmp_path):
+    """The verify-then-paste flow is documented, so re-loading a rendered prompt must be
+    a fixed point for the behaviour notes - in a learn-off room too.
+
+    It stopped being one when `reconcile_learn_facts_prompt()` began substituting the
+    auto-learn sentence inside TOOLS_NOTE: the rendered text no longer ended with the
+    literal `SHELL_NOTES` that `without_shell_notes()` was matching, so the paste put
+    the whole contract in twice (caught by check_env_safety 7, 2026-10-13 - in hackday,
+    the demo room). A doubled TOOLS_NOTE is not cosmetic: the model gets two
+    contradicting accounts of when to call a tool.
+    """
+    for learn in (True, False):
+        envs = tmp_path / ("on" if learn else "off")
+        envs.mkdir()
+        (envs / "lab.yaml").write_text(
+            "persona:\n  instructions: You are a test robot.\n"
+            f"memory_namespace: lab-{learn}\nlearn_facts: {str(learn).lower()}\n"
+        )
+        printed = load_config("lab", envs_dir=envs).instructions
+        again_dir = tmp_path / f"again-{learn}"
+        again_dir.mkdir()
+        (again_dir / "lab.yaml").write_text(
+            f"persona:\n  instructions: {printed!r}\nmemory_namespace: lab-{learn}\nlearn_facts: {str(learn).lower()}\n"
+        )
+        again = load_config("lab", envs_dir=again_dir).instructions
+        assert again.count("Speak plain words") == 1, f"learn_facts={learn}: notes doubled"
+        assert again.count("You have no clock") == 1, f"learn_facts={learn}: clock note doubled"
+        assert "You are a test robot." in again, "the paste ate the persona"

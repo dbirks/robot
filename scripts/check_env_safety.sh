@@ -154,19 +154,26 @@ PY
 
 run "7. --print-env output is safe to paste back" <<PY
 $PRELUDE
-import json, subprocess, tempfile, pathlib, yaml
+import tempfile, pathlib, yaml
 from shell.env import load_config
+from shell.config import NOTES_SENTINEL
 
-out = subprocess.run([sys.executable, "-m", "shell", "--print-env"], capture_output=True, text=True, check=True)
-printed = json.loads(out.stdout)["instructions"]
-with tempfile.TemporaryDirectory() as td:
-    envs = pathlib.Path(td) / "envs"
-    envs.mkdir()
-    (envs / "lab.yaml").write_text(yaml.safe_dump({"persona": {"instructions": printed}}))
-    again = load_config("lab", envs_dir=envs).instructions
-assert again == printed, "pasting the printed instructions back changes them"
-assert again.count("Speak plain words") == 1, "TOOLS_NOTE appended twice"
-assert again.count("Each user message begins") == 1, "TIME_NOTE appended twice"
+# Pasting back must never double the behaviour contract, in ANY room. Byte-identity is
+# only required for home, whose defaults the bare lab file reproduces; a hackday prompt
+# legitimately differs from a default-lab re-render (it carries the event's room note and
+# a learn-facts line of its own). The old check asserted identity for whatever room the
+# operator happened to be in, which is how a real double-append sat in it for a day.
+for env in ("home", "hackday"):
+    printed = load_config(env).instructions
+    with tempfile.TemporaryDirectory() as td:
+        envs = pathlib.Path(td) / "envs"
+        envs.mkdir()
+        (envs / "lab.yaml").write_text(yaml.safe_dump({"persona": {"instructions": printed}}))
+        again = load_config("lab", envs_dir=envs).instructions
+    for marker in (NOTES_SENTINEL, "You have no clock"):
+        assert again.count(marker) == 1, f"{env} paste-back duplicated {marker!r}"
+    if env == "home":
+        assert again == printed, "pasting the printed home instructions back changes them"
 PY
 
 run "8. one source for the room (unit does not pin REACHY_ENV)" <<PY
