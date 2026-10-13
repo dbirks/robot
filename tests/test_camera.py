@@ -2,16 +2,22 @@
 
 `FakeGrabber` stands in for /dev/videoN: no device is opened here any more than
 the greeter opens one (ADR 0002 is about who touches the hardware, and the answer
-has to stay "one object").
+has to stay "one object"). `FakeCapture` goes one level deeper - it is the capture
+behind `CameraGrabber._open`, on a fake clock, so the warm-up deadline and its reason
+are the real ones while nothing sleeps and no node is touched.
 """
 
 from __future__ import annotations
 
+import sys
+import threading
 import time
 
+import pytest
 from conftest import RecJournal
 
-from shell.camera import CameraGrabber, CameraStream, daemon_holds_camera
+from shell import camera as camera_module
+from shell.camera import WARMUP_FRAMES, CameraGrabber, CameraStream, daemon_holds_camera, warmup_deadline_s
 
 
 class FakeGrabber:
@@ -210,3 +216,205 @@ def test_media_status_is_cached_behind_a_ttl_on_the_held_path(monkeypatch):
     assert len(calls) == 1
     assert not daemon_holds_camera(grabber._media_status())  # the one-shot path never caches
     assert len(calls) == 2
+
+
+# ---- the warm-up deadline: a silent device must not occupy a tool call ----
+
+
+class FakeClock:
+    """Time that only moves when the fake device says it did."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, s: float) -> None:
+        self.t += s
+
+
+class FakeCapture:
+    """The `cv2.VideoCapture` behind `CameraGrabber._open`.
+
+    `block_s` is charged to the shared clock per read, which is exactly what an
+    unpowered Reachy looks like from Python: the read comes back `(False, None)` only
+    after the kernel's V4L2 select() timeout. Nothing here sleeps, and nothing here
+    touches a node. `_device()` wires this capture to the grabber's clock, which is the
+    whole trick: the blocked read consumes the deadline it is then judged against.
+    """
+
+    def __init__(self, clock, *, block_s=0.0, frame_after=None, opened=True):
+        self.clock = clock
+        self.block_s = block_s
+        self.frame_after = frame_after  # None => the device never yields a frame
+        self.opened = opened
+        self.reads = 0
+        self.released = 0
+
+    def isOpened(self):
+        return self.opened
+
+    def set(self, _prop, _value):
+        pass
+
+    def read(self):
+        self.reads += 1
+        self.clock.advance(self.block_s)
+        if self.frame_after is not None and self.reads > self.frame_after:
+            return True, f"frame-{self.reads}"
+        return False, None
+
+    def release(self):
+        self.released += 1
+
+
+class FakeCv2:
+    CAP_V4L2 = 200
+    CAP_PROP_FRAME_WIDTH = 3
+    CAP_PROP_FRAME_HEIGHT = 4
+
+    def __init__(self, capture):
+        self.capture = capture
+        self.opens = 0
+
+    def VideoCapture(self, _index, _api):
+        self.opens += 1
+        return self.capture
+
+
+def _device(monkeypatch, capture, *, index=3, deadline=6.0, clock=None):
+    """A real `CameraGrabber` whose /dev/videoN is `capture`: the real warm-up loop and
+    the real reason string, with no cv2, no device and no sleeping."""
+    cv2 = FakeCv2(capture)
+    clock = clock or FakeClock()
+    capture.clock = clock  # the fake charges its blocked reads to the grabber's clock
+    monkeypatch.setitem(sys.modules, "cv2", cv2)
+    monkeypatch.setattr(camera_module, "find_reachy_camera", lambda *a, **k: index)
+    grabber = CameraGrabber("http://localhost:1", mode="auto", deadline_s=deadline, clock=clock)
+    monkeypatch.setattr(grabber, "_fetch_media_status", lambda: {"available": False})  # daemon not holding
+    return grabber, clock, cv2
+
+
+def test_the_warmup_stops_at_the_first_good_frame(monkeypatch):
+    cap = FakeCapture(FakeClock(), frame_after=2)
+    grabber, _clock, cv2 = _device(monkeypatch, cap)
+    assert grabber.grab() == "frame-3"
+    assert cap.reads == 3, "it kept reading after it had a usable frame"
+    assert cv2.opens == 1 and cap.released == 1  # one handle, released on the way out
+
+
+def test_a_silent_device_costs_one_blocked_read_not_five(monkeypatch):
+    """Tonight's ~50 s: 5 warm-up reads x the ~10 s V4L2 select() timeout, on a robot
+    with no power. The deadline cannot interrupt a read, only refuse the next one."""
+    cap = FakeCapture(FakeClock(), block_s=10.0)
+    grabber, _clock, _cv2 = _device(monkeypatch, cap)
+    with pytest.raises(RuntimeError) as e:
+        grabber.grab()
+    reason = str(e.value)
+    assert cap.reads == 1, f"the deadline did not stop the warm-up: {reason}"
+    assert reason.startswith("no frames from /dev/video3 in 10.0s (device opened; check the robot is powered")
+    assert "1 read(s)" in reason and "6.0s warm-up deadline" in reason, "the reason must say what it tried"
+    assert cap.released == 1
+
+
+def test_a_device_that_opens_and_says_nothing_quickly_uses_its_frame_budget(monkeypatch):
+    cap = FakeCapture(FakeClock())
+    grabber, _clock, _cv2 = _device(monkeypatch, cap)
+    with pytest.raises(RuntimeError) as e:
+        grabber.grab()
+    assert cap.reads == WARMUP_FRAMES  # no deadline pressure when the reads are cheap
+    assert "no frames from /dev/video3 in 0.0s (device opened; check the robot is powered" in str(e.value)
+
+
+def test_the_deadline_is_configurable_and_a_blank_override_does_not_crash(monkeypatch):
+    monkeypatch.setenv("REACHY_CAMERA_WARMUP_DEADLINE_S", "2")
+    assert CameraGrabber(mode="off").warmup_deadline_s == 2.0
+    monkeypatch.setenv("REACHY_CAMERA_WARMUP_DEADLINE_S", "")  # the float("") class of bug
+    assert CameraGrabber(mode="off").warmup_deadline_s == 6.0 == warmup_deadline_s()
+    monkeypatch.setenv("REACHY_CAMERA_WARMUP_DEADLINE_S", "0")  # 0 would never read a frame
+    assert CameraGrabber(mode="off").warmup_deadline_s == 6.0
+
+
+def test_the_held_path_pays_the_same_deadline_and_backs_off(monkeypatch):
+    cap = FakeCapture(FakeClock(), block_s=10.0)
+    grabber, clock, cv2 = _device(monkeypatch, cap)
+    with pytest.raises(RuntimeError) as e:
+        grabber.open_stream()
+    assert "check the robot is powered" in str(e.value) and cap.reads == 1
+    assert cv2.opens == 1 and cap.released == 1 and grabber._cap is None
+    with pytest.raises(RuntimeError, match="reopen backoff"):
+        grabber.open_stream()  # the greeter's next sample: a refusal, not another blocked read
+    assert cv2.opens == 1 and cap.reads == 1
+    clock.advance(CameraGrabber.REOPEN_BACKOFF_S)
+    with pytest.raises(RuntimeError):
+        grabber.open_stream()  # expired backoff: exactly one more bounded attempt
+    assert cap.reads == 2
+
+
+def test_a_stalled_sample_releases_the_handle_instead_of_spinning(monkeypatch):
+    cap = FakeCapture(FakeClock(), frame_after=0)  # a frame on every read
+    grabber, _clock, _cv2 = _device(monkeypatch, cap)
+    grabber.open_stream()
+    cap.block_s = 10.0  # the robot loses power mid-visit: the next sample blocks out
+    with pytest.raises(RuntimeError) as e:
+        grabber.read_stream()
+    assert str(e.value).startswith("late frame from /dev/video3 after 10.0s (device opened; check the robot is powered")
+    assert cap.released == 1 and grabber._cap is None
+    with pytest.raises(RuntimeError, match="reopen backoff"):
+        grabber.open_stream()
+
+
+def test_a_failed_sample_names_the_node_it_was_holding(monkeypatch):
+    cap = FakeCapture(FakeClock(), frame_after=0)
+    grabber, _clock, _cv2 = _device(monkeypatch, cap, index=1)
+    grabber.open_stream()
+    cap.frame_after = None  # quiet from here on, and quick about it
+    with pytest.raises(RuntimeError) as e:
+        grabber.read_stream()
+    assert "no frames from /dev/video1 in 0.0s" in str(e.value)
+
+
+def test_the_daemon_reclaiming_the_camera_does_not_wedge_the_handle(monkeypatch):
+    """`close_stream()` takes the lock, so calling it from inside a locked `read_stream()`
+    deadlocked the camera thread *holding the lock*: every later `grab()` then blocked on
+    it with no timeout at all. Same pile-up as tonight, one layer down."""
+    cap = FakeCapture(FakeClock(), frame_after=0)
+    grabber, _clock, _cv2 = _device(monkeypatch, cap)
+    grabber.open_stream()
+    monkeypatch.setattr(grabber, "_media_status", lambda **_kw: {"available": True, "released": False})
+    said = []
+
+    def sample():
+        try:
+            grabber.read_stream()
+        except RuntimeError as e:
+            said.append(str(e))
+
+    thread = threading.Thread(target=sample, daemon=True)
+    thread.start()
+    thread.join(0.5)
+    assert not thread.is_alive(), "read_stream deadlocked on its own lock"
+    assert said == ["Camera reclaimed by the robot daemon"]
+    assert grabber._cap is None and cap.released == 1
+    assert grabber._lock.acquire(timeout=0.2), "the camera lock is still held"
+    grabber._lock.release()
+
+
+def test_a_warmup_timeout_is_one_journal_row_with_a_reason_not_a_traceback_per_frame(monkeypatch):
+    """The greeter journals its decisions, so an unpowered robot has to read as one
+    row an operator can act on, then quiet."""
+    cap = FakeCapture(FakeClock(), block_s=10.0)
+    grabber, clock, _cv2 = _device(monkeypatch, cap)
+    journal = RecJournal()
+    stream = CameraStream(grabber, journal=journal, idle_fps=50.0)
+    for _ in range(6):
+        clock.advance(0.5)  # the poll's own cadence: far shorter than the 2 s backoff
+        assert stream._poll_once() is False
+    assert cap.reads == 2, f"six polls touched the device {cap.reads} times, not the two the backoff allows"
+    rows = journal.find("camera.disabled")
+    assert len(rows) == 1 and "check the robot is powered" in rows[0]["error"]
+    assert stream.latest() is None and stream.available is False
+    clock.advance(CameraGrabber.REOPEN_BACKOFF_S * 2)  # the doubled backoff expires
+    assert stream._poll_once() is False
+    assert cap.reads == 3 and len(journal.find("camera.disabled")) == 1  # retried, quietly

@@ -33,7 +33,18 @@ from . import journal as J
 # "failed" call was still running the whole time (asyncio.to_thread cannot be
 # cancelled), so every retry queued another capture behind it.
 TOOL_TIMEOUT_S = 12.0
+# The measured llama.cpp vision answer with STT/TTS resident (2026-10-12). Named, not
+# prose: the camera budget below is composed from it and a test checks the composition.
+VISION_ROUND_TRIP_S = 10.0
 CAMERA_TIMEOUT_S = 35.0
+# The 35 s is a ceiling for one camera tool end to end, and it is NOT what keeps a guest
+# waiting any more: the warm-up is bounded in wall-clock by shell/camera.py, so a dead
+# camera answers with a speakable reason after about one select timeout instead of eating
+# the budget five times over. What 35 s still buys is the measured cold open (2.7-3.0 s)
+# + one vision round trip + a retry queued behind one handle, and it is pinned against
+# shell.camera.warmup_worst_case_s() by tests/test_tool_timeouts.py: re-widen the warm-up
+# past what this covers and that test goes red. Lowering it to "absorb a hang" would only
+# make the limit fire on calls that were about to succeed, which is what 12 s did.
 # Every tool that reaches for the camera - pinned against the code by
 # tests/test_tool_timeouts.py, so a new _frame() caller cannot be left out.
 CAMERA_TOOLS = {"take_snapshot", "describe_scene", "identify_face", "learn_face"}

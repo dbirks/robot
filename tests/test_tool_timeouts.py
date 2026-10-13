@@ -12,8 +12,16 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from shell import camera as CAM
 from shell.realtime import client as C
-from shell.tools import CAMERA_TIMEOUT_S, CAMERA_TOOLS, TOOL_TIMEOUT_S, ToolRouter, tool_timeout
+from shell.tools import (
+    CAMERA_TIMEOUT_S,
+    CAMERA_TOOLS,
+    TOOL_TIMEOUT_S,
+    VISION_ROUND_TRIP_S,
+    ToolRouter,
+    tool_timeout,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -60,6 +68,38 @@ def test_camera_tools_get_the_measured_budget_and_everything_else_does_not():
     assert tool_timeout("get_time") == TOOL_TIMEOUT_S
     assert tool_timeout("web_search") == TOOL_TIMEOUT_S  # leaves the box; its own problem
     assert CAMERA_TIMEOUT_S > TOOL_TIMEOUT_S
+
+
+def test_the_camera_budget_covers_a_bounded_warmup_and_a_vision_round_trip():
+    """The budget and the warm-up are one contract: 35 s is the ceiling for the whole
+    call, so it has to clear the worst the device can cost (the deadline plus one
+    uninterruptible V4L2 select timeout) plus one measured vision round trip. It does
+    not have to absorb a 5 x select() warm-up any more, which is what made the old 12 s
+    limit look too small; re-widening the warm-up past this goes red here, not at the
+    booth."""
+    worst_device = CAM.warmup_worst_case_s()
+    assert worst_device == CAM.warmup_deadline_s() + CAM.V4L2_SELECT_TIMEOUT_S
+    assert CAMERA_TIMEOUT_S >= worst_device + VISION_ROUND_TRIP_S, (
+        f"camera tools can cost {worst_device + VISION_ROUND_TRIP_S:.1f}s, the budget is {CAMERA_TIMEOUT_S}s"
+    )
+    # Margin for jitter, NOT a budgeted retry. The original version of this assertion
+    # demanded room for a second vision round trip, which is the thinking that produced
+    # tonight's 54-second snapshot: budgeting for a retry designs the pile-in, because
+    # the "timed out" call is still holding the camera while the retry queues behind it
+    # (asyncio.to_thread is not cancellable). The anti-retry protection is the timeout
+    # message ("still running, do not call it again", client.py TIMEOUT_MESSAGE) and the
+    # bounded warm-up, not a bigger number.
+    assert CAMERA_TIMEOUT_S - worst_device - VISION_ROUND_TRIP_S >= 5.0, (
+        f"only {CAMERA_TIMEOUT_S - worst_device - VISION_ROUND_TRIP_S:.1f}s of slack for jitter; raise the "
+        "budget or shrink the warm-up - but do not raise it to fit a second attempt"
+    )
+
+
+def test_the_deadline_is_the_bound_now_not_the_tool_timeout():
+    """The number that protects the guest is the warm-up deadline, and it has to be
+    small enough that the answer arrives while the question is still relevant."""
+    assert CAM.WARMUP_DEADLINE_S <= TOOL_TIMEOUT_S
+    assert CAM.warmup_worst_case_s() < CAMERA_TIMEOUT_S, "a dead camera must fail inside the budget, not at it"
 
 
 def test_the_router_owns_the_number_not_the_transport():
