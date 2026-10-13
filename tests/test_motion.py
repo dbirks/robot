@@ -87,11 +87,14 @@ def run(m, clock, seconds, hz=50):
 def test_pose_matrix_matches_sdk_convention():
     from reachy_mini.utils import create_head_pose
 
-    args = dict(x=0.01, y=-0.02, z=0.005, roll=7.0, pitch=-12.0, yaw=33.0)
-    ours = pose_matrix(pose6(**args))
-    sdk = create_head_pose(**args, degrees=True)
+    # spelled out rather than `**args`: spreading a `dict[str, float]` binds against the
+    # keyword-only `degrees: bool` too, which is the only reason these calls did not type
+    # check. Same six numbers, same pose.
+    x, y, z, roll, pitch, yaw = 0.01, -0.02, 0.005, 7.0, -12.0, 33.0
+    ours = pose_matrix(pose6(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw))
+    sdk = create_head_pose(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, degrees=True)
     assert np.allclose(ours, sdk, atol=1e-9)
-    assert np.allclose(pose6_from_matrix(sdk), pose6(**args), atol=1e-9)
+    assert np.allclose(pose6_from_matrix(sdk), pose6(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw), atol=1e-9)
 
 
 def test_spring_converges_without_overshoot():

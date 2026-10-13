@@ -17,7 +17,7 @@ pytest.importorskip("reachy_mini")
 
 from shell.camera import CameraGrabber, daemon_holds_camera, find_reachy_camera
 from shell.robot import RobotLink
-from shell.robot_tools import build_handlers, make_vision_handlers
+from shell.robot_tools import _Faces, _guard, build_handlers, make_vision_handlers
 
 
 class Boom:
@@ -52,6 +52,42 @@ def test_motion_tools_say_not_connected(no_daemon, tmp_path):
         assert name in handlers
 
 
+def test_guard_holds_for_a_callable_without_a_name():
+    """The never-raise boundary must not be the thing that raises (issue #44).
+
+    `_guard` used to read `fn.__name__` twice outside the wrapper it installs:
+    once to stamp `wrapped.__name__`, which raises while the handler table is
+    being BUILT, and once inside its own `except` block, which raises from the
+    one place a raise escapes the contract in AGENTS.md (tools never raise,
+    always return a JSON-serializable dict). Not reachable from the handlers in
+    shell/robot_tools.py today - every `_guard` there decorates a nested `def` -
+    but `_guard` is the module's only safety net and any injected callable can
+    reach it: functools.partial and callable class instances have no `__name__`.
+    """
+    import functools
+
+    def boom(scale, **_kw):
+        raise RuntimeError(f"tool exploded x{scale}")
+
+    partial = functools.partial(boom, 2)
+    assert not hasattr(partial, "__name__"), "the point of the test: nameless"
+    guarded = _guard(partial)  # used to raise AttributeError here
+    assert guarded() == {"ok": False, "error": "tool exploded x2"}  # ...and here
+
+
+def test_guard_keeps_the_wrapped_name_for_named_handlers():
+    """The stamp above is what makes a warning line name the tool that failed."""
+
+    def look_left(**_kw):
+        return {"ok": True, "action": "look_left"}
+
+    guarded = _guard(look_left)
+    # getattr, not `guarded.__name__`: `_guard` is declared to return a plain
+    # `Callable[..., dict]`, which does not promise a name (that is the same
+    # typing artefact that made the old code un-checkable at robot_tools.py:37)
+    assert getattr(guarded, "__name__", None) == "look_left"
+
+
 class FakeCamera:
     def __init__(self, frame):
         self.frame = frame
@@ -64,8 +100,18 @@ class FakeCamera:
         return self.frame
 
 
-class FakeFaces:
+class FakeFaces(_Faces):
+    """Stand-in for the lazy InsightFace wrapper.
+
+    A `_Faces` subclass rather than an unrelated duck-type: `make_vision_handlers`
+    declares `faces: _Faces | None` and reads only `.get()`, and the honest way to
+    satisfy that signature is for the fake to be one (issue #44 - fixing the fake,
+    not widening the parameter type). `_Faces.__init__` loads nothing; InsightFace
+    is still never imported here.
+    """
+
     def __init__(self, found):
+        super().__init__()
         self.found = found
         self.known_faces = {}
         self.saved = 0

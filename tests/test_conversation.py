@@ -185,11 +185,15 @@ def test_compaction_mines_new_turns_for_facts_once():
         mem.add("assistant", "Nice.")
         clock[0] += 200
         mem.tick(engaged=False)
-        await mem._task
+        first = mem._task
+        assert first is not None, "tick() did not schedule a compaction"
+        await first
         mem.add("assistant", "Anything else?")  # no new user speech: nothing to mine
         clock[0] += 200
         mem.tick(engaged=False)
-        await mem._task
+        second = mem._task
+        assert second is not None, "the second tick() did not schedule a compaction"
+        await second
 
     run(go)
     assert saved == ["The user's wife is named Rachel."] and calls == [2]

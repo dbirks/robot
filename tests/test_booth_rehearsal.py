@@ -26,9 +26,11 @@ import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+# scripts/ is not a package: this insert is what makes the import below real at
+# runtime, and the only reason ty cannot resolve it (hence its ignore, same line).
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import rehearse_booth as rb  # noqa: E402
+import rehearse_booth as rb  # ty: ignore[unresolved-import]  # noqa: E402
 
 from shell.config import LEARN_FACTS_NOTE  # noqa: E402
 from shell.env import load_config  # noqa: E402

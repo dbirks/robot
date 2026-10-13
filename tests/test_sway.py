@@ -102,7 +102,9 @@ def test_owner_applies_sway_offsets():
     clock = [10.0]
     m = MotionOwner(None, clock=lambda: clock[0], rng=random.Random(0), sway=Stub())
     clock[0] += 0.02
-    assert math.degrees(m.tick().pose[5]) == pytest.approx(4, abs=0.01)
+    cmd = m.tick()  # `tick()` is `Command | None` - None only while asleep, and this owner is awake
+    assert cmd is not None
+    assert math.degrees(cmd.pose[5]) == pytest.approx(4, abs=0.01)
 
 
 def test_listening_state_times_out():

@@ -632,12 +632,23 @@ class MotionOwner:
             pose=start.copy(),
         )
 
-    def _step_animation(self, dt: float, base: np.ndarray):
-        if self._anim is None:
+    def _step_animation(
+        self, dt: float, base: np.ndarray
+    ) -> tuple[float, np.ndarray, tuple[float, float] | None, float | None]:
+        st = self._anim
+        if st is None:
             if not self._anims:
                 return 0.0, base, None, None
             self._start_next(base)
-        st = self._anim
+            # `_start_next` populates `_anim` whenever `_anims` was non-empty, which the
+            # branch above already proved - but ty cannot see that through the call, and
+            # re-reading `self._anim` would hand back the wide `_AnimState | None` again.
+            # Keep the state in a local; the None fallthrough returns the same "no
+            # animation this tick" result as the empty-queue path (all `_anim` writes take
+            # `self._lock`, which `tick()` already holds, so it stays unreachable).
+            st = self._anim
+            if st is None:
+                return 0.0, base, None, None
         a = st.anim
         if st.phase == "blend_in":
             st.t += dt
@@ -685,7 +696,10 @@ class MotionOwner:
             st.pose = p0 + s * (np.asarray(kf.pose) - p0)
             if kf.antennas is not None:
                 a0 = a0 if a0 is not None else (st.ant or st.start_ant)
-                st.ant = tuple((1.0 - s) * a0[i] + s * kf.antennas[i] for i in range(2))
+                # spelled out (not a generator) so the arity matches the `ant` field
+                # type `tuple[float, float] | None`; the values are the same two
+                # linear interpolations the generator produced.
+                st.ant = ((1.0 - s) * a0[0] + s * kf.antennas[0], (1.0 - s) * a0[1] + s * kf.antennas[1])
             if kf.body_yaw is not None:
                 st.body = (1.0 - s) * b0 + s * kf.body_yaw
             return t >= 1.0

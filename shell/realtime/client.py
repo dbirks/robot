@@ -140,8 +140,12 @@ class RealtimeClient:
         self._tool_batches: dict[str, _ToolBatch] = {}
 
     def _instructions(self) -> str:
-        # a callable is re-read per session (e.g. to include new memories)
-        return self.instructions() if callable(self.instructions) else self.instructions
+        # a callable is re-read per session (e.g. to include new memories).
+        # isinstance rather than callable(): ty has no callable() narrowing, and
+        # the attribute is a closed `str | Callable[[], str]` union anyway.
+        if isinstance(self.instructions, str):
+            return self.instructions
+        return self.instructions()
 
     @property
     def response_origin(self) -> str:

@@ -30,14 +30,22 @@ NOT_CONNECTED = {"ok": False, "error": "Robot not connected"}
 
 
 def _guard(fn: Callable[..., dict]) -> Callable[..., dict]:
+    # The name is resolved once, here, and never read inside `wrapped`:
+    # `functools.partial` and callable class instances have no __name__, and
+    # reading it in the `except` block would raise from the one place where a
+    # raise escapes the never-raise contract, while reading it to stamp the
+    # wrapper raises before the wrapper exists at all.
+    name = getattr(fn, "__name__", None)
+    label = name if isinstance(name, str) else repr(fn)
+
     def wrapped(**kwargs: Any) -> dict:
         try:
             return fn(**kwargs)
         except Exception as e:  # the never-raise contract, enforced once
-            log.warning("tool %s failed: %r", fn.__name__, e)
+            log.warning("tool %s failed: %r", label, e)
             return {"ok": False, "error": str(e)}
 
-    wrapped.__name__ = fn.__name__
+    wrapped.__name__ = label
     return wrapped
 
 

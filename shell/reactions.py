@@ -63,14 +63,15 @@ class WakeReaction:
             return
         delay = self._rng.uniform(*self.delay_range_s)
         self.cancel()
-        if self._loop is not None:
+        loop = self._loop  # bound before the closure: `arm` runs on the loop thread
+        if loop is not None:
             # wake() runs on the mic thread; call_later is not thread-safe
             # (the timer could fire late), so arm it on the loop.
             def arm() -> None:
                 self.cancel()
-                self._timer = self._loop.call_later(delay, self._fire)
+                self._timer = loop.call_later(delay, self._fire)
 
-            self._loop.call_soon_threadsafe(arm)
+            loop.call_soon_threadsafe(arm)
         else:
             import threading
 

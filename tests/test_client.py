@@ -92,9 +92,14 @@ def test_tool_followup_keeps_the_origin_that_asked_for_it(journal, speaker):
     batch = _ToolBatch(c._epoch, c.response_origin)
 
     async def scenario():
-        # built inside the loop: a Future created outside one has no loop to bind to
-        done = asyncio.get_running_loop().create_future()
-        done.set_result(("call_1", {"ok": True}, True))  # a tool that wants a follow-up
+        # built inside the loop: a task created outside one has no loop to bind to
+        async def tool_result() -> tuple[str, dict, bool]:
+            return "call_1", {"ok": True}, True  # a tool that wants a follow-up
+
+        # a real Task, the way the client builds a batch (client.py:441) - a bare
+        # Future is not a Task and lies about the batch's element type
+        done = asyncio.get_running_loop().create_task(tool_result())
+        await done
         batch.tasks.append(done)
         batch.done.set()
         before = [m["type"] for m in c._ws.sent].count("response.create")

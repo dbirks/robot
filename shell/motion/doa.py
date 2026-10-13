@@ -99,7 +99,9 @@ class AimGate:
         self.last_yaw: float | None = None
 
     def allows(self, now: float, yaw_deg: float) -> bool:
-        if self.last_t is None:
+        # mark() writes the pair together, so a stamp with no yaw means no aim yet
+        # (and `last_yaw` is `float | None`, so it must not reach the subtraction).
+        if self.last_t is None or self.last_yaw is None:
             return True
         return now - self.last_t >= self.min_interval_s and abs(yaw_deg - self.last_yaw) > self.min_change_deg
 

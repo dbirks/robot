@@ -23,9 +23,11 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
+# scripts/ is not a package: this insert is what makes the import below real at
+# runtime, and the only reason ty cannot resolve it (hence its ignore, same line).
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import bench_aec as ba  # noqa: E402
+import bench_aec as ba  # ty: ignore[unresolved-import]  # noqa: E402
 
 E = 1_791_857_600.0  # an arbitrary epoch; only deltas matter
 
