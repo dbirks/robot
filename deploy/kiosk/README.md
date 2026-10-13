@@ -127,3 +127,49 @@ those scripts and by nothing else — `docs/knobs.md` §2.)
 
 Persona switching in the UI and the system-prompt / tool-list views are #38, and
 they sit on top of the `envs/` + `personas/` layer from #34.
+
+---
+
+## What actually took an hour, 2026-10-13 ~19:25 (it is working now)
+
+Verified without eyes: an `ffmpeg -f x11grab` grab of `:0` measures **80.6% `#f5f0eb`** and
+**18.6% `#f4f0d4`**, which are `body{background-color}` and the `butter` swatch in
+`dashboard/templates/base.html:38,25` — our page, not a chromium error, not the `xsetroot` grey.
+
+Six layers deep, and every earlier finding was true but not the blocker:
+
+1. The autologin fragment defeated itself: `-o '-p -- \u'` (copied from the Arch wiki) *replaces* the
+   `-f <user>` that `--autologin` supplies, so `login` got no username. `NRestarts=47` with
+   `Result=success` — getty's 60 s timeout is a *clean* exit, which is why nothing looked broken.
+2. A **user**-scope unit can never own the VT (`Xorg.wrap: Only console users are allowed`).
+3. `%h` in a **system** unit is `/root`, not `User=david`'s home — `startx` was handed a client file
+   that does not exist. X never spawned, so no log existed, and `systemd-analyze verify` stayed
+   silent because verify checks directive spelling and never opens an ExecStart path.
+4. `/usr/lib/Xorg` could not load `libnettle.so.9`.
+5. X then ran and the NVIDIA driver loaded — and the *client* died, so xinit closed a healthy server
+   with exit 0. That is what an 11-restart `Restart=always` loop actually was.
+6. Chromium wanted `GLIBC_2.44` and `libleancrypto.so.1.9`; the box had `2.43` and leancrypto `1.7.2`.
+
+**Root cause of 4 and 6 is one sentence:** 33 packages went in today from a fresh database onto an
+April base. The installer declined `-Syu` to protect a mid-demo machine, and the machine was already
+half-migrated — so the conservative act produced a binary that cannot load. "Don't upgrade during the
+demo" is only safe on a box that was coherent to begin with.
+
+**Why it took an hour rather than a minute:** the only component that knew the answer — xinit — printed
+to `/dev/tty` because `StandardInput=tty`, and this box has **no keyboard**; `/dev/vcs1` is `root:tty
+0660`, so the console could not be read remotely either. Fixed in two places: the unit no longer passes
+`-keeptty`/`-logfile /dev/null`, so X writes `~/.local/share/xorg/Xorg.0.log`; and
+`scripts/preflight_demo.sh` now runs `ldd` on `/usr/lib/Xorg` and `/usr/lib/chromium/chromium` and
+FAILS when either cannot resolve its libraries. That check costs 40 ms and would have named the bug at
+18:00. It is also the reason `allowed_users=anybody` is now provisioned by the installer rather than
+assumed: on this box `pam_systemd` never registers a tty1 session for a system service, so the
+console-owner check is unsatisfiable and the failure looks exactly like a config typo.
+
+The fix was **two packages**, `glibc` and `leancrypto` — not the 338-package `-Syu` reached for first.
+`-Su <pkg>` means "upgrade the world plus this one", which is how you rebuild a kernel and the NVIDIA
+DKMS module an hour before doors; `-S <pkg>` is the surgical form, and moving glibc *forward* is the
+one upgrade direction that removes ABI mismatches instead of creating them.
+
+**Still open:** the base is still a partial upgrade — 338 packages behind, and a full sync needs
+`--ignore cuda --ignore cudnn` because repo `cudnn` now requires `cuda>=13` while ADR 0004 pins that
+line. Do it when the box is not demoing.

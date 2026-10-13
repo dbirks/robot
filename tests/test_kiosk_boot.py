@@ -190,7 +190,14 @@ def test_the_kiosk_is_installed_in_system_scope_and_unlinked_from_user_scope():
         "ExecStart path must be substituted against $REPO, or a different $HOME ships /root again"
     )
     assert 'run sudo cp "$KIOSK_STAGED"' in installer, "install the substituted copy, not the source"
-    assert "'rm -f \"$KIOSK_STAGED\"'" in installer, "clean the staged temp up"
+    # Both staged temps, or the one added for the Xwrapper policy leaks into /tmp on every
+    # install run. Pinning the pair, not the original single-file string, so extending the
+    # cleanup is allowed and forgetting to extend it is not.
+    assert 'rm -f "$KIOSK_STAGED" "$XWRAP_TMP"' in installer, "clean up BOTH staged temp files"
+    assert "printf 'allowed_users=anybody" in installer, (
+        "the Xwrapper policy must be provisioned: without it the console-owner check can "
+        "never pass on this box and the kiosk cannot draw at all"
+    )
     assert "systemctl mask getty@tty1.service" in installer, "two readers cannot own one tty"
     assert 'rm -f "$REPO_DIR/$KIOSK_UNIT.service"' in installer, "the user-scope link has to go"
     assert 'ln -sfn "$REPO/deploy/kiosk/$KIOSK_UNIT.service"' not in installer, (
