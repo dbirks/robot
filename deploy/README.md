@@ -24,6 +24,37 @@ Services, in startup order:
 Phase 2 (issue #22) will fold the legacy `reachy-agent` / `qwen3-tts` units
 away and teach the dashboard about these names.
 
+## Before the doors open
+
+```bash
+scripts/preflight_demo.sh                     # 13 checks: audio route, resolved room,
+                                              # safety gate, suite, model files on disk,
+                                              # egress for web_search, disk, booth memory
+                                              # freshness. Exit nonzero = do not start.
+DEMO_ENV=hackday scripts/preflight_demo.sh    # also fails if the room did not take
+```
+
+Ordered by how much each failure hurts: the PipeWire route first, because if playback
+is not landing on the Reachy card the XVF3800 gets no echo reference and nothing about
+barge-in works (issue #40, ADR 0005).
+
+The echo bench is a separate, ten-minute, hands-on test - it needs the robot playing
+sound and the shell stopped so nothing else owns the mic:
+
+```bash
+systemctl --user stop reachy-shell
+.venv/bin/python scripts/bench_aec.py --person --out data/bench-aec.json
+systemctl --user start reachy-shell
+```
+
+It answers the one question that decides #40: when he is talking, is a person still
+audible in the capture? >=~50% of their silent-room level means the problem is our
+thresholds and policy; <=~10% means the chip's double-talk suppression is eating them
+and no amount of gate-widening will help. Record it either way.
+
+`docs/booth-card.md` is the printable one-pager for the table: who he is, the wake
+word, what runs locally versus what does not, and what to do when he stops responding.
+
 ## Changing rooms (`REACHY_ENV`)
 
 `reachy-shell` runs a deployment environment: `envs/home.yaml` (the desk) or
