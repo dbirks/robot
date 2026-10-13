@@ -299,9 +299,21 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_two_journal_writes_are_two_segments(tmp_path):
-    """The regression is the restart: seed two synthetic processes in one file."""
+    """The regression is the restart: seed two synthetic processes in one file.
+
+    The first write is deliberately delayed *after* its Journal is constructed, because
+    `mono` is `time.monotonic() - self._t0` per instance (shell/journal.py:115,137):
+    the previous version slept no one, so instance one's rows carried ~4 microseconds
+    and instance two's carried ~5, which reads as a *rising* clock - one segment - and
+    the test passed only when the first write happened to be slower than the second's.
+    It failed under `uvx` in CI and passed in the repo venv, which is a race wearing a
+    docstring. A long-running shell grows `mono` into the thousands before it restarts,
+    and a 50 ms delay reproduces that relationship with four orders of magnitude of
+    margin instead of a coin flip.
+    """
     db = tmp_path / "events.db"
     first = Journal(db)
+    time.sleep(0.05)  # the process lives a while before it writes anything
     first.write(jr.TURN_TRANSCRIPT_FINAL, text="hello there")
     first.closed()
     second = Journal(db)  # a new process, so a new clock: mono starts near zero again
@@ -314,7 +326,8 @@ def test_two_journal_writes_are_two_segments(tmp_path):
         segments = jr.split_segments(events)
         traces = jr.build_traces(events)
 
-    assert len(segments) == 2, [e["mono"] for e in events]
+    assert [len(s) for s in segments] == [1, 2], [e["mono"] for e in events]
+    assert segments[0][0]["mono"] > segments[1][0]["mono"], "a restart must land on a smaller mono"
     assert len(traces) == 1
     turn = traces[0]
     assert turn["segment"] == 0

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -266,10 +267,26 @@ def test_build_panel_uses_the_injected_reader_for_facts(tmp_path: Path):
     assert seen == [str(tmp_path / "memories.hackday.json")]
 
 
-def test_the_panel_asks_the_shells_own_interpreter_not_the_dashboards():
-    # dashboard/.venv has neither numpy nor pyyaml; `sys.executable` there cannot
-    # import shell.config, so the panel would report an empty environment.
-    assert env_interpreter() == str(ROOT / ".venv" / "bin" / "python")
+def test_the_panel_asks_the_shells_own_interpreter_not_the_dashboards(tmp_path):
+    """The dashboard's own venv has neither numpy nor pyyaml, so `sys.executable`
+    there cannot import shell.config and the panel would report an empty room.
+
+    Written against a fabricated repo root on purpose: the previous version read this
+    machine's `.venv`, so it asserted the existence of a directory that only the robot
+    box has, and CI - which has no repo `.venv` - reported the function's correct
+    fallback as a failure. The contract is "the shell's venv when there is one, this
+    process when there is not", and both halves are checkable anywhere."""
+    fake = tmp_path / ".venv" / "bin"
+    fake.mkdir(parents=True)
+    (fake / "python").write_text("")
+    assert ep.interpreter(tmp_path) == str(fake / "python")
+
+    nowhere = tmp_path / "no-install"
+    nowhere.mkdir()
+    assert ep.interpreter(nowhere) == sys.executable
+
+    if (ROOT / ".venv" / "bin" / "python").exists():  # the robot box
+        assert env_interpreter() == str(ROOT / ".venv" / "bin" / "python")
 
 
 def env_interpreter() -> str:
