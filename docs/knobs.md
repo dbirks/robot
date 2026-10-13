@@ -8,7 +8,7 @@ no code reads it, and nothing will ever warn you. That is how an hour dies at a 
 Verify any row in one command — hardware-free, opens no audio, connects to no robot:
 
 ```bash
-REACHY_ENV=hackday .venv/bin/python -m shell --print-env | grep -E '"(env|attention_profile|tools_include|tools_exclude|memory_namespace|memories_path|learn_facts|auto_sleep_s|greeter|motion_hz|xmos_agc_max_gain)"'
+REACHY_ENV=hackday .venv/bin/python -m shell --print-env | grep -E '"(env|attention_profile|tools_include|tools_exclude|memory_namespace|memories_path|learn_facts|auto_sleep_s|greeter|greeter_face_centering|motion_hz|xmos_agc_max_gain)"'
 ```
 
 Precedence, lowest to highest: **code default → `envs/<env>.yaml` → process
@@ -33,7 +33,7 @@ file key that fills the same field when the process variable is unset or empty.
 | Name | Read by | Effect | home | hackday |
 |---|---|---|---|---|
 | `REACHY_ENV` | `shell/config.py` `REACHY_ENV_VAR` + `shell/env.py` `resolve_env_name()` | picks `envs/<name>.yaml`; **never** settable from the file itself | unset → `home` | `hackday` (`.env`) |
-| `REACHY_INSTRUCTIONS` | `shell/config.py` `instructions` | whole system prompt (`persona_instructions()` appends `TOOLS_NOTE`+`TIME_NOTE`) | `envs/home.yaml` `persona.instructions` | `envs/hackday.yaml:51` |
+| `REACHY_INSTRUCTIONS` | `shell/config.py` `instructions` | whole system prompt (`persona_instructions()` appends `TOOLS_NOTE`+`TIME_NOTE`) | `envs/home.yaml` `persona.instructions` (inline, and it still outranks `personas/obama.yaml` — the A2 byte-exact bar) | `personas/obama.yaml` `instructions`, via `persona.name: obama`; **no inline block** since 2026-10-13 (owner decision, David Birks: "make it really Obama... we're doing that on purpose"), so the persona file is the only source of the booth's words |
 | `REACHY_PROFILE` | `shell/config.py` `attention_profile` | attention profile name, `shell/attention/profiles.py` | `quiet` | `event` |
 | `REACHY_TOOLS_INCLUDE` | `shell/config.py` `tools_include` | comma list; empty = every tool the shell knows (21) | unset | unset |
 | `REACHY_TOOLS_EXCLUDE` | `shell/config.py` `tools_exclude` | comma list; always wins over include | unset | `go_to_sleep, reset_conversation, identify_face, learn_face, forget_face` → 16 tools |
@@ -49,7 +49,7 @@ file key that fills the same field when the process variable is unset or empty.
 | `REACHY_GREETER_GROUP_MIN_SPACING_S` | `shell/config.py` `greeter_group_min_spacing_s` (file key `behaviour.greeter_group_cooldown_s`) | group-notice spacing | 300 | 300 |
 | `REACHY_GREETER_IDLE_FPS` | `shell/config.py` `greeter_idle_fps` | detector poll on an empty room | 2 | 2 |
 | `REACHY_GREETER_ENGAGED_FPS` | `shell/config.py` `greeter_engaged_fps` | detector poll while a face is in frame | 3 | 3 |
-| `REACHY_GREETER_FACE_CENTERING` | `shell/config.py` `greeter_face_centering`; consumed in `shell/__main__.py` (`face_centering=cfg.greeter_face_centering`) → `GreeterLimits.face_centering` | head-centring on a qualified face, through `MotionOwner` | **false** | **false** |
+| `REACHY_GREETER_FACE_CENTERING` | `shell/config.py` `greeter_face_centering`; consumed in `shell/__main__.py` (`face_centering=cfg.greeter_face_centering`) → `GreeterLimits.face_centering` | head-centring on a qualified face, through `MotionOwner` | **false** (code default; the file does not set `behaviour.greeter_face_centering`) | **true** — `envs/hackday.yaml` `behaviour.greeter_face_centering: true`, lock-on live at the booth (David, 2026-10-13). `tests/test_env.py` pins the two rooms apart, so a flipped default here goes red rather than silent |
 | `REACHY_AUTO_SLEEP_S` | `shell/config.py` `auto_sleep_s`; consumer `shell/sleep.py` (`AutoSleep`) | lie down after N s of silence with nobody engaged; 0 = never | 0 | 0 |
 | `REACHY_MIC` / `REACHY_SPEAKER` | `shell/config.py` `mic_device`, `speaker_device` | audio device select; the only legal owner is `shell/audio/` (ADR 0002) | system default | system default |
 | `REACHY_XMOS_AGC_MAX_GAIN` | `shell/config.py` `xmos_agc_max_gain` (`shell/audio/xmos_tuning.py`) | AGC ceiling; 0 turns AGC off (ADR 0005) | 10 | 6 |
@@ -58,7 +58,7 @@ file key that fills the same field when the process variable is unset or empty.
 | `REACHY_COMPACT_AFTER_S` / `REACHY_RESET_AFTER_S` | `shell/config.py` `compact_after_s`, `reset_after_s` (used by `shell/conversation.py`) | summary compaction / fresh-session timers | 180 / 300 | 180 / 300 |
 | `REACHY_MAX_TURN_S` | `shell/config.py` `max_turn_s` (also named in `scripts/run_s2s.sh:51`) | shell force-ends a longer turn by feeding silence | 15 | 15 |
 | `REACHY_ACK_DIR` | `shell/config.py` `ack_dir` | `<dir>/wake/*.wav`, `<dir>/think/*.wav` | `sounds/acks/obama` | `sounds/acks/obama` |
-| `REACHY_PERSONA` | `shell/env.py` `PERSONA_VAR` / `persona_selection()` | names `personas/<name>.yaml`; outranks `persona.name:` in the file. Stamped by `deploy/generated/persona.env`, **never** with `REACHY_INSTRUCTIONS` | `obama` | `marvin` |
+| `REACHY_PERSONA` | `shell/env.py` `PERSONA_VAR` / `persona_selection()` | names `personas/<name>.yaml`; outranks `persona.name:` in the file. Stamped by `deploy/generated/persona.env`, **never** with `REACHY_INSTRUCTIONS` | `obama` | `obama` (was `marvin` until 2026-10-13; the room's file names it, and a stamped `persona.env` with `REACHY_PERSONA=marvin` still outranks the file and moves the booth back to the Marvin words in the same Obama voice) |
 | `S2S_URL` | `shell/config.py` `s2s_url` | realtime websocket | `ws://127.0.0.1:8765/v1/realtime` | same |
 | `LLM_BASE_URL` / `LLM_MODEL` | `shell/config.py` `llm_base_url`, `llm_model` | side-channel llama.cpp (compaction); `LLM_MODEL` is also the s2s `--model_name` (`scripts/run_s2s.sh:136`) | `.env` | `.env` |
 | `DATA_DIR` | `shell/config.py` `data_dir` | moves `events.db` and `memories.*.json` | `data` | `data` |
@@ -192,7 +192,7 @@ Called out rather than quietly deleted — each one was copied by somebody at so
 | `REACHY_DAEMON_URL` as a shell knob | `scripts/booth_recovery.sh:40` | real, but only for that script; `shell/camera.py:86` hardcodes `http://localhost:8000` |
 | `greeter_quiet_minutes` | `docs/environments.md` schema-v1 sketch | **not read by the loader** (unknown keys are ignored on purpose); the shipped global limiter is `behaviour.greeter_cooldown_s` |
 | `memory.namespace` → `faces.<ns>.json` | `docs/environments.md:46` | memories only; per-env faces is B1 and is why `hackday` drops the face tools |
-| `REACHY_HEADER_FACE_CENTERING` | quoted in review as a doc'd knob | **never existed**; the real name is `REACHY_GREETER_FACE_CENTERING` (`shell/config.py` `greeter_face_centering`). Verified absent from the whole tree and from `git grep HEAD`. |
+| `REACHY_HEADER_FACE_CENTERING` | quoted in review as a doc'd knob | **never existed**; the real name is `REACHY_GREETER_FACE_CENTERING` (`shell/config.py` `greeter_face_centering`). Verified absent from the whole tree and from `git grep HEAD`. Nothing warns you when a name does not exist, so a drop-in carrying this misspelling is inert forever; the tell is positive. With the real name set, the `greeter head-centring off` line (`shell/__main__.py`, greeter assembly) stops appearing in the shell log — which is exactly what an operator on 2026-10-13 saw after setting `REACHY_GREETER_FACE_CENTERING=1` in `reachy-shell.service.d/20-greet-lock.conf`. |
 | `vision` device env-file keys, `audio.device` | nowhere | do not invent them: use `REACHY_MIC` / `REACHY_SPEAKER` |
 
 Anything added to `shell/env.py` `LAYERS` or `shell/config.py` must gain a row here in the

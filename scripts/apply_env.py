@@ -23,6 +23,12 @@ persona wins over a stray `.env` voice line. That ordering was measured on this 
 `EnvironmentFile=` after `Environment=`, and a later file beats an earlier one, key by
 key, while keys only the earlier file sets survive.
 
+What this script also checks: that the units on this box will read what it writes.
+`deploy/README.md:8` copies `deploy/systemd/*.service` into `~/.config/systemd/user/` by
+hand and nothing re-runs that copy, so an installed unit can predate the `persona.env`
+line entirely - the render then changes the room's acks but never its talker, and the
+panel still reports a successful apply. `voice_routing_gaps()` says so out loud.
+
 What this script never writes: `REACHY_INSTRUCTIONS`. It is one global file read in
 both rooms, so a stamped prompt would put the home persona — family assistant, full
 tool list — onto the booth the moment someone forgot to move the room back
@@ -52,6 +58,48 @@ import persona_panel  # noqa: E402  (stdlib-only pure core, shared with the dash
 from shell import env as shell_env  # noqa: E402
 
 PINS_PATH = REPO_ROOT / "docs" / "pins.yaml"
+
+# The directory systemd actually reads from (deploy/README.md:8, a manual `cp`). Read-only
+# here: this script never writes or rewrites a unit, it only reports what it found.
+UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
+UNITS = ("reachy-s2s", "reachy-shell")
+# Matched on the path tail, because the units spell the home directory as %h.
+PERSONA_ENV_TOKEN = "dev/robot/deploy/generated/persona.env"
+ENV_FILE_TOKEN = "dev/robot/.env"
+
+
+def voice_routing_gaps(out: Path, unit_dir: Path | None = None) -> list[str]:
+    """Why a rendered `persona.env` may never reach the process that reads a voice flag.
+
+    `shell/env.py` LAYERS has no `persona.voice.*` key, so this file is the only route from
+    a persona to the Qwen3 talker, speaker and style line. A unit that does not list it -
+    or lists it before `.env`, which inverts the measured precedence - silently reduces the
+    picker to an ack picker, which is the one user-visible promise the panel makes.
+    """
+    directory = UNIT_DIR if unit_dir is None else unit_dir
+    gaps: list[str] = []
+    for unit in UNITS:
+        path = directory / f"{unit}.service"
+        if not path.is_file():
+            continue  # not installed on this box (CI, a fresh machine): nothing to claim
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        if PERSONA_ENV_TOKEN not in text:
+            gaps.append(
+                f"{path} never loads {out}, so the voice it renders reaches no service: "
+                f"applying a persona here changes acks only, NOT the talker. Re-copy the "
+                f"reference unit (cp deploy/systemd/{unit}.service {path}; systemctl --user "
+                "daemon-reload), then restart - deploy/README.md:8."
+            )
+        elif ENV_FILE_TOKEN in text and text.index(PERSONA_ENV_TOKEN) < text.index(ENV_FILE_TOKEN):
+            gaps.append(
+                f"{path} loads persona.env before .env, inverting the measured order: a stray "
+                f"S2S_QWEN3_* line in .env outranks this persona (deploy/systemd/{unit}.service "
+                "has it the other way round)."
+            )
+    return gaps
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -150,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
             f"outranks personas/{name}.yaml, so the picker changes the voice and the acks, "
             "NOT the words. Delete that block to hand the words to the persona file."
         )
+    for gap in voice_routing_gaps(out):
+        warn(gap)
     for item in problems:
         warn(item)
     if problems and args.strict:

@@ -42,8 +42,9 @@ He answers whoever is talking to him, and deliberately ignores the rest of the r
 
 - Your speech is transcribed on this machine by NVIDIA Parakeet. Nothing is uploaded.
 - He answers with a local Qwen 3.5 4B model running on this machine's GPU.
-- He speaks with a locally generated voice. **His voice is synthetic**, and his manner
-  is a written persona, not a person.
+- He speaks with a locally generated voice: an **impression of President Obama** — a voice
+  model trained on this machine, plus a written persona. The voice is synthetic, the manner
+  is written down, and he is neither of them. He'll tell you so himself.
 - **One exception:** if you ask him something current — weather, news, facts he isn't
   sure about — he runs a web search, which leaves the machine and comes back.
 - He does not recognise faces at this event. If he asks you to "remember my face",

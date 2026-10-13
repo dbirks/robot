@@ -45,6 +45,7 @@ import os, sys
 # measuring the desk it ran on, not the code (2026-10-12 review F-2).
 import shell.config  # noqa: F401
 for _k in ("REACHY_ENV", "REACHY_INSTRUCTIONS", "REACHY_ACK_DIR", "REACHY_PROFILE",
+           "REACHY_PERSONA",
            "REACHY_TOOLS_INCLUDE", "REACHY_TOOLS_EXCLUDE", "REACHY_MEMORY_NAMESPACE",
            "REACHY_LEARN_FACTS", "REACHY_XMOS_AGC_MAX_GAIN", "REACHY_MOTION_HZ"):
     os.environ.pop(_k, None)
@@ -77,13 +78,41 @@ PY
 run "2. an empty process env var does not outrank the env file" <<PY
 $PRELUDE
 os.environ["REACHY_ENV"] = "hackday"
-os.environ["REACHY_INSTRUCTIONS"] = ""      # review repro: deletes the attendee-safe persona
+os.environ["REACHY_INSTRUCTIONS"] = ""      # review repro: deletes the room's persona outright
 os.environ["REACHY_TOOLS_EXCLUDE"] = "  "   # review repro: re-advertises go_to_sleep
 os.environ["REACHY_MOTION_HZ"] = ""         # blank used to crash float("")
-from shell.env import load_config
+from shell.config import LEARN_FACTS_NOTE, persona_instructions
+from shell.env import (
+    instructions_without_auto_learn,
+    load_config,
+    load_env_doc,
+    load_persona_doc,
+    persona_selection,
+)
 
+# 2026-10-13, David Birks (owner, at the Hack Day booth): "make it really Obama... remove
+# that line that says deliberately naming no real person. We're doing that on purpose... you
+# update all three gates with my name." The gate is updated with his name rather than
+# quietly deleted, and the sentence it used to assert ("never mention anyone's family") went
+# with the inline Marvin block it belonged to - it was that block's wording, not a rule the
+# shell enforces. The failure this check exists for is unchanged: a blank override must not
+# swap the room's words for the code default. For a room that borrows a real person, the
+# invariant says what is still true of those words, and the two halves that protect an
+# ATTENDEE rather than the famous person are in it: he calls himself a machine and not the
+# man, and nothing in the prompt invites saving a guest's family, home, health, politics or
+# employer without being asked.
 cfg = load_config("hackday")
-assert "never mention anyone's family" in cfg.instructions, "attendee-safe persona deleted"
+named, _ = persona_selection(load_env_doc("hackday"))
+assert named == "obama", "the room no longer names the owner's persona: %r" % named
+words = persona_instructions(str(load_persona_doc(named)["instructions"]))
+assert cfg.instructions == instructions_without_auto_learn(words), (
+    "the booth persona was replaced (a blank REACHY_INSTRUCTIONS got through, or the picker "
+    "fell back to someone else's words)"
+)
+assert "You are still Reachy the robot, not actually Obama" in cfg.instructions, (
+    "the impression stopped disclosing itself: a booth recording must not hear a claim to be the man"
+)
+assert LEARN_FACTS_NOTE not in cfg.instructions, "the booth is told to save facts nobody asked for"
 assert "go_to_sleep" in cfg.tools_exclude, "go_to_sleep advertised in the booth again"
 assert cfg.attention_profile == "event", cfg.attention_profile
 PY
@@ -130,6 +159,10 @@ from shell.env import load_config
 from shell.memories import MEMORY_TOOLS
 from app.robot_tools import TOOLS
 
+# PRIVATE = the people and places private to THIS DESK, not a ban on public figures. Since
+# 2026-10-13 the booth persona names President Obama by owner decision (David Birks: "make it
+# really Obama... we're doing that on purpose"), so this scan is about attendee and family
+# data reaching a stranger's screen; the one-public-figure rule is tests/test_booth_rehearsal.py.
 PRIVATE = ["david", "rachel", "barney", "sarah", "forrest", "timmy", "mccordsville", "46055", "wife"]
 sent = {"fact prompt": FACT_PROMPT, "summary prompt": SUMMARY_PROMPT, "schemas": json.dumps(TOOLS + MEMORY_TOOLS)}
 for env in ("home", "hackday"):

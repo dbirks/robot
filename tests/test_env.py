@@ -75,7 +75,12 @@ PRIVATE_WORDS = [
 # Every variable shell/env.py treats as an override when it is present. On a dev box
 # with a .env, shell/config.py's load_dotenv() has already put these in os.environ,
 # so tests that mean to exercise the file have to clear them first.
-OVERRIDE_VARS = ["REACHY_ENV"] + [layer.env_var for layer in LAYERS if layer.env_var]
+# REACHY_PERSONA is not a LAYERS entry (shell/env.py `persona_selection` reads it
+# directly, and it arrives from deploy/generated/persona.env), but it outranks the room's
+# own `persona.name:` the same way. It has to be cleared here since 2026-10-13: the booth
+# resolves its WORDS from the persona file its room names (owner decision, David Birks),
+# so a stale stamped picker would make these tests measure the desk instead of the file.
+OVERRIDE_VARS = ["REACHY_ENV", "REACHY_PERSONA"] + [layer.env_var for layer in LAYERS if layer.env_var]
 
 
 @pytest.fixture
@@ -200,7 +205,12 @@ def test_an_empty_process_env_var_is_no_opinion(tmp_path, clean_env, monkeypatch
     monkeypatch.setenv("REACHY_PROFILE", "")  # blank used to resolve "" -> KeyError
 
     cfg = load_config("hackday", envs_dir=ENVS_DIR)
-    assert "never mention anyone's family" in cfg.instructions  # the persona survived
+    # The persona survived: the booth still speaks the words personas/obama.yaml supplies,
+    # not DEFAULT_INSTRUCTIONS. Reworded 2026-10-13 with the owner's decision (David
+    # Birks, "make it really Obama... we're doing that on purpose"), which retired the
+    # old attendee sentence here - that line lived in the deleted inline Marvin block.
+    assert "in the style of President Barack Obama" in cfg.instructions  # the persona survived
+    assert "not actually Obama" in cfg.instructions  # and still says he is a machine
     assert cfg.instructions.endswith(expected_tail(cfg)) and cfg.instructions.count("Speak plain words") == 1
     assert cfg.tools_exclude == [
         "go_to_sleep",
@@ -253,7 +263,12 @@ def test_greeter_is_on_in_the_booth_and_off_at_home(clean_env):
     assert day.greeter_dwell_s == 2.0  # David's call: about two seconds of looking
     assert day.greeter_min_spacing_s == 120.0 and day.greeter_group_min_spacing_s == 300.0
     assert day.greeter_max_per_hour == 6
-    assert day.greeter_face_centering is False  # the deferred head hook (bench pass)
+    # 2026-10-13, David's call at the booth: head lock-on is live in hackday
+    # (`behaviour.greeter_face_centering: true`), so the expectation moved with the file -
+    # it is still the code default off at home, where an empty room must not be turned
+    # into a target. docs/knobs.md `REACHY_GREETER_FACE_CENTERING` is the table.
+    assert day.greeter_face_centering is True
+    assert load_config("home", envs_dir=ENVS_DIR).greeter_face_centering is False
 
 
 def test_greeter_flags_still_outrank_the_env_file(clean_env, monkeypatch):
@@ -327,11 +342,22 @@ def test_home_parity_is_the_whole_resolved_config(clean_env, monkeypatch):
 
 
 def test_hackday_persona_carries_no_home_facts(clean_env):
+    """The booth prompt may name one public figure, by owner decision (David Birks,
+    2026-10-13: "make it really Obama... we're doing that on purpose"), and it may still
+    name nothing private to this desk. Before that decision this test also demanded the
+    event's own name and the inline block's "never mention anyone's family" sentence; both
+    were wording inside personas/marvin.yaml, which the room no longer resolves. What
+    protects an attendee now is behaviour plus the excludes: no unprompted fact mining in
+    the prompt or the miner, and his own memory store.
+    """
     cfg = load_config("hackday", envs_dir=ENVS_DIR)
+    from shell.config import LEARN_FACTS_NOTE
+
     lowered = cfg.instructions.lower()
     for private in PRIVATE_WORDS:
         assert private not in lowered
-    assert "hack day" in lowered and "never mention anyone's family" in lowered
+    assert "president barack obama" in lowered  # the one public figure, named on purpose
+    assert LEARN_FACTS_NOTE not in cfg.instructions  # no standing invitation to record a guest
     assert cfg.attention_profile == "event"
     assert cfg.memory_namespace == "hackday"
     # the notes every persona gets, whatever the room (docs/environments.md schema v1)
@@ -814,10 +840,16 @@ behaviour:
 
 
 def test_both_shipped_rooms_keep_the_greeter_defaults(clean_env):
+    """The detector rates are the code defaults in both rooms; head-centring is not -
+    it ships ON in the booth and OFF at home as of 2026-10-13 (David's call, lock-on live
+    at the booth). Split rather than looped, because a shared expectation is exactly how
+    one room's deliberate difference gets averaged away.
+    """
     for name in ("home", "hackday"):
         cfg = load_config(name, envs_dir=ENVS_DIR)
         assert cfg.greeter_idle_fps == 2.0 and cfg.greeter_engaged_fps == 3.0
-        assert cfg.greeter_face_centering is False  # gated off until benched (docs/pins.yaml)
+    assert load_config("hackday", envs_dir=ENVS_DIR).greeter_face_centering is True
+    assert load_config("home", envs_dir=ENVS_DIR).greeter_face_centering is False
 
 
 def test_the_learn_facts_note_is_removable_without_touching_home():

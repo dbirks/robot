@@ -16,7 +16,7 @@ import yaml
 
 import shell.env as shell_env
 from dashboard import persona_panel as pp
-from shell.config import persona_instructions
+from shell.config import LEARN_FACTS_NOTE, persona_instructions
 from tests.parity_baseline import HOME_PROMPT_BYTES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,19 +86,49 @@ def test_obama_is_byte_identical_to_the_persona_home_has_always_used(clean_env):
     assert cfg.ack_dir == Path("sounds/acks/obama")
 
 
-def test_the_marvin_text_is_the_hackday_persona_of_today(clean_env):
+def test_the_marvin_text_is_a_persona_that_names_no_real_person(clean_env):
+    """personas/marvin.yaml stays shipped and selectable, and it was never a likeness of
+    anybody: the dry British gentleman is a register, not a person. The booth stopped
+    speaking it on 2026-10-13 by owner decision (David Birks - see
+    `test_hackday_speaks_the_obama_persona_by_owner_decision_birks_2026_10_13`); the file
+    itself and its attendee rules are unchanged, and its voice is still borrowed.
+    """
+    text = persona_text("marvin")
+    assert not any(word in text.lower() for word in ("obama", "rickman", "broadbent"))
+    assert "never mention anyone's family" in text
+
+
+def test_hackday_speaks_the_obama_persona_by_owner_decision_birks_2026_10_13(clean_env):
+    """Owner decision, named and dated: David Birks at the Hack Day booth, 2026-10-13 -
+    "make it really Obama... remove that line that says deliberately naming no real
+    person. We're doing that on purpose... you update all three gates with my name."
+
+    So `envs/hackday.yaml` names the persona and carries NO inline `instructions:`: the
+    words come from personas/obama.yaml (shell/env.py `merge_persona_doc`), which is the
+    documented mechanism envs/home.yaml's comment describes. One thing the deleted Marvin
+    block did supply and the persona file does not: the event's own name ("Hacktoberfest
+    Hack Day Indianapolis") and the per-room attendee sentence. Those were room wording,
+    not safety - what protects an attendee here is structural (`learn_facts: false` plus
+    the reconcile below, its own memory namespace, the excluded `*_face` trio), and the
+    first-person disclosure below is what keeps an Obama-voiced desk robot an impression
+    rather than a claim.
+    """
     cfg = shell_env.load_config("hackday")
-    expected = persona_instructions(persona_text("marvin"))
+    expected = persona_instructions(persona_text("obama"))
     if not cfg.learn_facts:
         # hackday sets behaviour.learn_facts: false, and the reconcile in shell/env.py
         # then drops the shared tail's unprompted-remember sentence. Comparing against
         # the raw persona text would demand that sentence back at a public booth.
         expected = shell_env.instructions_without_auto_learn(expected)
     assert cfg.instructions == expected
-    assert "never mention anyone's family" in cfg.instructions
-    assert "hack day" in cfg.instructions.lower()
-    # behaviour-only: naming no real person, so a public screen carries no likeness claim
-    assert not any(word in persona_text("marvin").lower() for word in ("obama", "rickman", "broadbent"))
+    assert cfg.ack_dir == Path("sounds/acks/obama")
+    # the attendee-protecting half of the old wording survives as behaviour, not prose
+    assert LEARN_FACTS_NOTE not in cfg.instructions
+    assert cfg.memory_namespace == "hackday" and cfg.memories_path.name == "memories.hackday.json"
+    # first-person machine disclosure, from personas/obama.yaml
+    assert "You are still Reachy the robot, not actually Obama" in cfg.instructions
+    # the Marvin register this room spoke until tonight is gone from its prompt
+    assert "British gentleman" not in cfg.instructions
 
 
 def test_marvin_borrows_the_obama_voice_until_a_model_exists(clean_env):
@@ -426,9 +456,12 @@ def test_the_generated_file_is_not_tracked():
 
 
 def test_only_the_selected_persona_prints_its_words():
-    """The panel is on a screen in a public room. Rendering every persona's full
-    instructions would print the home persona - which names a real living person -
-    beside the booth one, contradicting the rule in envs/hackday.yaml (#34)."""
+    """The panel is on a screen in a public room, and since 2026-10-13 so is the persona
+    it resolves: the booth names President Obama by owner decision (David Birks), which
+    makes rendering every persona's full instructions beside it worse, not better - the
+    home persona, the Marvin register and the tars register would all be on the same
+    screen at once, with the picker's own choice buried among them (#34).
+    """
     partial = (ROOT / "dashboard" / "templates" / "partials" / "persona.html").read_text()
     line = [ln for ln in partial.splitlines() if "p.instructions" in ln]
     assert line, "the persona partial stopped showing instructions at all"

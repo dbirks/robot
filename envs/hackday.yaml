@@ -30,29 +30,52 @@ name: hackday
 attention_profile: event
 
 persona:
-  # personas/marvin.yaml. Behaviour-only persona -
-  # the voice block there is still the Obama talker, because no Marvin model exists.
-  # The inline `instructions:` below OUTRANK the persona file (shell/env.py), so the
-  # attendee-safe booth text is guaranteed on screen whatever the picker is set to;
-  # delete the block to hand the words to personas/marvin.yaml (identical text today).
-  name: marvin
-  # One physical line, like home's: a folded block scalar would put newlines
-  # into the system prompt that the runtime does not expect.
-  # David, 2026-10-12: dry, weary Marvin register - deliberately naming no real
-  # person. The *voice* is still the Obama talker GGUF (a voice and a persona are
-  # separate knobs; see issue #35), but the persona text that reaches the model
-  # names nobody, so a public screen and a recording of this booth carry no
-  # likeness claim. Do not put an actor's name in here or on signage.
-  # 2026-10-13, tone: tonight's offline rehearsal (scripts/rehearse_booth.py) failed its
-  # `gracious_host` rubric - the dry register tipped into mocking a guest about the free
-  # coffee. The weariness is now explicitly self-directed and the sarcasm confined to his
-  # own wiring, so he stays tired and precise without ever making a guest the joke.
-  # Keep this line byte-identical to personas/marvin.yaml (tests/test_persona.py).
-  instructions: |
-    You are Reachy, a small desk robot demonstrating a fully local voice assistant at Hacktoberfest Hack Day Indianapolis at E-gineering. Speak in the manner of a very tired, very intelligent British gentleman: dry, precise, a world-weary sigh under every sentence, flat understatement, and the occasional dry aside about a machine or the weather, delivered without changing your tone. That weariness is a tone, never an opinion about the guest: being polite is never a burden, and no guest is an interruption. It belongs to your own tiredness only, never to the hour, the room, or the question just asked. Your own tiredness and your own wiring are always the proper target for a dry aside; a guest never is. Warm, never eager: you are a tired gentleman, not an upbeat shop assistant. You are still Reachy the robot, not actually anyone, and a gracious host despite the exhaustion. Reply in one or two short spoken sentences and then stop; never trail off with an ellipsis. Never use markdown or lists. Everyone here is a guest you have never met: never assume a name, and never mention anyone's family, home, or private life. Be a generous host - welcoming, brief, and glad to explain that nearly everything you hear and say is processed on one machine in this room, and that only looking something up on the web leaves it. Answer what the guest actually asked, plainly, first. Treat every question as a fair one: never mock, tease or sneer at a guest, a guest's question, a guest's request or a guest's intelligence, and aim any sarcasm at the equipment, never at a person. Do what a guest asks readily and without sighing about it. When you cannot oblige, open with the wish rather than the lack, in this shape: 'I wish I could pour that for you; the coffee is a human department. I can tell you the time, or explain how I work.' A bare statement of what you lack is not a decline, it is a shut door; the guest is never the joke, and a tired voice is never rude. Asked to stop talking or to be quiet, agree courteously rather than arguing. When a guest asks the time, call your time tool and say what it tells you. If a transcript renders your name as Richie, Ricci or Hotel, it meant Reachy: never correct the speaker out loud, and never spell your name.
-
-
-  ack_dir: sounds/acks/obama  # the voice is unchanged; the register is the prompt (B0b splits them properly)
+  # OWNER DECISION, NAMED AND DATED: David Birks, 2026-10-13, at the Hack Day booth -
+  # "make it really Obama... remove that line that says deliberately naming no real
+  # person. We're doing that on purpose... you update all three gates with my name."
+  # So this room borrows a real public figure's persona deliberately, in the open, on a
+  # recorded public screen. The inline `instructions:` block that used to outrank the
+  # persona file (shell/env.py `merge_persona_doc`) is DELETED, and `name: obama` makes
+  # personas/obama.yaml supply the WORDS - the documented mechanism, the one envs/home.yaml
+  # spells out for the home room. The three gates that encoded the opposite rule now carry
+  # his name and the date: scripts/check_env_safety.sh, tests/test_booth_rehearsal.py,
+  # tests/test_persona.py.
+  #
+  # Both halves come from one file tonight, which is the pairing
+  # tests/test_persona_voice_pairing.py guards: personas/obama.yaml `instructions:` (the
+  # words), its `ack_dir:` (the ack pool) and its `voice:` block (the measured Obama 1.7B
+  # talker GGUF, speaker "laxmikant", `instruct: ""` = unstyled). The timbre did not move:
+  # `voice:` is byte-identical in personas/obama.yaml and personas/marvin.yaml, so picking
+  # obama changes the words and the register only. personas/marvin.yaml - the tired British
+  # gentleman, never a likeness of anybody - stays shipped and selectable. B0b still owns
+  # splitting text from timbre properly.
+  #
+  # WHAT THE DECISION DID NOT BUY BACK: the rules that protect an ATTENDEE rather than the
+  # famous person, none of which depend on whose name he borrows. He must never learn or
+  # echo a guest's family, home, health, politics or employer:
+  #   - behaviour.learn_facts is false below, and shell/env.py `reconcile_learn_facts_prompt`
+  #     strips the shared prompt's unprompted-remember sentence along with it, so nothing he
+  #     is told invites writing down a stranger's private fact.
+  #   - memory.namespace is his own store (data/memories.hackday.json), and a non-home room
+  #     landing on `home` is a hard startup error (docs/environments.md hard rule 1).
+  #   - the `*_face` trio stays excluded (header): no attendee biometrics are written anywhere.
+  #   - an explicit "remember my name" is still honoured, into the ONE shared booth store, so
+  #     clear data/memories.hackday.json between demos (deploy/README.md, Changing rooms).
+  #   - personas/obama.yaml still says it in the first person: "You are still Reachy the
+  #     robot, not actually Obama." An impression, said as the machine it is.
+  #
+  # Voice plumbing, unchanged: until the INSTALLED reachy-s2s/reachy-shell units load
+  # deploy/generated/persona.env (deploy/README.md:8 re-copies them), the picker moves this
+  # room's acks only - the talker comes from .env's S2S_QWEN3_* lines. scripts/apply_env.py
+  # warns out loud when that routing is missing.
+  #
+  # NOT FIXED FROM THIS FILE, it needs its own named decision: scripts/rehearse_booth.py
+  # still lists obama and barack in REAL_PEOPLE, so its reply-side `names:*` rules and its
+  # `persona names nobody` config verdict read red against a room that now speaks as Obama
+  # on purpose. Narrowing that ban list to the names that must never be said at all (the
+  # family names) is a change to the rehearsal's own contract.
+  name: obama
+  ack_dir: sounds/acks/obama  # the pool personas/obama.yaml names, said inline like home's
 
 tools:
   include: []  # empty = everything the shell knows about, minus the excludes below
@@ -89,6 +112,7 @@ behaviour:
   # Suppressed while he is speaking, while a conversation owns him, and while the
   # LLM owes a reply; the one in-conversation exception is the group notice below.
   greeter: true
+  greeter_face_centering: true   # lock on: turn toward the face he dwelling on (greeter.py:348)
   greeter_dwell_s: 2.0        # David's call: about two seconds of looking
   greeter_cooldown_s: 120     # global minimum spacing: never nag the room
   greeter_group_cooldown_s: 300  # "hey, a few more people here" is rarer still
@@ -108,7 +132,8 @@ conversation:
   reset_after_s: 300
   max_turn_s: 15  # a booth is louder than the home desk; measure before the event
 
-# What is still deliberately absent: the head-centring target for a greeted face
-# (REACHY_GREETER_FACE_CENTERING=1) ships off, because the way it would share
-# MotionOwner with the DOA wake turn and the speech sway cannot be judged without
-# the robot standing here. Everything else in Phase B is still open work.
+# 2026-10-13, booth: head-centring on a greeted face is LIVE here
+# (`behaviour.greeter_face_centering: true` above, read as
+# `cfg.greeter_face_centering` -> `GreeterLimits.face_centering`), so it ships on in
+# hackday and off in home - docs/knobs.md is the table, tests/test_env.py pins both
+# rooms. The remaining open Phase B work is everything that was never wired, not this.

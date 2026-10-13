@@ -461,6 +461,86 @@ def test_the_journal_sees_the_face_the_decision_and_the_verdict():
     assert J.GREETER_FIRED not in journal.types()
 
 
+# ---- the head hook (REACHY_GREETER_FACE_CENTERING) ----
+
+
+class Motion:
+    """The `MotionOwner` stand-in: records aims, and can say "busy" or "asleep".
+
+    A real `look_at` clamps and smooths; recording the raw call is the point — the
+    greeter is the caller under test, and this is the only seam where the head is
+    asked to move for a face (shell/vision/greeter.py `_center`).
+    """
+
+    def __init__(self, *, busy=False, sleeping=False):
+        self.busy = busy
+        self.sleeping = sleeping
+        self.aims: list[tuple[float, float, float, str]] = []
+
+    def look_at(self, yaw_deg, pitch_deg=0.0, *, hold_s=None, source="tool"):
+        self.aims.append((round(yaw_deg, 2), round(pitch_deg, 2), hold_s, source))
+
+
+def test_face_centering_off_is_the_default_and_the_head_never_moves():
+    """Tonight's live state in both rooms: the greet happens, the head does not."""
+    rec, tracker, motion = Rec(), Tracker(), Motion()
+    g = build(rec=rec, tracker=tracker, motion=motion, min_spacing_s=0.0)
+    assert g.face_centering is False
+    tracker.faces = [face(azimuth=15.0)]
+    dwell(g, tracker, 2.5)
+    assert rec.kinds == ["solo"]
+    assert motion.aims == []
+
+
+def test_face_centering_aims_at_the_dwelled_face_and_keeps_re_aiming():
+    """The ask is lock-on-and-track, so the hook is not a one-shot nod toward the
+    person: it re-aims at poll rate for as long as the presence holds (2 FPS idle /
+    3 FPS engaged, `REAIM_HOLD_S` per aim)."""
+    rec, tracker, motion = Rec(), Tracker(), Motion()
+    g = build(rec=rec, tracker=tracker, motion=motion, min_spacing_s=0.0, face_centering=True)
+    tracker.faces = [face(azimuth=15.0)]
+    dwell(g, tracker, 2.5)
+    assert motion.aims[0] == (15.0, 0.0, G.REAIM_HOLD_S, "face")
+    first = len(motion.aims)
+    assert rec.kinds == ["solo"]
+    # The greeting is already spent, so every aim after this row is tracking, not
+    # greeting: "presence-greeted" must not stop the head.
+    assert dwell(g, tracker, 2.0, start=2.5) == "suppressed:presence-greeted"
+    assert len(motion.aims) > first
+
+
+def test_tracking_stops_when_the_face_leaves_the_frame():
+    """There is no lock-on that survives an absence: the track evaporates after
+    `TRACK_LOST_S` unseen and with it the only thing we knew about the person."""
+    tracker, motion = Tracker(), Motion()
+    g = build(tracker=tracker, motion=motion, min_spacing_s=0.0, face_centering=True)
+    tracker.faces = [face()]
+    dwell(g, tracker, 2.5)
+    aims = len(motion.aims)
+    assert aims > 0
+    tracker.faces = []
+    # A track lingers for TRACK_LOST_S after the last detection (one dropped poll
+    # must not reset a dwell), and a stale candidate is still re-aimed in that
+    # grace. Past the grace there is nobody left to aim at, ever.
+    dwell(g, tracker, 2.0, start=2.5)
+    settled = len(motion.aims)
+    dwell(g, tracker, 3.0, start=4.5)
+    assert len(motion.aims) == settled
+
+
+def test_face_centering_stands_down_for_an_exclusive_move_or_the_nap():
+    """`MotionOwner.busy` is a scripted `exclusive()` move on the motion thread and
+    `sleeping` is the shell's one asleep flag; neither may be overwritten by a face.
+    Note what this does NOT cover: a `doa`/`wake` gaze target has no busy flag, so a
+    face aim and a wake turn both write `_gaze_target` and the last writer wins."""
+    for kw in ({"busy": True}, {"sleeping": True}):
+        tracker, motion = Tracker(), Motion(**kw)
+        g = build(tracker=tracker, motion=motion, min_spacing_s=0.0, face_centering=True)
+        tracker.faces = [face()]
+        dwell(g, tracker, 2.5)
+        assert motion.aims == [], kw
+
+
 # ---- the gate numbers are the ones the plan measured ----
 
 

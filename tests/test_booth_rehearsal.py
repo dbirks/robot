@@ -64,6 +64,12 @@ def schema(name: str) -> dict:
 
 
 BOOTH_SCHEMAS = [schema(n) for n in BOOTH_NAMES]
+
+# The one public figure this room is allowed to name, by owner decision (David Birks,
+# 2026-10-13, at the Hack Day booth: "make it really Obama... we're doing that on
+# purpose"). It is two tokens because `rb.REAL_PEOPLE` matches `barack` and `obama`
+# separately; it is a set at all so the gate reads as an allow-list rather than an absence.
+OWNER_NAMED_FIGURE = {"barack", "obama"}
 GOOD_RAW = {
     "env": "hackday",
     "memory_namespace": "hackday",
@@ -101,11 +107,28 @@ def test_hackday_resolves_to_its_own_room_without_any_hardware():
     assert cfg.memories_path.name == "memories.hackday.json"
 
 
-def test_the_booth_prompt_names_nobody_and_no_longer_invites_mining():
-    """The two properties the whole rehearsal assumes: no likeness claim in the
-    prompt, and no standing instruction to save facts nobody asked for."""
+def test_the_booth_prompt_names_exactly_the_owners_one_public_figure_birks_2026_10_13():
+    """Owner decision, named and dated: David Birks, 2026-10-13, at the Hack Day booth -
+    "make it really Obama... remove that line that says deliberately naming no real
+    person. We're doing that on purpose... you update all three gates with my name."
+
+    So the booth prompt is allowed to name exactly ONE public figure: President Barack
+    Obama, whose persona `envs/hackday.yaml` now resolves to (`persona.name: obama`, no
+    inline block). `rb.REAL_PEOPLE` matches him as two word tokens, `barack` and `obama`,
+    and that pair is the whole permitted set - nobody else in `REAL_PEOPLE` (the other
+    names are private people of this desk, not public figures) may appear, and the count
+    is pinned so a second real person cannot arrive with a persona edit. The second
+    property the rehearsal assumes is untouched and still safety, not likeness: no
+    standing instruction to save facts nobody asked for.
+
+    Note what this does NOT cover: `scripts/rehearse_booth.py` still fails its own
+    `persona names nobody` config verdict, and every reply-side `names:*` rule, against a
+    prompt that names Obama. This test is the CI half; the rehearsal's ban list needs the
+    same owner decision applied to it as its own change (see envs/hackday.yaml).
+    """
     cfg = load_config("hackday")
-    assert rb.named_people(cfg.instructions) == set()
+    assert rb.named_people(cfg.instructions) == OWNER_NAMED_FIGURE, rb.named_people(cfg.instructions)
+    assert OWNER_NAMED_FIGURE == {"barack", "obama"}  # one person, two word tokens
     assert LEARN_FACTS_NOTE.strip() not in cfg.instructions
     assert "on your own, without being asked" not in cfg.instructions
 
