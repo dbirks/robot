@@ -88,7 +88,7 @@
                         · acks {{ p.ack_dir or '—' }}
                     </div>
                     {% if p.model %}<div class="text-xs text-black/60">{{ p.model }}</div>{% endif %}
-                    {% if p.selected_for_room %}<div class="text-xs italic mt-1">{{ p.instructions | truncate(160) }}</div>{% endif %}
+                    {% if p.selected_for_room %}<div class="text-xs mt-2 bg-white border-2 border-black px-2 py-1 whitespace-pre-wrap break-words">{{ p.instructions }}</div>{% endif %}
                     <div class="text-xs mt-1">
                         {% if p.voice_in_force %}<span class="font-bold uppercase bg-mint px-1">voice in force</span>{% endif %}
                         {% if p.selected_for_room %}<span class="font-bold uppercase bg-butter px-1">named by this room</span>{% endif %}
