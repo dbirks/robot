@@ -1,9 +1,12 @@
 #!/bin/sh
 # The kiosk X session (issue #37). One window, fullscreen, no chrome, no blanking.
-# Started from the tty1 CONSOLE LOGIN by the hook in ~/.bash_profile - not by
-# reachy-kiosk.service, which cannot work: a systemd user service is never the owner of
-# the foreground VT, so Xorg.wrap refuses it (measured 2026-10-13, crash loop). Run it by
-# hand on another VT if you want to see it; on VT1 it owns the demo screen.
+# Started by deploy/kiosk/reachy-kiosk.service - a SYSTEM unit whose PAMName=login +
+# TTYPath=/dev/tty1 pair makes it the console owner, which is what Xorg.wrap requires. It
+# can never be started by a systemd USER unit: a user service is never the owner of the
+# foreground VT, so Xorg.wrap refuses it (measured 2026-10-13, crash loop). The marked hook
+# in ~/.bash_profile runs the same command from a tty1 console login as the fallback path.
+# There is no keyboard on this box: stdout/stderr of the unit go to the journal, so keep any
+# diagnostic here on stdout, not in a file nobody will open at a booth.
 
 DASH="${REACHY_DASHBOARD_URL:-http://127.0.0.1:3001/conversation}"
 PROFILE="${REACHY_KIOSK_PROFILE:-$HOME/.reachy-kiosk}"

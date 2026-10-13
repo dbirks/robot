@@ -17,7 +17,11 @@ PKGS=(xorg-server xorg-xinit xorg-xset openbox chromium xterm)
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 USER_UID="$(id -u)"
-GIT_DIR=/etc/systemd/system/getty@tty1.service.d
+SYS_DIR=/etc/systemd/system
+KIOSK_UNIT=reachy-kiosk
+# Fallback path only: a console login on tty1 whose ~/.bash_profile hook runs startx by
+# hand. NOT installed here - see the note at the bottom of this script and README.
+GETTY_DIR=/etc/systemd/system/getty@tty1.service.d
 REPO_DIR="$HOME/.config/systemd/user"
 DRY=1
 [ "${1:-}" = "--run" ] && DRY=0
@@ -28,8 +32,9 @@ run() { if [ "$DRY" = 1 ]; then say "  would run: $*"; else say "  running: $*";
 say "kiosk install plan (issue #37)"
 say "  packages: ${PKGS[*]}"
 say "  repo:     $REPO"
-say "  drop-in:  $GIT_DIR/10-autologin.conf   (sudo)"
-say "  units:    $REPO_DIR/reachy-kiosk.service + reachy-kiosk-watch.service"
+say "  unit:     $SYS_DIR/$KIOSK_UNIT.service   (sudo, SYSTEM scope)"
+say "  getty:    sudo systemctl mask getty@tty1.service   (this unit owns the VT)"
+say "  cleanup:  unlink $REPO_DIR/$KIOSK_UNIT.service - a user-scope kiosk cannot work"
 say "  target:   http://127.0.0.1:3001/conversation"
 say ""
 
@@ -42,34 +47,50 @@ fi
 #    and this box is mid-demo-prep. --needed keeps existing packages untouched.
 run sudo pacman -S --noconfirm --needed "${PKGS[@]}"
 
-# 2. Autologin on tty1 so X has a session with seat access (this is also what
-#    gives the kiosk /dev/dri and the evdev devices without any setuid mess).
-run sudo mkdir -p "$GIT_DIR"
-run sudo cp "$REPO/deploy/kiosk/10-autologin.conf" "$GIT_DIR/10-autologin.conf"
+# 2. The kiosk as a SYSTEM unit. This is the only shape that can show anything: the unit
+#    pairs PAMName=login with TTYPath=/dev/tty1, which gives the process a real logind
+#    session on seat0 (pam_systemd is line 20 of /etc/pam.d/system-login) and makes it the
+#    foreground-VT owner - the exact thing Xorg.wrap refused when this ran as a user unit.
+run sudo mkdir -p "$SYS_DIR"
+run sudo cp "$REPO/deploy/kiosk/$KIOSK_UNIT.service" "$SYS_DIR/$KIOSK_UNIT.service"
+# `verify` is read-only and needs no root, and it is the only check that catches a typo in a
+# directive name before the unit is enabled - the previous version of this file shipped
+# `StopPropagationOfFailedJobsFromThisUnitFile=`, which systemd does not know at all.
+if [ "$DRY" = 1 ]; then
+  say "  would run: systemd-analyze verify $SYS_DIR/$KIOSK_UNIT.service   (read-only, no sudo)"
+else
+  say "  running:   systemd-analyze verify $SYS_DIR/$KIOSK_UNIT.service   (read-only, no sudo)"
+  systemd-analyze verify "$SYS_DIR/$KIOSK_UNIT.service" 2>&1 | sed 's/^/    verify: /' || true
+fi
+run sudo systemctl mask getty@tty1.service
 run sudo systemctl daemon-reload
+run sudo systemctl enable "$KIOSK_UNIT.service"
 
-# 3. The kiosk units (user scope: they die with the user, never with the demo stack).
+# 3. Un-link the user-scope copy. It is not just useless ("Only console users are allowed
+#    to run the X server", measured), it is a trap: a linked unit with the same name in the
+#    user directory reads as "the kiosk is installed" while the screen stays black.
+run rm -f "$REPO_DIR/$KIOSK_UNIT.service"
+
+# 4. The hotplug watcher stays a user unit and stays DISABLED. Its sensor is good - it saw
+#    DP-2 connect and fired within seconds - but its only action was to start a service that
+#    cannot open the VT. Pointing it at `systemctl start reachy-kiosk` (system scope) is the
+#    change that would make it usable, and that is not tonight's decision.
 run mkdir -p "$REPO_DIR"
-for u in reachy-kiosk.service reachy-kiosk-watch.service; do
-  run ln -sfn "$REPO/deploy/kiosk/$u" "$REPO_DIR/$u"
-done
+run ln -sfn "$REPO/deploy/kiosk/reachy-kiosk-watch.service" "$REPO_DIR/reachy-kiosk-watch.service"
 run chmod +x "$REPO/deploy/kiosk/kiosk.xinitrc" "$REPO/deploy/kiosk/watch_hotplug.sh"
 run systemctl --user daemon-reload
-# The watcher is the only piece enabled at install time: it starts the kiosk
-# when a screen appears and leaves it off when one does not.
-# NOT enabled, as of the first real screen on 2026-10-13. The watcher's *sensor* is good -
-# it saw DP-2 connect and fired within seconds - but its only action is to start a user
-# service that cannot open the VT, so it put reachy-kiosk.service into a restart loop.
-# The login hook owns the screen. The proper home for this is a SYSTEM unit with
-# User=david + PAMName=login + TTYPath=/dev/tty1 (getty masked on that VT), which gives the
-# service a real session; then the watcher has something it can actually start.
-# run systemctl --user enable --now reachy-kiosk-watch.service
 
 say ""
-say "done. The kiosk starts from the tty1 CONSOLE session (the hook in ~/.bash_profile),"
-say "  because a systemd user service cannot own the foreground VT and Xorg.wrap refuses"
-say "  it - measured 2026-10-13: the unit crash-looped on 'Only console users are allowed'."
-say "Verify: Ctrl+Alt+F1, log in as $USER -> the page appears in ~10 s. Escape: Ctrl+Alt+F2."
-say "No typing at all: sudo systemctl restart getty@tty1.service   (applies the autologin drop-in)"
-say "If X itself fails: journalctl -b -k | grep -i -E 'drm|xorg' and ~/.local/share/xorg/*.log"
-say "Escape hatch: Ctrl+Alt+F2 -> tty2. Kill the kiosk: systemctl --user stop reachy-kiosk"
+say "NOT started from here, on purpose: start it yourself with the journal open, because"
+say "  there is no keyboard on this box and a black screen has to be readable as it happens:"
+say "    journalctl -fu $KIOSK_UNIT.service &      # other terminal"
+say "    sudo systemctl start $KIOSK_UNIT.service"
+say "Enable already done ($KIOSK_UNIT.service is WantedBy=multi-user.target), so a reboot"
+say "  brings the panel up on its own. getty@tty1 is masked: no login prompt on VT1."
+say ""
+say "Fallback, only if this unit is disabled and getty@tty1 is unmasked: the autologin"
+say "  drop-in in deploy/kiosk/10-autologin.conf + the marked hook in ~/.bash_profile"
+say "  (scripts/install_kiosk used to install the drop-in; it no longer does, because with"
+say "  getty@tty1 masked it can never fire)."
+say "If X itself fails: journalctl -b -u $KIOSK_UNIT | tail -40 and ~/.local/share/xorg/*.log"
+say "Undo: sudo systemctl disable --now $KIOSK_UNIT.service; sudo systemctl unmask getty@tty1.service"

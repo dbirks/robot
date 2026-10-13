@@ -1,29 +1,83 @@
 [Unit]
-Description=Reachy Mini dashboard kiosk (issue #37)
+# SYSTEM unit, not a user unit. This is the shape systemd documents for "a service that
+# owns a console session" (a hand-written display manager), and the reason it is written
+# this way is measured, not theoretical:
+#
+#   * As a systemd USER unit, the same ExecStart crash-looped on
+#     /usr/lib/Xorg.wrap: "Only console users are allowed to run the X server". A user
+#     service is never the owner of the foreground VT, so rootless X refuses it. No env
+#     in the unit fixes that - it is structural (measured 2026-10-13, see README).
+#   * PAMName=login is what fixes it. /etc/pam.d/login -> system-local-login ->
+#     system-login, whose line 20 is `-session optional pam_systemd.so`, so the service
+#     gets a real logind session on seat0 - which is also the only thing that puts an ACL
+#     on /dev/dri/card1 (measured today: root:video 0660, other::---, and david holds no
+#     seat from an ssh session, so X could not have opened the GPU either way).
+#   * X, not Wayland: cage has a documented "displays nothing" failure on a GTX 1070 under
+#     Arch (cage-kiosk #441) and this box is a 1070 on driver 580.142 with no keyboard
+#     attached to debug it. nvidia_drv.so and modesetting_drv.so are both installed.
+#
+# There is NO keyboard on this machine. Everything about this unit therefore has to be
+# observable over ssh: StandardOutput=journal, a fixed VT, and `systemctl status` as the
+# only diagnosis channel.
+Description=Reachy Mini attendee kiosk on VT1 (issue #37)
 Documentation=file://%h/dev/robot/deploy/kiosk/README.md
-Wants=network-online.target
-After=network-online.target
-# The page is useless without the panel; see the bounded wait in kiosk.xinitrc, which
-# covers the path that actually runs today (the console-login hook).
-Wants=reachy-dashboard.service
-After=reachy-dashboard.service
+After=graphical.target
+After=systemd-user-sessions.service
+After=user@1000.service
+Wants=systemd-user-sessions.service
+Wants=user@1000.service
+# This unit takes tty1 away from the login prompt; the installer masks getty@tty1 so the
+# two never fight for the VT. The ordering makes the stop/start order deterministic.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
 
 [Service]
 Type=simple
-# One X server on VT1, one Chromium, nothing else. Started and stopped by
-# reachy-kiosk-watch.service according to whether a screen is plugged in, so an
-# unattended headless box does not carry a display stack around.
+User=david
+WorkingDirectory=~
+PAMName=login
+Environment=XDG_SESSION_TYPE=x11
+Environment=XDG_SEAT=seat0
+Environment=XDG_VTNR=1
+# pam_systemd supplies this too; stating it keeps chromium and xinit honest if it does not.
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+UnsetEnvironment=TERM
+UtmpIdentifier=tty1
+UtmpMode=user
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+Nice=10
+
+# The `+` prefix runs this one line as root: chvt needs to be the foreground-VT owner or
+# root, and User=david above would otherwise apply to it and fail.
+ExecStartPre=+/usr/bin/chvt 1
+# reachy-dashboard.service is a USER unit (~/.config/systemd/user), and a system unit
+# cannot order against one - scopes do not mix. The gate is instead the bounded 30 s curl
+# wait inside kiosk.xinitrc, which is why that wait exists. If the dashboard is ever moved
+# to system scope, add Wants=/After= for it here as well.
 #
-# --disable-gpu lives in kiosk.xinitrc, not here: the GTX 1070 is at ~7.8/8 GB
-# with llama.cpp and Qwen3-TTS (docs/pins.yaml), and a compositor asking for GL
-# is exactly the kind of thing that takes the demo down.
+# --disable-gpu lives in kiosk.xinitrc, not here: the GTX 1070 is at ~7.8/8 GB with
+# llama.cpp and Qwen3-TTS (docs/pins.yaml), and a compositor asking for GL is what takes
+# the demo down. -keeptty keeps X attached to tty1 so its death is in this unit's journal.
+ExecStart=/usr/bin/startx %h/dev/robot/deploy/kiosk/kiosk.xinitrc -- :0 vt1 -keeptty
+# The kiosk is decoration. The previous version of this file carried
+# `StopPropagationOfFailedJobsFromThisUnitFile=`, which is not a systemd directive at all (it
+# is in no man page, and `systemd-analyze verify` calls it "Unknown key ... ignoring") - a
+# no-op that read like a safety guarantee, so it is gone rather than copied forward.
+# Isolation from the voice stack is real but comes from being its own unit: nothing here
+# Requires= or PartOf=s anything in the demo stack.
 #
-# -keeptty keeps X attached to the VT so Ctrl+Alt+F2 still escapes for us.
-ExecStart=/usr/bin/xinit %h/dev/robot/deploy/kiosk/kiosk.xinitrc -- :0 vt1 -keeptty -background none
-Restart=on-failure
+# Restart=always, not on-failure: killing chromium (or any clean exit of the X session)
+# makes startx exit 0, and on-failure would then leave a black panel that nothing recovers.
+# There is no keyboard on this box, so "it stopped cleanly" must not mean "it stays stopped".
+# A browser crash is a 3 s flicker; a stray pkill is a 3 s flicker.
+Restart=always
 RestartSec=3
-# The kiosk is decoration. It must never take the voice stack with it.
-StopPropagationOfFailedJobsFromThisUnitFile=true
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
