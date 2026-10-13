@@ -68,7 +68,7 @@ run systemctl --user daemon-reload
 say ""
 say "done. The kiosk starts from the tty1 CONSOLE session (the hook in ~/.bash_profile),"
 say "  because a systemd user service cannot own the foreground VT and Xorg.wrap refuses"
-say "  it - measured 2026-10-13: the unit crash-looped on 'Only console users are allowed'.
+say "  it - measured 2026-10-13: the unit crash-looped on 'Only console users are allowed'."
 say "Verify: Ctrl+Alt+F1, log in as $USER -> the page appears in ~10 s. Escape: Ctrl+Alt+F2."
 say "No typing at all: sudo systemctl restart getty@tty1.service   (applies the autologin drop-in)"
 say "If X itself fails: journalctl -b -k | grep -i -E 'drm|xorg' and ~/.local/share/xorg/*.log"
