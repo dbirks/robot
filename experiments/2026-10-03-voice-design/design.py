@@ -70,10 +70,18 @@ def main(out_dir: str) -> None:
             fname = f"{n:02d}-{name}-{take + 1}.wav"
             sf.write(out / fname, wav, sr)
             meta.append(
-                {"id": n, "file": fname, "variant": name, "take": take + 1, "instruct": instruct,
-                 "ref_text": REF_TEXT, "seconds": round(len(wav) / sr, 2), "gen_s": round(time.time() - t0, 2),
-                 "model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign Q8_0 (Serveurperso/Qwen3-TTS-GGUF)",
-                 "temperature": 0.9}
+                {
+                    "id": n,
+                    "file": fname,
+                    "variant": name,
+                    "take": take + 1,
+                    "instruct": instruct,
+                    "ref_text": REF_TEXT,
+                    "seconds": round(len(wav) / sr, 2),
+                    "gen_s": round(time.time() - t0, 2),
+                    "model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign Q8_0 (Serveurperso/Qwen3-TTS-GGUF)",
+                    "temperature": 0.9,
+                }
             )
             print(f"[{n:02d}] {fname} {meta[-1]['seconds']}s audio in {meta[-1]['gen_s']}s", flush=True)
             (out / "candidates.json").write_text(json.dumps(meta, indent=2))

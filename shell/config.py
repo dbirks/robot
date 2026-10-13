@@ -82,6 +82,7 @@ def instructions_without_auto_learn(text: str) -> str:
     an attendee asking to be remembered is a different act from volunteering it."""
     return text.replace(LEARN_FACTS_NOTE, "")
 
+
 # Appended to every persona, in every deployment environment.
 SHELL_NOTES = TOOLS_NOTE + TIME_NOTE
 

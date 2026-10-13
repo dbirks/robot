@@ -22,8 +22,16 @@ CASES = [
     ("Can you turn and look right?", "look_right", None),
     ("Face forward again.", "look_center", None),
     ("Nod if you can hear me.", "nod", None),
-    ("Speak up, I can barely hear you.", "set_volume", lambda a: "loud" in a.get("level", "").lower() or "up" in a.get("level", "").lower()),
-    ("Turn the volume down a bit.", "set_volume", lambda a: any(w in a.get("level", "").lower() for w in ("quiet", "down", "soft"))),
+    (
+        "Speak up, I can barely hear you.",
+        "set_volume",
+        lambda a: "loud" in a.get("level", "").lower() or "up" in a.get("level", "").lower(),
+    ),
+    (
+        "Turn the volume down a bit.",
+        "set_volume",
+        lambda a: any(w in a.get("level", "").lower() for w in ("quiet", "down", "soft")),
+    ),
     ("What time is it?", "get_time", None),
     ("What do you see in front of you?", "describe_scene", None),
     ("Remember that my favorite color is green.", "remember", lambda a: "green" in json.dumps(a).lower()),
@@ -53,7 +61,9 @@ def call(base, model, prompt):
     }
     t0 = time.time()
     r = urllib.request.urlopen(
-        urllib.request.Request(base + "/v1/chat/completions", json.dumps(body).encode(), {"content-type": "application/json"}),
+        urllib.request.Request(
+            base + "/v1/chat/completions", json.dumps(body).encode(), {"content-type": "application/json"}
+        ),
         timeout=120,
     )
     d = json.load(r)
@@ -79,11 +89,15 @@ def main(base, model):
         ok += good
         t = d.get("timings", {})
         rows.append((good, prompt, got, args, text[:90], dt, t.get("predicted_per_second")))
-        print(f"{'PASS' if good else 'FAIL'} {dt:5.2f}s {prompt!r:42} tool={got} args={json.dumps(args)[:40]} text={text[:70]!r}")
+        print(
+            f"{'PASS' if good else 'FAIL'} {dt:5.2f}s {prompt!r:42} tool={got} args={json.dumps(args)[:40]} text={text[:70]!r}"
+        )
     tps = [r[6] for r in rows if r[6]]
     words = [len(r[4].split()) for r in rows if r[4]]
-    print(f"\n{model}: {ok}/{len(CASES)} pass | mean latency {sum(r[5] for r in rows) / len(rows):.2f}s"
-          f" | decode {sum(tps) / max(1, len(tps)):.1f} tok/s | mean reply words {sum(words) / max(1, len(words)):.1f}")
+    print(
+        f"\n{model}: {ok}/{len(CASES)} pass | mean latency {sum(r[5] for r in rows) / len(rows):.2f}s"
+        f" | decode {sum(tps) / max(1, len(tps)):.1f} tok/s | mean reply words {sum(words) / max(1, len(words)):.1f}"
+    )
 
 
 if __name__ == "__main__":
