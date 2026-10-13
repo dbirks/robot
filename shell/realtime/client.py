@@ -35,11 +35,25 @@ from typing import Callable
 import numpy as np
 
 from .. import journal as J
+from ..tools import TOOL_TIMEOUT_S
 
 log = logging.getLogger("shell.realtime")
 
 
-TOOL_TIMEOUT_S = 12.0  # a hung tool must not hold a reply forever
+# The budget now belongs to the router (shell/tools.py: `timeout_for`), which knows
+# that a camera tool and a `get_time` are not the same call. This constant is the
+# fallback for a router that has no opinion.
+
+# What a timeout says. `asyncio.to_thread` cannot be cancelled, so on a timeout the
+# work is STILL running and will complete - telling the model "took too long" made it
+# retry, and each retry queued another capture behind the call that had already been
+# reported as failed. Three "failed" snapshots, one real one, 54 seconds, and a robot
+# apologising to a guest for a tool that had quietly succeeded.
+TIMEOUT_MESSAGE = (
+    "{name} is slower than this reply can wait, but it is still running and will finish on "
+    "its own. Do not call it again: a second attempt queues behind the first and makes it "
+    "slower. Say one short sentence that it is taking a moment."
+)
 BATCH_WAIT_S = 30.0  # longest we wait for response.done before sending results
 
 # Who asked for a reply (ADR 0003 wiring). A greeter-prompted reply is the shell
@@ -435,10 +449,15 @@ class RealtimeClient:
         except json.JSONDecodeError:
             args = {}
         try:
-            result = await asyncio.wait_for(asyncio.to_thread(self.router.execute, name, args), TOOL_TIMEOUT_S)
+            fn = getattr(self.router, "timeout_for", None)
+            timeout = float(fn(name)) if callable(fn) else TOOL_TIMEOUT_S
+        except (TypeError, ValueError):  # a router that returns nonsense must not kill the tool
+            timeout = TOOL_TIMEOUT_S
+        try:
+            result = await asyncio.wait_for(asyncio.to_thread(self.router.execute, name, args), timeout)
         except asyncio.TimeoutError:
-            result = {"ok": False, "error": f"{name} took too long"}
-            self.journal.write("tool.timeout", tool=name, seconds=TOOL_TIMEOUT_S)
+            result = {"ok": False, "error": TIMEOUT_MESSAGE.format(name=name)}
+            self.journal.write("tool.timeout", tool=name, seconds=timeout)
         return ev.get("call_id", ""), result, self.router.needs_followup(name, result)
 
     async def _finish_batch(self, rid: str, batch: _ToolBatch) -> None:

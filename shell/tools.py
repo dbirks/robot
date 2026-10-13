@@ -23,6 +23,26 @@ from . import journal as J
 
 # Tools that change robot/persistent state and must never run on ambiguous
 # audio. Physical but transient actions (look/nod) are deliberately NOT here.
+# Per-tool time budgets. A hung tool must not hold a reply forever, but one flat
+# number for every tool is its own bug: measured on the robot box 2026-10-12, a cold
+# camera open plus its 5 warm-up frames is 2.7-3.0 s and a llama-server vision round
+# trip ran about 10 s with the TTS and STT models resident - each comfortably inside
+# 12 s alone, and not at all when two camera tools queue behind one V4L2 handle. That
+# is how a 3-second snapshot became a 54-second turnaround with three duplicate
+# captures in it: the limit fired, the model was told it failed, it retried, and the
+# "failed" call was still running the whole time (asyncio.to_thread cannot be
+# cancelled), so every retry queued another capture behind it.
+TOOL_TIMEOUT_S = 12.0
+CAMERA_TIMEOUT_S = 35.0
+# Every tool that reaches for the camera - pinned against the code by
+# tests/test_tool_timeouts.py, so a new _frame() caller cannot be left out.
+CAMERA_TOOLS = {"take_snapshot", "describe_scene", "identify_face", "learn_face"}
+
+
+def tool_timeout(name: str) -> float:
+    return CAMERA_TIMEOUT_S if name in CAMERA_TOOLS else TOOL_TIMEOUT_S
+
+
 STATE_CHANGING = {
     "set_volume",
     "go_to_sleep",
@@ -133,6 +153,12 @@ class ToolRouter:
         else:
             self.journal.write(J.TOOL_COMPLETED, tool=name, result=result)
         return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+    def timeout_for(self, name: str) -> float:
+        """The budget `RealtimeClient._run_tool` gives this call. A method rather
+        than a module constant so the router that knows the tools owns the number,
+        and so a fake router in a test can say otherwise."""
+        return tool_timeout(name)
 
     def needs_followup(self, name: str, result: dict) -> bool:
         """Whether to request a spoken response after this tool output."""
