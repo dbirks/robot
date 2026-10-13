@@ -39,6 +39,7 @@ say "  target:   http://127.0.0.1:3001/conversation"
 say ""
 
 if [ "$DRY" = 1 ]; then
+  KIOSK_VERIFY="$KIOSK_STAGED"   # in a dry run nothing reached /etc; verify what we would install
   say "dry run; nothing changed. Re-run with --run."
   exit 0
 fi
@@ -52,15 +53,25 @@ run sudo pacman -S --noconfirm --needed "${PKGS[@]}"
 #    session on seat0 (pam_systemd is line 20 of /etc/pam.d/system-login) and makes it the
 #    foreground-VT owner - the exact thing Xorg.wrap refused when this ran as a user unit.
 run sudo mkdir -p "$SYS_DIR"
-run sudo cp "$REPO/deploy/kiosk/$KIOSK_UNIT.service" "$SYS_DIR/$KIOSK_UNIT.service"
+# The unit's ExecStart has to carry THIS user's repo path. The file in git hardcodes
+# /home/david/dev/robot on purpose, because `%h` in a SYSTEM unit expands to the home of whoever
+# runs the system manager - /root - and does NOT follow User=david. That one mismatch is what
+# left the first booth night staring at a black screen: `systemctl show -p ExecStart` reported
+# startx being handed /root/dev/robot/deploy/kiosk/kiosk.xinitrc, which does not exist, X never
+# spawned, and `systemd-analyze verify` stayed silent because it validates syntax, not paths.
+# Stage a substituted copy so a different $HOME can never ship a /root path again.
+KIOSK_STAGED="${TMPDIR:-/tmp}/reachy-kiosk.service.staged.$$"
+sed "s#/home/david/dev/robot#$REPO#g" "$REPO/deploy/kiosk/$KIOSK_UNIT.service" > "$KIOSK_STAGED"
+trap 'rm -f "$KIOSK_STAGED"' EXIT
+run sudo cp "$KIOSK_STAGED" "$SYS_DIR/$KIOSK_UNIT.service"
 # `verify` is read-only and needs no root, and it is the only check that catches a typo in a
 # directive name before the unit is enabled - the previous version of this file shipped
 # `StopPropagationOfFailedJobsFromThisUnitFile=`, which systemd does not know at all.
 if [ "$DRY" = 1 ]; then
-  say "  would run: systemd-analyze verify $SYS_DIR/$KIOSK_UNIT.service   (read-only, no sudo)"
+  say "  would run: systemd-analyze verify $KIOSK_STAGED   (read-only, no sudo)"
 else
   say "  running:   systemd-analyze verify $SYS_DIR/$KIOSK_UNIT.service   (read-only, no sudo)"
-  systemd-analyze verify "$SYS_DIR/$KIOSK_UNIT.service" 2>&1 | sed 's/^/    verify: /' || true
+  systemd-analyze verify "${KIOSK_VERIFY:-$SYS_DIR/$KIOSK_UNIT.service}" 2>&1 | sed 's/^/    verify: /' || true
 fi
 run sudo systemctl mask getty@tty1.service
 run sudo systemctl daemon-reload

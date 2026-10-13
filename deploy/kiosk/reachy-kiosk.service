@@ -37,10 +37,13 @@ User=david
 WorkingDirectory=~
 PAMName=login
 Environment=XDG_SESSION_TYPE=x11
-Environment=XDG_SEAT=seat0
-Environment=XDG_VTNR=1
+# XDG_SEAT / XDG_VTNR / XDG_RUNTIME_DIR deliberately NOT set: the reference recipe for rootless X
+# under systemd sets only XDG_SESSION_TYPE and lets pam_systemd do the seat binding itself. Ours
+# also pre-set these three, and no logind session ever appeared on tty1 (loginctl showed only the
+# SSH session) even though pam_unix reported "session opened for user david". One of the two is
+# wrong; matching the recipe that demonstrably works is cheaper than finding out which.
+# If X now fails with "Only console users are allowed", THIS is the next variable to revisit.
 # pam_systemd supplies this too; stating it keeps chromium and xinit honest if it does not.
-Environment=XDG_RUNTIME_DIR=/run/user/%U
 TTYPath=/dev/tty1
 StandardInput=tty
 StandardOutput=journal
@@ -71,7 +74,15 @@ ExecStartPre=+/usr/bin/chvt 1
 # --disable-gpu lives in kiosk.xinitrc, not here: the GTX 1070 is at ~7.8/8 GB with
 # llama.cpp and Qwen3-TTS (docs/pins.yaml), and a compositor asking for GL is what takes
 # the demo down. -keeptty keeps X attached to tty1 so its death is in this unit's journal.
-ExecStart=/usr/bin/startx %h/dev/robot/deploy/kiosk/kiosk.xinitrc -- :0 vt1 -keeptty
+# %h is NOT allowed here, and this is the bug that cost the whole evening: in a SYSTEM unit %h
+# expands to the home of whoever runs the system manager - /root - and does NOT follow User=david.
+# Measured from `systemctl show -p ExecStart`: startx was handed /root/dev/robot/.../kiosk.xinitrc,
+# which does not exist, so X never spawned (no ~/.local/share/xorg/, death in <1 s, and
+# `systemd-analyze verify` said nothing because it checks syntax, not paths). scripts/
+# install_kiosk.sh rewrites this line against $HOME at install time; the value below is what
+# /home/david needs, so a bare `cp` also works. -verbose 3 -logfile /dev/null routes X's own
+# output into the journal, because -keeptty otherwise sends it to a console nobody can read.
+ExecStart=/usr/bin/startx /home/david/dev/robot/deploy/kiosk/kiosk.xinitrc -- :0 vt1 -keeptty -verbose 3 -logfile /dev/null
 # The kiosk is decoration. The previous version of this file carried
 # `StopPropagationOfFailedJobsFromThisUnitFile=`, which is not a systemd directive at all (it
 # is in no man page, and `systemd-analyze verify` calls it "Unknown key ... ignoring") - a
