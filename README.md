@@ -145,7 +145,7 @@ Every variable this project reads — shell, service, dashboard, llama.cpp, kios
 tabulated with its reader and its per-room default in [`docs/knobs.md`](docs/knobs.md).
 `.env.example` is a template, not a list of live knobs: some of its lines (e.g.
 `OPENAI_BASE_URL=http://localhost:8080/v1`) point at llama.cpp directly and would bypass the
-name-fixing proxy that `scripts/run_s2s.sh:15` defaults to.
+name-fixing proxy that `scripts/run_s2s.sh:27` defaults to (proxy on :8081, llama.cpp on :8080).
 
 ### 3. Install Python dependencies
 
@@ -171,6 +171,49 @@ LLAMA_MODEL_PATH=models/gguf/your-model.gguf ./scripts/run_llama_server.sh
 ```
 
 The agent will start listening. Speak and it will transcribe, reason, execute tools, and respond via TTS.
+
+## At a booth
+
+`REACHY_ENV=hackday` is the room that runs in front of strangers. Everything below is newer
+than the prose elsewhere in this file; the whole knob list is [`docs/knobs.md`](docs/knobs.md).
+
+- **Personas**: `personas/obama.yaml`, `personas/marvin.yaml`, `personas/tars.yaml`. The
+  dashboard persona page picks a persona, never a room (`dashboard/server.py`); the room
+  comes only from `REACHY_ENV`.
+- **Voice style**: `voice.instruct` in the persona file reaches the service as
+  `--qwen3_tts_instruct`, appended only when `S2S_QWEN3_INSTRUCT` is non-empty — upstream's
+  default is `None` and `""` is a value, not the absence of one (`scripts/run_s2s.sh`
+  `build_tts_args`). Print the resolved argv with no service, GPU, mic or network:
+  `scripts/run_s2s.sh --print-tts-args`.
+- **Greeter**: eye-contact hello gated in `shell/vision/greeter.py`; off in `home`, on in
+  `hackday` (`REACHY_GREETER`). Not yet proven on a live night.
+- **Sleep is one state, not one pose** (`shell/sleep.py`): lying down closes the mic, the
+  attention lease and the tool gate, not just the head.
+- **Direct intents** (`shell/intents.py`): bare wake word, sleep and "stop talking" are
+  matched on the transcript and executed by the shell — the 4B model narrates them instead
+  of acting.
+- **Volume** (`shell/volume.py`): 200% ceiling, ~110% at boot; above 120% it is allowed but
+  flagged `clipping_risk`. Enforcement is `set_volume` in `app/robot_tools.py` and the
+  slider in `dashboard/env_panel.py`.
+- **Per-tool timeouts** (`shell/tools.py`): `CAMERA_TOOLS` get 35 s, every other tool 12 s.
+- **No clock in the prompt.** `shell/llm_proxy.py` only rewrites mis-heard names; the
+  per-message `[date, time]` prefix is gone. `TIME_NOTE` (`shell/config.py`) tells the model
+  it has no clock and routes every time or date question to `get_time`.
+- **Speaker at boot**: `scripts/reachy_audio_init.sh` sets the Reachy card's hardware
+  playback gain by card name, never card index, and exits 0 when no card is present.
+- **One room per screen**: journal reads are filtered by `env` (`dashboard/journal_read.py`),
+  so the booth display cannot open on the home conversation.
+
+### Operator tooling
+
+- [`docs/knobs.md`](docs/knobs.md) — every env var actually read, its reader, and what each
+  room resolves. A name not listed there does nothing.
+- `scripts/preflight_demo.sh` — read-only check before travel; `DEMO_ENV=hackday` to check a room.
+- `scripts/booth_recovery.sh` — diagnose and restart the unit chain (`--dry-run`, `--only <unit>`, `--yes`).
+- `scripts/check_env_safety.sh` — 13 checks that no home data can reach the booth.
+- `scripts/tail_journal.py` — the last N minutes of the journal as a timeline, barge-ins included.
+- `scripts/smoke_greeter.py` — watch the greeter decide over real frames: no audio, no motion, no journal.
+- `scripts/bench_greeter.py` — turn a live greeter night into numbers, read back from the journal.
 
 ## Project Structure
 
@@ -236,7 +279,7 @@ The `ctranslate2` library (used by faster-whisper) also needs a matching CUDA ve
 > or `scripts/` ever read those two names — this whole section describes a faster-whisper STT
 > that this repo does not run. The legacy loop transcribes with **Parakeet TDT 0.6B v3 on CPU
 > via `onnx_asr`**, hard-wired at `app/stt_service.py:12-21`; the realtime stack's STT device is
-> `S2S_PARAKEET_DEVICE` (`scripts/run_s2s.sh:74`). Do not set the whisper names expecting a CPU
+> `S2S_PARAKEET_DEVICE` (`scripts/run_s2s.sh:124`). Do not set the whisper names expecting a CPU
 > fallback — there is none to fall back to. Every knob that is real is in
 > [`docs/knobs.md`](docs/knobs.md).
 
