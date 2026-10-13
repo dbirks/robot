@@ -62,7 +62,17 @@ run sudo mkdir -p "$SYS_DIR"
 # Stage a substituted copy so a different $HOME can never ship a /root path again.
 KIOSK_STAGED="${TMPDIR:-/tmp}/reachy-kiosk.service.staged.$$"
 sed "s#/home/david/dev/robot#$REPO#g" "$REPO/deploy/kiosk/$KIOSK_UNIT.service" > "$KIOSK_STAGED"
-trap 'rm -f "$KIOSK_STAGED"' EXIT
+# Rootless X is refused by Xorg.wrap unless the caller owns the foreground VT - and on this
+# machine that check can NEVER pass, no matter how the unit is written: pam_unix reports
+# "session opened for user david", yet `loginctl` shows no tty1 session and /dev/dri/card1
+# gains no user ACL, because pam_systemd does not register a seat session for a system
+# service here. So the kiosk needs allowed_users=anybody, which runs X as root with chromium
+# as david - the old root-X/user-clients split that xinit's -auth cookie handles already.
+# Without this line the kiosk is architecturally incapable of drawing on this box.
+XWRAP_TMP="${TMPDIR:-/tmp}/Xwrapper.config.$$"
+printf 'allowed_users=anybody\n' > "$XWRAP_TMP"
+trap 'rm -f "$KIOSK_STAGED" "$XWRAP_TMP"' EXIT
+run sudo cp "$XWRAP_TMP" /etc/X11/Xwrapper.config
 run sudo cp "$KIOSK_STAGED" "$SYS_DIR/$KIOSK_UNIT.service"
 # `verify` is read-only and needs no root, and it is the only check that catches a typo in a
 # directive name before the unit is enabled - the previous version of this file shipped

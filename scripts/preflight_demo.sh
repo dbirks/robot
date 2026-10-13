@@ -152,7 +152,23 @@ if [ -f data/memories.hackday.json ]; then
   AGE=$(( ( $(date +%s) - $(stat -c %Y data/memories.hackday.json) ) / 3600 ))
   [ "$AGE" -le 1 ] && ok "booth memory store is fresh (${AGE}h)" || warn "data/memories.hackday.json is ${AGE}h old: rm it before the doors (facts are shared between guests)"
 fi
-command -v chromium >/dev/null 2>&1 && ok "chromium present (kiosk #37 installable)" || warn "chromium absent: kiosk not installed yet (#37)"
+command -v chromium >/dev/null 2>&1 && ok "chromium present (kiosk #37 installer ran)" || warn "chromium absent (kiosk #37 not installed)"
+# "Installed" and "cannot load" are different states, and tonight only the second one was
+# true for an hour. Chromium was present, `command -v` said yes, systemd said "Started", and
+# the process died in under a second wanting GLIBC_2.44 and libleancrypto.so.1.9 - a split
+# between today's packages and an April base. Every tool we own answers a different question;
+# none of them asked this one, and the only component that KNEW (xinit, printing to /dev/tty)
+# said it to a console on a box with no keyboard. `ldd` costs 40ms and says it outright.
+for BIN in /usr/lib/Xorg /usr/lib/chromium/chromium; do
+  if [ -x "$BIN" ]; then
+    BROKEN=$(ldd "$BIN" 2>&1 | grep -ciE "not found|version .GLIBC")
+    if [ "${BROKEN:-0}" -gt 0 ]; then
+      bad "$(basename "$BIN") cannot load: $(ldd "$BIN" 2>&1 | grep -m1 -iE 'not found|not found\' | cut -c1-52)"
+    else
+      ok "$(basename "$BIN") shared libraries resolve"
+    fi
+  fi
+done
 
 head_ "summary"
 head_ "gesture library (play_emotion)"
