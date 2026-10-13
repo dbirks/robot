@@ -36,7 +36,7 @@ from .camera import CameraGrabber, CameraStream
 from .config import REACHY_ENV_VAR, ShellConfig
 from .conversation import ConversationMemory, Turn, llm_extract_facts, llm_summarize
 from .env import EnvError, config_to_dict, load_config, persona_report
-from .intents import is_bare_wake, wants_sleep
+from .intents import is_bare_wake, wants_silence, wants_sleep
 from .journal import Journal
 from .memories import MemoryStore, migrate_legacy_memories
 from .motion import DoaTracker, MotionOwner, SpeechSway, make_doa_source
@@ -243,6 +243,20 @@ async def amain(cfg: ShellConfig) -> None:
             journal.write("intent.sleep", text=text)
             loop.run_in_executor(None, router.execute, "go_to_sleep", {})
         lease.note_interaction()
+        if text and lease.active() and wants_silence(text) and client.last_turn_cut_playback:
+            # "stop talking" is an order, not a turn. The interrupt itself already did
+            # its work (speaker.cancel_current, before this transcript arrived); what
+            # must not happen is the phrase reaching the model as user input, which
+            # answers it - measured live 2026-10-12, four times, each time by calling
+            # set_volume, because loudness was the nearest affordance a 4B had.
+            # Home Assistant routes HassNevermind around its agent the same way.
+            # No memory.add: a command he obeyed is not something he was told.
+            journal.write("intent.stop", text=text)
+            awaiting_reply[0] = 0.0  # we are deliberately not waiting for a reply
+            reaction.cancel()  # no "hmm" filler over the silence just demanded
+            wake_t[0] = None
+            client.drop_next_response()
+            return
         if wake_t[0] is not None and text:
             fresh = time.monotonic() - wake_t[0] < 10.0
             wake_t[0] = None

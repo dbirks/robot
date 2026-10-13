@@ -104,6 +104,7 @@ class RealtimeClient:
         self._carry: bytes | None = None
         self.on_speech_stopped = on_speech_stopped
         self.on_first_audio = on_first_audio
+        self._turn_cut = False  # did the utterance now being transcribed cut his audio?
         self.reconnect_s = reconnect_s
         self.busy_retry_s = busy_retry_s
         self._connect = connect  # injectable for tests; defaults to websockets
@@ -184,6 +185,19 @@ class RealtimeClient:
         `within_s` (e.g. its reply to a bare wake word we already answered
         with a prerendered "yes?"). Call on the loop."""
         self._drop_until = asyncio.get_event_loop().time() + within_s
+
+    @property
+    def last_turn_cut_playback(self) -> bool:
+        """Did the utterance currently being transcribed cut audible playback?
+
+        The interrupting words are also committed as a fresh user turn, so
+        "stop talking" reaches the model and gets answered - by `set_volume`
+        (measured 2026-10-12). The shell only suppresses that reply when the
+        words genuinely arrived over his own voice; this is the one bit that
+        distinguishes an interruption from a remark about the interruption.
+        Read by `on_transcript`, cleared once the transcript is delivered.
+        """
+        return self._turn_cut
 
     # ---- lifecycle ----
 
@@ -327,6 +341,8 @@ class RealtimeClient:
         if t == "input_audio_buffer.speech_started":
             self._epoch += 1
             cut = self.speaker.cancel_current()
+            # sticky within one turn: a person can start twice before the words land
+            self._turn_cut = self._turn_cut or bool(cut)
             self.journal.write(J.AUDIO_SPEECH_STARTED, cut_playback=cut)
             if self.on_speech_started:
                 self.on_speech_started()
@@ -339,8 +355,11 @@ class RealtimeClient:
         elif t == "conversation.item.input_audio_transcription.completed":
             text = (ev.get("transcript") or "").strip()
             self.journal.write(J.TURN_TRANSCRIPT_FINAL, text=text)
-            if self.on_transcript:
-                self.on_transcript(text)
+            try:
+                if self.on_transcript:
+                    self.on_transcript(text)
+            finally:
+                self._turn_cut = False  # one turn's evidence, never the next one's
 
         elif t == "response.created":
             rid = (ev.get("response") or {}).get("id", "")

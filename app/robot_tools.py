@@ -195,7 +195,10 @@ TOOLS: list[dict[str, Any]] = [
                 "Adjust the robot's speaking volume. For 'louder', 'speak up', 'turn it up' use 'louder' "
                 "(or 'much louder'); for 'quieter', 'turn it down' use 'quieter' (or 'much quieter'). "
                 "Use a named level or percentage only when the user asks for a specific volume. "
-                "Range is 0% to 200%; 'max' is 200% and is meant for a noisy room."
+                "Range is 0% to 200%; 'max' is 200% and is meant for a noisy room. "
+                "LOUDNESS ONLY. Never call this for 'stop talking', 'be quiet', 'shut up' or 'say no "
+                "more' - those ask him to stop speaking, which the shell already handles, and answering "
+                "them by turning down is wrong (measured live 2026-10-12)."
             ),
             "parameters": {
                 "type": "object",

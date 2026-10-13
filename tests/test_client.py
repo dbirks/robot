@@ -413,3 +413,40 @@ def test_drop_next_response_silences_and_cancels_it(journal, speaker):
     assert len([m for m in ws.sent if m["type"] == "response.cancel"]) == 1
     assert speaker.pending() == 0
     assert journal.find("response.dropped")
+
+
+def test_the_cut_flag_is_the_evidence_a_stop_command_needs(speaker, journal):
+    """ "stop talking" may only be suppressed when it actually interrupted him. That
+    decision lives in on_transcript, which needs to know whether THIS utterance cut
+    playback: measured 2026-10-12, four real barge-ins whose phrases then reached the
+    model as user input and came back as set_volume calls."""
+    c = make_client(journal, speaker)
+    seen = []
+    c.on_transcript = lambda text: seen.append((text, c.last_turn_cut_playback))
+    gen = speaker.begin_generation()
+    speaker.enqueue(gen, "tts", np.zeros(100, dtype=np.int16))
+
+    asyncio.run(c.handle_event({"type": "input_audio_buffer.speech_started"}))
+    asyncio.run(
+        c.handle_event({"type": "conversation.item.input_audio_transcription.completed", "transcript": "Stop talking."})
+    )
+
+    assert seen == [("Stop talking.", True)], "the transcript arrived without its barge-in evidence"
+    assert c.last_turn_cut_playback is False, "the flag leaked into the next turn"
+
+
+def test_words_said_while_he_is_silent_are_not_marked_as_an_interruption(speaker, journal):
+    """The other half: 'quiet in Rome?' said into a quiet room must stay a normal
+    turn, or the gate would swallow real conversation."""
+    c = make_client(journal, speaker)
+    seen = []
+    c.on_transcript = lambda text: seen.append(c.last_turn_cut_playback)
+
+    asyncio.run(c.handle_event({"type": "input_audio_buffer.speech_started"}))
+    asyncio.run(
+        c.handle_event(
+            {"type": "conversation.item.input_audio_transcription.completed", "transcript": "was it quiet in Rome?"}
+        )
+    )
+
+    assert seen == [False]
