@@ -170,7 +170,7 @@ for env in ("home", "hackday"):
         envs.mkdir()
         (envs / "lab.yaml").write_text(yaml.safe_dump({"persona": {"instructions": printed}}))
         again = load_config("lab", envs_dir=envs).instructions
-    for marker in (NOTES_SENTINEL, "You have no clock"):
+    for marker in (NOTES_SENTINEL, "You have no clock", "honorific"):
         assert again.count(marker) == 1, f"{env} paste-back duplicated {marker!r}"
     if env == "home":
         assert again == printed, "pasting the printed home instructions back changes them"

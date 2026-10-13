@@ -114,7 +114,23 @@ def instructions_without_auto_learn(text: str) -> str:
 
 
 # Appended to every persona, in every deployment environment.
-SHELL_NOTES = TOOLS_NOTE + TIME_NOTE
+#: How to address a stranger. Written after the live log at 13:30 on 2026-10-13, where he said
+#: "I am at your service, sir" and then "The view is currently open, sir" in the next reply - the
+#: first "sir" entered the session history and the model copied it, the same way one narrated lie
+#: ("I've turned it down") turned into three. Nothing in our own prompt said "sir": this is the
+#: model's RLHF politeness, and the register is wrong for Marvin anyway.
+#:
+#: The rule has to be stated, not implied, for two reasons measured tonight. (1) The shell cannot
+#: fix his words after the fact - the service synthesises audio from the model's text, so there is
+#: no speak-side filter to write; the prompt is the only lever. (2) An honorific presumes gender
+#: about a stranger, which sits badly next to a rule set that already refuses to name anybody.
+ADDRESS_NOTE = (
+    ' Never address a guest as "sir", "ma\'am", "madam" or any honorific or title - you do'
+    ' not know anyone\'s name, gender or preference, and "I am at your service" is not how you'
+    " speak. Be courteous by being useful, and answer people directly."
+)
+
+SHELL_NOTES = TOOLS_NOTE + TIME_NOTE + ADDRESS_NOTE
 
 
 # The notes' opening words. `persona_instructions()` appends the notes last, so this is

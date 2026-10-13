@@ -10,6 +10,9 @@ places disagrees with itself the first time a prompt changes *on purpose*: two f
 updated, one is missed, and the safety gate goes red on an unrelated night. One constant,
 three readers.
 
+2026-10-13 later again: **1938 -> 2102 -> 2339** (ADDRESS_NOTE added: no honorifics, after
+"I am at your service, sir" x2 in the live log; note the prompt has grown 1765 -> 2339 today,
+which is prefill paid on every turn - stop adding to it without measuring)
 2026-10-13 later again: **1938 -> 2102** - the narration rule was widened past gestures (it said
 "a gesture means CALLING the tool", and the model reasonably concluded loudness was not covered:
 journal shows "I have turned the volume down" with no set_volume call at all), and set_volume's
@@ -36,4 +39,4 @@ The stale-stamp cache itself is a separate defect (it still misdates anything
 date-relative) and is deliberately NOT touched the night before a demo.
 """
 
-HOME_PROMPT_BYTES = 2102
+HOME_PROMPT_BYTES = 2339

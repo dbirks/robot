@@ -886,10 +886,39 @@ def test_pasting_resolved_instructions_back_never_doubles_the_contract(tmp_path)
         printed = load_config("lab", envs_dir=envs).instructions
         again_dir = tmp_path / f"again-{learn}"
         again_dir.mkdir()
+        # Serialised with yaml.safe_dump, not a hand-built f-string with `repr`: as soon as the
+        # shared notes contained BOTH a double quote and an apostrophe ("sir", "ma'am") the
+        # hand-written form stopped being valid YAML, and this test failed for a reason that had
+        # nothing to do with the invariant it guards.
         (again_dir / "lab.yaml").write_text(
-            f"persona:\n  instructions: {printed!r}\nmemory_namespace: lab-{learn}\nlearn_facts: {str(learn).lower()}\n"
+            yaml.safe_dump(
+                {
+                    "persona": {"instructions": printed},
+                    "memory_namespace": f"lab-{learn}",
+                    "learn_facts": bool(learn),
+                }
+            )
         )
         again = load_config("lab", envs_dir=again_dir).instructions
         assert again.count("Speak plain words") == 1, f"learn_facts={learn}: notes doubled"
         assert again.count("You have no clock") == 1, f"learn_facts={learn}: clock note doubled"
         assert "You are a test robot." in again, "the paste ate the persona"
+
+
+def test_the_prompt_forbids_honorifics_in_every_room():
+    """Live 2026-10-13 13:30: "I am at your service, sir", then "The view is currently open, sir"
+    one reply later. Nothing in our prompt said "sir" - it is the model's own politeness, and once
+    one instance entered the session history the model started copying it, which is the same
+    mechanism that turned a narrated "I've turned it down" into a habit.
+
+    There is no speak-side filter available: the service synthesises audio from the model's text,
+    so the shell never holds the words in time to edit them. The prompt is the only lever, so the
+    prompt is what gets a test - the rule's presence, not the model's compliance, since compliance
+    measured 0/8 in a harness that could not reproduce the trigger.
+    """
+    for env in ("home", "hackday"):
+        text = load_config(env).instructions
+        assert "honorific" in text, f"{env}: the address rule vanished"
+        for word in ("sir", "ma'am", "madam"):
+            assert f'"{word}"' in text or f'"{word}"' in text, f"{env}: {word} not named"
+        assert "I am at your service" in text, f"{env}: the register we actually heard is not banned"
