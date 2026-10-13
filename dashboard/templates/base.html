@@ -117,6 +117,14 @@
                           {% if active_page == 'settings' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-lavender{% endif %}">
                     Settings
                 </a>
+                {# Persona + Environment are OPERATOR pages: /persona prints every persona NAME in
+                   capitals ("OBAMA") and the selected room's full resolved instructions, and
+                   envs/hackday.yaml says that label must not reach attendees or signage. The kiosk
+                   navigates straight to /conversation on a public monitor, so these two links were a
+                   one-click route from a stranger at the table to the persona name and the prompt
+                   (found 2026-10-13 while fixing the persona whitespace). Hidden on the attendee page
+                   only - operators type the URL or arrive from another page. #}
+                {% if active_page != 'conversation' %}
                 <a href="/persona"
                    class="block md:inline px-4 py-2 text-sm font-bold uppercase tracking-wide border-2 border-black border-t-0 md:border-t-2 md:border-l-0
                           {% if active_page == 'persona' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-lavender{% endif %}">
@@ -127,6 +135,7 @@
                           {% if active_page == 'environment' %}bg-black text-cream{% else %}bg-cream text-black hover:bg-mint{% endif %}">
                     Environment
                 </a>
+                {% endif %}
             </div>
             <!-- Mic + Agent controls + Hamburger -->
             <div class="flex items-center gap-2">

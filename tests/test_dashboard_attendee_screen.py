@@ -373,3 +373,27 @@ def test_the_conversation_partial_still_renders_with_the_fix(tmp_path):
         turns=[], session_id=None, live_env=None, live={"liveness": {}, "journal_error": None}
     )
     assert "No conversation yet" in empty and "JOURNAL UNAVAILABLE" not in empty
+
+
+def test_the_attendee_page_does_not_link_to_the_operator_persona_pages():
+    """Found 2026-10-13 while fixing the persona whitespace, and it is the reason the
+    whitespace fix matters at all.
+
+    /persona prints every persona NAME in capitals ("OBAMA") plus the selected room's full
+    resolved instructions. envs/hackday.yaml states that label must never reach attendees or
+    signage. But base.html's nav is unconditional, and the kiosk navigates a PUBLIC monitor to
+    /conversation - so a stranger at the table was one click from the persona name and the
+    prompt. The nav is now suppressed on the attendee page specifically, which is a rendering
+    rule, not a policy change: the naming decision is the owner's, taken in the open at 18:xx.
+    """
+    base = (ROOT / "dashboard" / "templates" / "base.html").read_text()
+    guard = "{% if active_page != 'conversation' %}"
+    assert guard in base, "the operator links are unconditionally on the attendee page again"
+    persona_at = base.index('href="/persona"')
+    assert base.index(guard) < persona_at < base.index("{% endif %}", base.index(guard)), (
+        "the Persona/Environment links must sit INSIDE the attendee-page guard"
+    )
+    # and the guard must not have been widened to swallow the attendee-facing controls too
+    assert base.index('href="/conversation"') < base.index(guard), (
+        "Conversation link must stay visible; only the operator pages are gated"
+    )
