@@ -31,6 +31,7 @@ from shell.env import (
 )
 from shell.memories import MEMORY_TOOLS, MemoryStore, make_memory_handlers, migrate_legacy_memories
 from shell.tools import apply_tool_policy
+from tests.parity_baseline import HOME_PROMPT_BYTES
 
 # Transcribed from the live .env on 2026-10-12 (the Obama persona and its ack pool).
 TODAY_PERSONA = (
@@ -851,7 +852,9 @@ def test_a_room_that_disables_fact_learning_is_not_also_told_to_do_it(clean_env)
     home = load_config("home", envs_dir=ENVS_DIR)
     assert home.learn_facts is True
     assert LEARN_FACTS_NOTE in home.instructions
-    assert len(home.instructions.encode()) == 1568, "home parity is the A2 bar; the note is not a byte to move"
+    assert len(home.instructions.encode()) == HOME_PROMPT_BYTES, (
+        "home parity is the A2 bar; see tests/parity_baseline.py before moving it"
+    )
 
 
 def test_reconcile_is_a_noop_when_learning_is_on():

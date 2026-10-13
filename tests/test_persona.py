@@ -17,6 +17,7 @@ import yaml
 import shell.env as shell_env
 from dashboard import persona_panel as pp
 from shell.config import persona_instructions
+from tests.parity_baseline import HOME_PROMPT_BYTES
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -76,7 +77,10 @@ def test_two_personas_ship(clean_env):
 def test_obama_is_byte_identical_to_the_persona_home_has_always_used(clean_env):
     """The A2 parity bar, measured on the resolved config with REACHY_ENV unset."""
     cfg = shell_env.load_config("home")
-    assert len(cfg.instructions.encode()) == 1568
+    assert len(cfg.instructions.encode()) == HOME_PROMPT_BYTES, (
+        "see tests/parity_baseline.py: the A2 byte-exact bar may only move deliberately, "
+        "with the reason recorded next to the constant"
+    )
     assert cfg.instructions == persona_instructions(persona_text("obama"))
     assert cfg.ack_dir == Path("sounds/acks/obama")
 

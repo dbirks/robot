@@ -285,7 +285,10 @@ assert C.LEARN_FACTS_NOTE not in booth.instructions, (
 assert "remember, recall or forget" in booth.instructions, "the explicit-request half must stay"
 home = E.load_config("home")
 assert C.LEARN_FACTS_NOTE in home.instructions, "home lost the behaviour it shipped with"
-assert len(home.instructions.encode()) == 1568, "home persona bytes moved (A2 parity bar)"
+from tests.parity_baseline import HOME_PROMPT_BYTES
+assert len(home.instructions.encode()) == HOME_PROMPT_BYTES, (
+    "home persona bytes moved (A2 parity bar) - change tests/parity_baseline.py deliberately, with a reason"
+)
 assert C.LEARN_FACTS_NOTE in C.TOOLS_NOTE and C.LEARN_FACTS_NOTE in C.SHELL_NOTES, (
     "the note and the shared tail drifted: the reconcile now removes nothing at all"
 )
