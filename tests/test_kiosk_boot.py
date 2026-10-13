@@ -135,7 +135,15 @@ def test_the_kiosk_unit_is_the_console_owner_a_user_unit_can_never_be():
     startx = re.findall(r"^ExecStart=(.*)$", unit, re.M)
     assert len(startx) == 1 and "startx" in startx[0]
     assert "kiosk.xinitrc" in startx[0], "the launcher must be the session that waits for the panel"
-    assert "vt1" in startx[0] and "-keeptty" in startx[0]
+    assert "vt1" in startx[0], "X must be told which VT to allocate - that is what vt1 is for"
+    # -keeptty is BANNED, deliberately, and this assertion is the reason it stays banned. It pins
+    # X's stdio to /dev/tty1, so every word the server says goes to a console on a box with no
+    # keyboard - unwatchable for the operator and unreadable for me. The first version of this unit
+    # failed eight times with an empty journal for exactly that reason, and -logfile /dev/null then
+    # threw away the only other copy. Without them X writes ~/.local/share/xorg/Xorg.0.log, which is
+    # reachable over SSH: on this machine a readable artifact is worth more than a kept tty.
+    assert "-keeptty" not in startx[0], "X's output must reach a file we can read over SSH"
+    assert "-logfile /dev/null" not in startx[0], "never discard the only copy of the failure"
     assert "WantedBy=multi-user.target" in unit, "a SYSTEM unit, so it comes up without anyone logging in"
     assert "Only console users are allowed" in unit, "the measured failure travels with the fix"
     assert "cage" in unit.lower() or "wayland" in unit.lower(), (
