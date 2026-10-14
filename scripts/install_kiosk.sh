@@ -38,8 +38,41 @@ say "  cleanup:  unlink $REPO_DIR/$KIOSK_UNIT.service - a user-scope kiosk canno
 say "  target:   http://127.0.0.1:3001/conversation"
 say ""
 
+# Stage BEFORE the dry-run branch. Two lessons from 2026-10-13.
+# (1) The dry-run branch reads $KIOSK_STAGED. Under `set -u`, defining it only in the --run path
+#     made the DOCUMENTED review-first invocation - this script with NO arguments, which the
+#     header and deploy/kiosk/README.md both tell an operator to run first - exit 1 with
+#     "unbound variable". `bash -n` passes: it is a parse-clean RUNTIME failure on the one path
+#     whose whole purpose is to be safe to run. The check that catches it is executing the dry
+#     path, now asserted in tests/test_kiosk_boot.py.
+# (2) Staging early lets the dry run verify the exact bytes it would install, not another file.
+#     A temp under $TMPDIR touches nothing privileged, so DRY=1 stays safe.
+# The name must END in .service: `systemd-analyze verify` rejects any filename that does
+# not look like a unit ("Failed to prepare filename ...: Invalid argument"), and the
+# obvious `reachy-kiosk.service.staged.$$` does not.
+KIOSK_STAGED="${TMPDIR:-/tmp}/reachy-kiosk-staged-$$.service"
+XWRAP_TMP="${TMPDIR:-/tmp}/Xwrapper.config.$$"
+trap 'rm -f "$KIOSK_STAGED" "$XWRAP_TMP"' EXIT
+sed "s#/home/david/dev/robot#$REPO#g" "$REPO/deploy/kiosk/$KIOSK_UNIT.service" > "$KIOSK_STAGED"
+
 if [ "$DRY" = 1 ]; then
   KIOSK_VERIFY="$KIOSK_STAGED"   # in a dry run nothing reached /etc; verify what we would install
+  say ""
+  say "  staged unit check (read-only, no sudo):"
+  # Explicit rc, not `|| true`: under pipefail a failing verify in a pipeline would kill the dry run
+  # for the wrong reason (plumbing), and swallowing it would hide the right one (a broken unit). A
+  # non-zero exit here means "the unit you are about to install is defective" - deliberately, and
+  # labelled, which is the opposite of the accidental exit 1 this file shipped for an hour.
+  if VERIFY_OUT=$(systemd-analyze verify "$KIOSK_STAGED" 2>&1); then
+    say "    verify: clean (it still cannot prove the ExecStart path exists - read the line above)"
+  else
+    printf '%s\n' "$VERIFY_OUT" | sed 's/^/    verify: /'
+    VERIFY_FAIL=1
+  fi
+  if [ "${VERIFY_FAIL:-0}" = 1 ]; then
+    say "FAIL: the staged unit does not verify. Do not --run it; fix the unit first."
+    exit 1
+  fi
   say "dry run; nothing changed. Re-run with --run."
   exit 0
 fi
@@ -60,8 +93,6 @@ run sudo mkdir -p "$SYS_DIR"
 # startx being handed /root/dev/robot/deploy/kiosk/kiosk.xinitrc, which does not exist, X never
 # spawned, and `systemd-analyze verify` stayed silent because it validates syntax, not paths.
 # Stage a substituted copy so a different $HOME can never ship a /root path again.
-KIOSK_STAGED="${TMPDIR:-/tmp}/reachy-kiosk.service.staged.$$"
-sed "s#/home/david/dev/robot#$REPO#g" "$REPO/deploy/kiosk/$KIOSK_UNIT.service" > "$KIOSK_STAGED"
 # Rootless X is refused by Xorg.wrap unless the caller owns the foreground VT - and on this
 # machine that check can NEVER pass, no matter how the unit is written: pam_unix reports
 # "session opened for user david", yet `loginctl` shows no tty1 session and /dev/dri/card1
@@ -69,9 +100,7 @@ sed "s#/home/david/dev/robot#$REPO#g" "$REPO/deploy/kiosk/$KIOSK_UNIT.service" >
 # service here. So the kiosk needs allowed_users=anybody, which runs X as root with chromium
 # as david - the old root-X/user-clients split that xinit's -auth cookie handles already.
 # Without this line the kiosk is architecturally incapable of drawing on this box.
-XWRAP_TMP="${TMPDIR:-/tmp}/Xwrapper.config.$$"
 printf 'allowed_users=anybody\n' > "$XWRAP_TMP"
-trap 'rm -f "$KIOSK_STAGED" "$XWRAP_TMP"' EXIT
 run sudo cp "$XWRAP_TMP" /etc/X11/Xwrapper.config
 run sudo cp "$KIOSK_STAGED" "$SYS_DIR/$KIOSK_UNIT.service"
 # `verify` is read-only and needs no root, and it is the only check that catches a typo in a

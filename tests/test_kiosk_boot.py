@@ -8,6 +8,7 @@ all of it is CI-safe. What they protect is the two things the first real screen 
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -221,3 +222,52 @@ def test_the_system_unit_never_uses_the_h_home_specifier():
     assert "%h" not in body, "%h in a system unit is /root, not User='s home"
     assert "/home/david/dev/robot/deploy/kiosk/kiosk.xinitrc" in unit, "a real, existing path"
     assert (KIOSK / "kiosk.xinitrc").exists(), "the unit must point at a file that exists"
+
+
+def test_the_documented_dry_run_actually_runs():
+    """`bash -n` is not a test of a shell script, and this proves it.
+
+    install_kiosk.sh's header and deploy/kiosk/README.md both tell the operator to run the script
+    with NO arguments first, to read the plan before granting sudo. For most of 2026-10-13 that
+    invocation exited 1 with `KIOSK_STAGED: unbound variable` under `set -u`: the dry-run branch
+    read a variable that was only assigned in the --run path. Every static check passed, because
+    the file parses fine - it fails at runtime, on the one path whose entire purpose is to be
+    safe to run.
+
+    So run the path. Exit 0, plan printed, and nothing written outside $TMPDIR.
+    """
+    repo = KIOSK.parent.parent
+    script = repo / "scripts" / "install_kiosk.sh"
+    proc = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "TMPDIR": "/tmp"},
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, f"dry run must be safe and quiet; exit={proc.returncode}\n{out[-400:]}"
+    assert "unbound variable" not in out, out[-300:]
+    assert "dry run; nothing changed" in out, out[-300:]
+    assert "kiosk install plan" in out, "the review-first path must print the plan it promises"
+    # the staged filename has to LOOK like a unit or systemd-analyze refuses it
+    assert re.search(r'KIOSK_STAGED="[^"]*\.service"', script.read_text()), (
+        "the staged copy must end in .service or `systemd-analyze verify` rejects the filename"
+    )
+    # and it must not have installed anything
+    assert not Path("/etc/systemd/system/reachy-kiosk.service.staged").exists()
+
+
+def test_the_installed_unit_is_the_repo_unit():
+    """The restart-hang fix (UnsetEnvironment=XDG_SESSION_ID, TimeoutStopSec=10) was committed at
+    19:34 and the box was still crash-hanging at 20:10, because /etc had the 19:09 copy: a fix that
+    is committed, reviewed and pushed is not a fix that is RUNNING. This test only checks the repo
+    side, which is all CI can see - the live comparison lives in preflight_demo.sh, which runs on
+    the machine that has an /etc.
+    """
+    unit = (KIOSK / "reachy-kiosk.service").read_text()
+    assert "UnsetEnvironment=XDG_SESSION_ID" in unit, (
+        "chromium joins a systemd scope tagged with the PAM session; leaving the id in the unit's "
+        "environment means the session cannot close and `systemctl restart` hangs forever"
+    )
+    assert re.search(r"^TimeoutStopSec=\d+$", unit, re.M), "a booth cannot watch a 90 s stop timeout"
